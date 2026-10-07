@@ -45,7 +45,7 @@ Xenolith targets Intel mobile integrated GPUs on Linux using Level Zero (`intel-
 First of all, I decided to not implement an internal agent/harness because that's another whole piece of software that needs attention and care. Also, harnesses are the new IDEs, so very personal, and everyone should use the one he prefers.
 
 So now we need a way to connect your harness to Xenolith. The standard way is a stateless chat/completions HTTP server that was designed to handle massive multi-user requests to a central server. This is a totally different use case than the one we are handling: single-machine, single-user inference.
-I thought that, in this context, it would be better to create a stateful protocol so that the harness could talk to the engine in a session-aware way like an integrated agent would.
+I thought that, in this context, it would be better to create a [stateful protocol](PROTOCOL.md) so that the harness could talk to the engine in a session-aware way like an integrated agent would.
 So now we don't have to send all the history, but we can just "append" the user message. Also, we can make the harness aware of such thing that are valuable in local inference, like the progress of a prefill or the cost of a rewind.
 
 But this currently means that you have to fork your harness and make it talk the Xenolith protocol or write an adapter like I did.

@@ -121,7 +121,7 @@ typedef struct {
 
 typedef enum {
     RUNTIME_EVENT_START = 1,
-    RUNTIME_EVENT_PROGRESS = 2,
+    RUNTIME_EVENT_INFERENCE_PROGRESS = 2,
     RUNTIME_EVENT_TEXT_DELTA = 3,
     RUNTIME_EVENT_TOOLCALL_START = 4,
     RUNTIME_EVENT_TOOLCALL_END = 5,
@@ -137,6 +137,39 @@ typedef enum {
     RUNTIME_STOP_ABORTED = 4
 } runtime_stop;
 
+typedef enum {
+    RUNTIME_INFERENCE_PREFILL,
+    RUNTIME_INFERENCE_DECODE
+} runtime_inference_phase;
+
+/* The first RUNNING opens a phase, before its work begins. FINISHED carries
+ * its final measurements, including partial work on cancellation; it does not
+ * imply request success. DONE/ERROR may close an open phase directly. No
+ * progress follows FINISHED for that phase, and unentered phases emit nothing.
+ * A fully cached prefill still emits RUNNING(0/0), then FINISHED(0/0). */
+typedef enum {
+    RUNTIME_INFERENCE_RUNNING,
+    RUNTIME_INFERENCE_FINISHED
+} runtime_inference_state;
+
+/* Cumulative active runtime time, measured with CLOCK_MONOTONIC. Prefill
+ * measures initial synchronization only, excluding shadow waits/setup. Includes
+ * sampling, parsing and shadow work during decode; excludes client waits,
+ * snapshot loads and terminal reconciliation/checkpoint writes. This is
+ * interactive inference throughput, not a kernel benchmark. Prefill counts
+ * initial computation only (no cached tokens or terminal replay). Decode
+ * counts the same sampled/control tokens as usage.output. */
+typedef struct {
+    uint64_t tokens;
+    uint64_t total;       /* prefill only; sync may revise initial cache estimate */
+    uint64_t elapsed_ms;
+} runtime_inference_measure;
+
+typedef struct {
+    runtime_inference_measure prefill;
+    runtime_inference_measure decode;
+} runtime_inference;
+
 typedef struct {
     uint32_t kind;
     const uint8_t *text;
@@ -144,8 +177,10 @@ typedef struct {
     uint64_t call_id;
     const char *call_name;
     const char *arguments_json;
-    uint64_t prefilled;
-    uint64_t prefill_total;
+    uint32_t phase;      /* inference_progress: runtime_inference_phase */
+    uint32_t state;      /* inference_progress: runtime_inference_state */
+    runtime_inference_measure progress;
+    runtime_inference inference; /* done/error: frozen before finalization */
     uint32_t stop;
     uint32_t reasoning_close;
     runtime_usage usage;
@@ -217,6 +252,9 @@ runtime_status runtime_ephemeral_generate(runtime *w, const char *system,
                                     size_t count,
                                     const runtime_gen_params *params);
 runtime_status runtime_next_event(runtime *w, runtime_event *out);
+/* Requests cooperative cancellation. OK confirms acceptance, not an aborted
+ * outcome: a terminal result already decided is retained. Continue pulling
+ * events through DONE/ERROR; cancellation does not roll back finalization. */
 runtime_status runtime_cancel(runtime *w);
 
 runtime_status runtime_rewind(runtime *w, runtime_marker marker);

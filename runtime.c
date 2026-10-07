@@ -91,6 +91,19 @@ struct runtime {
     int framing_offset;
     int sampled_length;
     runtime_usage usage;
+    runtime_inference inference;
+    uint64_t inference_ns[2];
+    uint64_t decode_progress_ns;
+    int64_t inference_started;
+    int inference_active;
+    int inference_phase;
+    int prefill_started_emitted;
+    int prefill_complete_emitted;
+    int decode_complete_emitted;
+    int decode_started_emitted;
+    int terminal_pending;
+    uint32_t terminal_stop;
+    uint32_t terminal_record;
 
     json_writer content;
     json_writer reasoning;
@@ -200,6 +213,38 @@ static int64_t runtime_monotonic(void) {
     struct timespec now;
     if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
     return (int64_t)now.tv_sec * INT64_C(1000000000) + now.tv_nsec;
+}
+
+static void runtime_inference_begin(runtime *w, int phase) {
+    w->inference_started = runtime_monotonic();
+    w->inference_phase = phase;
+    w->inference_active = 1;
+}
+
+static void runtime_inference_end(runtime *w) {
+    if (!w->inference_active) return;
+    int64_t finished = runtime_monotonic();
+    int phase = w->inference_phase;
+    if (w->inference_started > 0 && finished > w->inference_started)
+        w->inference_ns[phase] += (uint64_t)(finished - w->inference_started);
+    w->inference_active = 0;
+    w->inference.prefill.elapsed_ms = w->inference_ns[0] / 1000000;
+    w->inference.decode.elapsed_ms = w->inference_ns[1] / 1000000;
+    w->inference.decode.tokens = (uint64_t)w->sampled_length;
+}
+
+static runtime_status runtime_inference_progress(runtime *w, int phase, int state,
+                                                 runtime_event *out) {
+    runtime_inference_end(w);
+    memset(out, 0, sizeof *out);
+    out->kind = RUNTIME_EVENT_INFERENCE_PROGRESS;
+    out->phase = (uint32_t)phase;
+    out->state = (uint32_t)state;
+    out->progress = phase == RUNTIME_INFERENCE_PREFILL
+                    ? w->inference.prefill : w->inference.decode;
+    if (phase == RUNTIME_INFERENCE_DECODE)
+        w->decode_progress_ns = w->inference_ns[1];
+    return RUNTIME_OK;
 }
 
 static int runtime_default_cache_dir(char *out, size_t cap) {
@@ -1075,6 +1120,15 @@ static void runtime_gen_reset(runtime *w, int reasoning_open) {
     w->utf8_pending = 0;
     w->replay_from = 0;
     memset(&w->usage, 0, sizeof w->usage);
+    memset(&w->inference, 0, sizeof w->inference);
+    memset(w->inference_ns, 0, sizeof w->inference_ns);
+    w->decode_progress_ns = 0;
+    w->inference_active = 0;
+    w->prefill_started_emitted = 0;
+    w->prefill_complete_emitted = 0;
+    w->decode_complete_emitted = 0;
+    w->decode_started_emitted = 0;
+    w->terminal_pending = 0;
     json_writer_reset(&w->content);
     json_writer_reset(&w->reasoning);
     json_writer_reset(&w->render);
@@ -1188,6 +1242,7 @@ static runtime_status runtime_gen_prepare(runtime *w, xe_session *session,
             }
         }
     }
+    w->inference.prefill.total = (uint64_t)(w->prompt_length - common);
     w->prompt_common = common;
     w->prompt_synced = common;
     w->gen_phase = RUNTIME_PHASE_PREFILL;
@@ -1497,8 +1552,10 @@ static void runtime_gen_teardown(runtime *w) {
 
 static runtime_status runtime_gen_error(runtime *w, runtime_status status,
                                   runtime_event *out) {
+    runtime_inference_end(w);
     runtime_gen_teardown(w);
     memset(out, 0, sizeof *out);
+    out->inference = w->inference;
     out->kind = RUNTIME_EVENT_ERROR;
     out->error = status;
     out->error_text = w->error_text;
@@ -1759,6 +1816,7 @@ static runtime_status runtime_finalize(runtime *w, uint32_t runtime_stop_reason,
     }
     runtime_gen_teardown(w);
     memset(out, 0, sizeof *out);
+    out->inference = w->inference;
     out->kind = RUNTIME_EVENT_DONE;
     out->stop = runtime_stop_reason;
     out->reasoning_close = w->reasoning_close;
@@ -1771,7 +1829,28 @@ static runtime_status runtime_finalize(runtime *w, uint32_t runtime_stop_reason,
     return RUNTIME_OK;
 }
 
-runtime_status runtime_next_event(runtime *w, runtime_event *out) {
+/* Yield terminal phase measurements before expensive persistence. The stop
+ * token has already been consumed, so subsequent calls never sample it twice. */
+static runtime_status runtime_complete(runtime *w, uint32_t stop,
+                                       uint32_t record, runtime_event *out) {
+    runtime_inference_end(w);
+    w->terminal_pending = 1;
+    w->terminal_stop = stop;
+    w->terminal_record = record;
+    if (w->prefill_started_emitted && !w->prefill_complete_emitted) {
+        w->prefill_complete_emitted = 1;
+        return runtime_inference_progress(w, RUNTIME_INFERENCE_PREFILL,
+                                          RUNTIME_INFERENCE_FINISHED, out);
+    }
+    if (w->decode_started_emitted && !w->decode_complete_emitted) {
+        w->decode_complete_emitted = 1;
+        return runtime_inference_progress(w, RUNTIME_INFERENCE_DECODE,
+                                          RUNTIME_INFERENCE_FINISHED, out);
+    }
+    return runtime_finalize(w, stop, record, out);
+}
+
+static runtime_status runtime_next_event_impl(runtime *w, runtime_event *out) {
     if (!w || !out) return RUNTIME_INVALID_ARGUMENT;
     if (w->gen_kind == RUNTIME_GEN_NONE)
         return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
@@ -1785,62 +1864,81 @@ runtime_status runtime_next_event(runtime *w, runtime_event *out) {
     }
 
     for (;;) {
+        if (w->terminal_pending)
+            return runtime_complete(w, w->terminal_stop, w->terminal_record, out);
         if (w->cancel_requested)
-            return runtime_finalize(w, RUNTIME_STOP_ABORTED,
+            return runtime_complete(w, RUNTIME_STOP_ABORTED,
                                  CONVERSATION_STOP_CANCELLED, out);
 
+        if (w->inference_ns[1] - w->decode_progress_ns >= UINT64_C(250000000))
+            return runtime_inference_progress(w, RUNTIME_INFERENCE_DECODE,
+                                              RUNTIME_INFERENCE_RUNNING, out);
+
         if (w->gen_phase == RUNTIME_PHASE_PREFILL) {
+            if (!w->prefill_started_emitted) {
+                runtime_shadow_wait(w, 1);
+                w->prefill_started_emitted = 1;
+                return runtime_inference_progress(w, RUNTIME_INFERENCE_PREFILL,
+                                                  RUNTIME_INFERENCE_RUNNING, out);
+            }
             int target = w->prompt_synced + RUNTIME_PREFILL_CHUNK;
             if (target > w->prompt_length) target = w->prompt_length;
             if (!w->first_sync_done || w->prompt_synced < w->prompt_length) {
                 runtime_shadow_wait(w, 1);
                 xe_tokens prefix = { w->prompt, target, w->context };
                 xe_sync_report report;
+                runtime_inference_begin(w, RUNTIME_INFERENCE_PREFILL);
                 xe_session_sync_report(w->gen_session, &prefix, &report);
+                runtime_inference_end(w);
                 if (!w->first_sync_done) {
                     w->usage.cache_read = (uint64_t)report.reused;
                     w->first_sync_done = 1;
                 }
+                w->inference.prefill.tokens += (uint64_t)report.prefilled;
+                w->inference.prefill.total = w->inference.prefill.tokens +
+                    (uint64_t)(w->prompt_length - target);
                 w->usage.input += (uint64_t)report.prefilled;
                 if (w->replay_from)
                     w->usage.replayed += (uint64_t)report.prefilled;
                 w->prompt_synced = target;
-                if (w->prompt_synced >= w->prompt_length) {
-                    w->gen_phase = RUNTIME_PHASE_DECODE;
-                    w->replay_from = 0;
-                    if (w->capture_anchor) {
-                        xe_session_anchor_capture(w->gen_session);
-                        w->capture_anchor = 0;
-                        runtime_shadow_begin(w);
-                    }
-                    runtime_status shadow_status = runtime_shadow_tick(w);
-                    if (shadow_status != RUNTIME_OK)
-                        return runtime_gen_error(w, shadow_status, out);
-                }
-                if (w->usage.input > 0 &&
-                    (uint64_t)w->prompt_length > w->usage.cache_read) {
-                    out->kind = RUNTIME_EVENT_PROGRESS;
-                    out->prefilled = w->usage.input;
-                    out->prefill_total = (uint64_t)w->prompt_length -
-                                         w->usage.cache_read;
-                    return RUNTIME_OK;
-                }
-                continue;
+                if (w->prompt_synced < w->prompt_length)
+                    return runtime_inference_progress(w, RUNTIME_INFERENCE_PREFILL,
+                                                      RUNTIME_INFERENCE_RUNNING, out);
             }
             w->gen_phase = RUNTIME_PHASE_DECODE;
-            continue;
+            w->replay_from = 0;
+            w->prefill_complete_emitted = 1;
+            return runtime_inference_progress(w, RUNTIME_INFERENCE_PREFILL,
+                                              RUNTIME_INFERENCE_FINISHED, out);
         }
 
+        if (!w->decode_started_emitted) {
+            /* Between the closed prefill and the not-yet-open decode. These
+             * setup costs belong to neither phase's active measurements. */
+            if (w->capture_anchor) {
+                xe_session_anchor_capture(w->gen_session);
+                w->capture_anchor = 0;
+                runtime_shadow_begin(w);
+            }
+            runtime_status shadow_status = runtime_shadow_tick(w);
+            if (shadow_status != RUNTIME_OK)
+                return runtime_gen_error(w, shadow_status, out);
+            w->decode_started_emitted = 1;
+            return runtime_inference_progress(w, RUNTIME_INFERENCE_DECODE,
+                                              RUNTIME_INFERENCE_RUNNING, out);
+        }
+
+        runtime_inference_begin(w, RUNTIME_INFERENCE_DECODE);
         runtime_status shadow_status = runtime_shadow_tick(w);
         if (shadow_status != RUNTIME_OK)
             return runtime_gen_error(w, shadow_status, out);
 
         if (w->gen_max_tokens > 0 &&
             w->sampled_length >= w->gen_max_tokens)
-            return runtime_finalize(w, RUNTIME_STOP_LENGTH,
+            return runtime_complete(w, RUNTIME_STOP_LENGTH,
                                  CONVERSATION_STOP_LIMIT, out);
         if (w->prompt_length + w->sampled_length >= w->context - 1)
-            return runtime_finalize(w, RUNTIME_STOP_LENGTH,
+            return runtime_complete(w, RUNTIME_STOP_LENGTH,
                                  CONVERSATION_STOP_LIMIT, out);
 
         uint32_t forced_close = CONVERSATION_REASONING_NONE;
@@ -1885,15 +1983,15 @@ runtime_status runtime_next_event(runtime *w, runtime_event *out) {
             switch (event.stop_reason) {
             case PROFILE_STOP_TOOL_CALLS:
                 if (w->call_count)
-                    return runtime_finalize(w, RUNTIME_STOP_TOOL_USE,
+                    return runtime_complete(w, RUNTIME_STOP_TOOL_USE,
                                          CONVERSATION_STOP_TOOL_CALLS, out);
-                return runtime_finalize(w, RUNTIME_STOP_STOP,
+                return runtime_complete(w, RUNTIME_STOP_STOP,
                                      CONVERSATION_STOP_TOOL_CALLS, out);
             case PROFILE_STOP_EOS:
-                return runtime_finalize(w, RUNTIME_STOP_STOP,
+                return runtime_complete(w, RUNTIME_STOP_STOP,
                                      CONVERSATION_STOP_EOS, out);
             default:
-                return runtime_finalize(w, RUNTIME_STOP_STOP,
+                return runtime_complete(w, RUNTIME_STOP_STOP,
                                      CONVERSATION_STOP_EOT_SAMPLED, out);
             }
         }
@@ -1955,9 +2053,16 @@ runtime_status runtime_next_event(runtime *w, runtime_event *out) {
             return RUNTIME_OK;
         }
         default:
+            runtime_inference_end(w);
             continue;
         }
     }
+}
+
+runtime_status runtime_next_event(runtime *w, runtime_event *out) {
+    runtime_status status = runtime_next_event_impl(w, out);
+    if (w) runtime_inference_end(w);
+    return status;
 }
 
 runtime_status runtime_rewind(runtime *w, runtime_marker marker) {

@@ -34,7 +34,7 @@ clean:
 		tests/test_snapshot_model \
 		tests/test_kvstore tests/test_conversation \
 		tests/test_conversation_model \
-		tests/test_json tests/test_profile tests/test_runtime \
+		tests/test_json tests/test_profile tests/test_inference tests/test_runtime \
 		tests/test_runtime_model tests/test_serve tests/test_serve_model \
 		bench/bench_attention bench/bench_tg bench/bench_b3b bench/bench_b3b_8e \
 		bench/bench_guard bench/compare_pp_tg_xe bench/compare_pp_tg_tokens \
@@ -60,7 +60,7 @@ LLAMA_LDLIBS=-lllama -lggml -lggml-base
 
 TEST_CFLAGS=-O2 -std=c11 -Wall -Wextra -pthread
 
-UNIT_TESTS=tests/test_format tests/test_json tests/test_decode tests/test_conversation
+UNIT_TESTS=tests/test_inference tests/test_format tests/test_json tests/test_decode tests/test_conversation
 GPU_TESTS=tests/test_kv tests/test_snapshot tests/test_kvstore tests/test_prefill_session
 PERSISTENCE_TESTS=tests/test_snapshot_model tests/test_conversation_model tests/test_session_sync
 PREFILL_TESTS=tests/test_prefill_projection tests/test_prefill_qkv tests/test_prefill_swa \
@@ -91,6 +91,9 @@ tests/test_json: tests/test_json.c json.o json.h
 
 tests/test_profile: tests/test_profile.c profile.o profile.h json.o format.o xenolith.o xenolith.h $(GPU_OBJ)
 	$(CC) $(CFLAGS) -I. -o $@ tests/test_profile.c profile.o json.o format.o xenolith.o $(GPU_OBJ) $(LDLIBS)
+
+tests/test_inference: tests/test_inference.c runtime.c runtime.h serve.c serve.h profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_inference.c profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ) $(LDLIBS)
 
 tests/test_runtime: tests/test_runtime.c runtime.o runtime.h profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ)
 	$(CC) $(CFLAGS) -I. -o $@ tests/test_runtime.c runtime.o profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ) $(LDLIBS)
@@ -209,6 +212,9 @@ tests/test_fixture_decode: tests/test_fixture_decode.c xenolith.c xenolith.h for
 check-kv: tests/test_kv
 	./tests/test_kv
 
+check-inference: tests/test_inference
+	./tests/test_inference
+
 check-unit: $(UNIT_TESTS)
 	@set -e; for test in $(UNIT_TESTS); do ./$$test; done
 
@@ -290,6 +296,6 @@ test-tools-clean:
 require-model:
 	@test -f "$(MODEL)" || { printf '%s\n' 'Set MODEL to the path of the Gemma 4 GGUF file.' >&2; exit 2; }
 
-.PHONY: require-model clean check check-unit check-gpu check-persistence check-prefill check-all \
+.PHONY: require-model clean check check-inference check-unit check-gpu check-persistence check-prefill check-all \
 	check-kv check-runtime check-serve golden test-tools test-tools-clean \
 	bench-b3b bench-b14 bench-prefill-gemm

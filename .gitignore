@@ -71,3 +71,5 @@
 /xenolith-safe
 /xenolith-wire-bench
 /xenolith-wire-ecore-bench
+
+/tests/test_inference

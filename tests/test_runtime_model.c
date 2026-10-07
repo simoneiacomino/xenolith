@@ -38,6 +38,7 @@ typedef struct {
     runtime_marker marker;
     int error;
     int progress_events;
+    runtime_inference inference;
     int checkpoint_attempted;
     runtime_checkpoint_report checkpoint;
     int resume_attempted;
@@ -47,6 +48,9 @@ typedef struct {
 static void run_generation(runtime *w, run_result *out, int cancel_after_text) {
     memset(out, 0, sizeof *out);
     out->marker = RUNTIME_MARKER_NONE;
+    runtime_inference_measure phases[2] = {{0}, {0}};
+    int phase_seen[2] = {0};
+    int phase_finished[2] = {0};
     for (;;) {
         runtime_event event;
         runtime_status status = runtime_next_event(w, &event);
@@ -56,9 +60,29 @@ static void run_generation(runtime *w, run_result *out, int cancel_after_text) {
             return;
         }
         switch (event.kind) {
-        case RUNTIME_EVENT_PROGRESS:
+        case RUNTIME_EVENT_INFERENCE_PROGRESS: {
+            CHECK(event.phase <= RUNTIME_INFERENCE_DECODE);
+            if (event.phase > RUNTIME_INFERENCE_DECODE) return;
+            CHECK(!phase_finished[event.phase]);
+            CHECK(event.state == RUNTIME_INFERENCE_RUNNING ||
+                  event.state == RUNTIME_INFERENCE_FINISHED);
+            if (!phase_seen[event.phase]) {
+                CHECK(event.state == RUNTIME_INFERENCE_RUNNING);
+                CHECK(event.progress.tokens == 0 && event.progress.elapsed_ms == 0);
+                if (event.phase == RUNTIME_INFERENCE_DECODE)
+                    CHECK(phase_finished[RUNTIME_INFERENCE_PREFILL]);
+            }
+            phase_finished[event.phase] = event.state == RUNTIME_INFERENCE_FINISHED;
+            runtime_inference_measure *previous = &phases[event.phase];
+            CHECK(event.progress.tokens >= previous->tokens);
+            CHECK(event.progress.elapsed_ms >= previous->elapsed_ms);
+            if (event.phase == RUNTIME_INFERENCE_PREFILL)
+                CHECK(event.progress.tokens <= event.progress.total);
+            *previous = event.progress;
+            phase_seen[event.phase] = 1;
             out->progress_events++;
             break;
+        }
         case RUNTIME_EVENT_TEXT_DELTA:
             if (out->text_length + event.text_length <
                 sizeof out->text - 1) {
@@ -92,6 +116,17 @@ static void run_generation(runtime *w, run_result *out, int cancel_after_text) {
             out->calls++;
             break;
         case RUNTIME_EVENT_DONE:
+            out->inference = event.inference;
+            CHECK(!phase_seen[0] || phase_finished[0]);
+            CHECK(!phase_seen[1] || phase_finished[1]);
+            if (event.stop != RUNTIME_STOP_ABORTED)
+                CHECK(phase_seen[0] && phase_seen[1]);
+            CHECK(event.inference.prefill.tokens == phases[0].tokens);
+            CHECK(event.inference.prefill.elapsed_ms == phases[0].elapsed_ms);
+            CHECK(event.inference.decode.tokens == phases[1].tokens);
+            CHECK(event.inference.decode.elapsed_ms == phases[1].elapsed_ms);
+            CHECK(event.inference.decode.tokens == event.usage.output);
+            CHECK(event.inference.prefill.tokens <= event.usage.input);
             out->stop = event.stop;
             out->reasoning_close = event.reasoning_close;
             out->usage = event.usage;

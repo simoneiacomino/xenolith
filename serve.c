@@ -653,6 +653,29 @@ static void serve_log_kvstore(const runtime *w, const char *cache_dir) {
             cache_dir ? cache_dir : "default cache dir");
 }
 
+static void serve_inference_measure(json_writer *out,
+                                    const runtime_inference_measure *measure,
+                                    int prefill) {
+    json_raw(out, "{\"tokens\":");
+    json_u64(out, measure->tokens);
+    if (prefill) {
+        json_raw(out, ",\"total\":");
+        json_u64(out, measure->total);
+    }
+    json_raw(out, ",\"elapsed_ms\":");
+    json_u64(out, measure->elapsed_ms);
+    json_raw(out, "}");
+}
+
+static void serve_inference(json_writer *out,
+                            const runtime_inference *inference) {
+    json_raw(out, ",\"inference\":{\"prefill\":");
+    serve_inference_measure(out, &inference->prefill, 1);
+    json_raw(out, ",\"decode\":");
+    serve_inference_measure(out, &inference->decode, 0);
+    json_raw(out, "}");
+}
+
 static void serve_emit_event(serve *s, serve_conn *c,
                              const runtime_event *event) {
     json_writer *out = &s->out;
@@ -661,11 +684,21 @@ static void serve_emit_event(serve *s, serve_conn *c,
     case RUNTIME_EVENT_START:
         json_raw(out, "{\"event\":\"start\"}");
         break;
-    case RUNTIME_EVENT_PROGRESS:
-        json_raw(out, "{\"event\":\"progress\",\"prefilled\":");
-        json_u64(out, event->prefilled);
-        json_raw(out, ",\"total\":");
-        json_u64(out, event->prefill_total);
+    case RUNTIME_EVENT_INFERENCE_PROGRESS:
+        json_raw(out, "{\"event\":\"inference_progress\",\"phase\":\"");
+        json_raw(out, event->phase == RUNTIME_INFERENCE_PREFILL
+                      ? "prefill" : "decode");
+        json_raw(out, "\",\"state\":\"");
+        json_raw(out, event->state == RUNTIME_INFERENCE_FINISHED
+                      ? "finished" : "running");
+        json_raw(out, "\",\"tokens\":");
+        json_u64(out, event->progress.tokens);
+        if (event->phase == RUNTIME_INFERENCE_PREFILL) {
+            json_raw(out, ",\"total\":");
+            json_u64(out, event->progress.total);
+        }
+        json_raw(out, ",\"elapsed_ms\":");
+        json_u64(out, event->progress.elapsed_ms);
         json_raw(out, "}");
         break;
     case RUNTIME_EVENT_TEXT_DELTA:
@@ -719,7 +752,9 @@ static void serve_emit_event(serve *s, serve_conn *c,
         json_u64(out, event->usage.shadow_wait_us);
         json_raw(out, ",\"total\":");
         json_u64(out, event->usage.total);
-        json_raw(out, "},\"marker\":");
+        json_raw(out, "}");
+        serve_inference(out, &event->inference);
+        json_raw(out, ",\"marker\":");
         if (event->marker == RUNTIME_MARKER_NONE) json_raw(out, "null");
         else json_u64(out, event->marker);
         if (event->reasoning_close != CONVERSATION_REASONING_NONE) {
@@ -765,6 +800,7 @@ static void serve_emit_event(serve *s, serve_conn *c,
                     event->error_text ? strlen(event->error_text) : 0);
         serve_error_detail(out, (runtime_status)event->error,
                            event->error_tokens, event->error_context);
+        serve_inference(out, &event->inference);
         json_raw(out, "}");
         break;
     }
@@ -1315,7 +1351,7 @@ static void serve_run_queue(serve *s) {
 static void serve_stream_pull(serve *s) {
     serve_conn *owner = s->gen_owner >= 0 ? &s->conns[s->gen_owner] : NULL;
     if (owner && !owner->active) owner = NULL;
-    runtime_event event;
+    runtime_event event = {0};
     runtime_status status = runtime_next_event(s->w, &event);
     if (status != RUNTIME_OK) {
         event.kind = RUNTIME_EVENT_ERROR;
