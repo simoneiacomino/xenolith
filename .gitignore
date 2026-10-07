@@ -60,8 +60,8 @@
 /tests/test_session_sync
 /tests/test_snapshot
 /tests/test_snapshot_model
-/tests/test_wire
-/tests/test_wire_model
+/tests/test_runtime
+/tests/test_runtime_model
 /tests/tokenize_prompt
 /tools/compare_logits
 /tools/dump_layers

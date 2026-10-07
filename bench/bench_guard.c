@@ -212,7 +212,7 @@ static int known_heavy_comm(const char *comm) {
     if (!strcmp(comm, "xenolith")) return 1;
     if (!strncmp(comm, "llama-", 6)) return 1;
     if (!strncmp(comm, "test_prefill", 12)) return 1;
-    if (!strncmp(comm, "test_wire_mod", 13)) return 1;
+    if (!strncmp(comm, "test_runtime_mo", 15)) return 1;
     if (!strncmp(comm, "test_model_dec", 14)) return 1;
     if (!strncmp(comm, "test_fixture_d", 14)) return 1;
     if (!strncmp(comm, "test_snapshot_", 14)) return 1;

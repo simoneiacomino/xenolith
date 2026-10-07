@@ -2,7 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "serve.h"
-#include "wire.h"
+#include "runtime.h"
 #include "json.h"
 
 #include <errno.h>
@@ -63,7 +63,7 @@ typedef struct {
 } serve_conn;
 
 typedef struct {
-    wire *w;
+    runtime *w;
     int listen_fd;
     const char *socket_path;
     serve_conn conns[SERVE_MAX_CONNECTIONS];
@@ -254,7 +254,7 @@ static void serve_drop(serve *s, serve_conn *c) {
     if (!c->active) return;
     int index = serve_conn_index(s, c);
     if (s->generating && s->gen_owner == index) {
-        wire_cancel(s->w);
+        runtime_cancel(s->w);
         s->gen_owner = -1;
     }
     if (c->queued) serve_dequeue(s, index);
@@ -343,23 +343,23 @@ static void serve_ok_begin(serve *s) {
     json_raw(&s->out, "{\"ok\":true");
 }
 
-static void serve_error_detail(json_writer *out, wire_status status,
+static void serve_error_detail(json_writer *out, runtime_status status,
                                uint64_t tokens, uint64_t context) {
-    if (status != WIRE_CONTEXT_LENGTH_EXCEEDED || !context) return;
+    if (status != RUNTIME_CONTEXT_LENGTH_EXCEEDED || !context) return;
     json_raw(out, ",\"tokens\":");
     json_u64(out, tokens);
     json_raw(out, ",\"context\":");
     json_u64(out, context);
 }
 
-static void serve_error_with(serve *s, serve_conn *c, wire_status status,
+static void serve_error_with(serve *s, serve_conn *c, runtime_status status,
                              const char *text, uint64_t tokens,
                              uint64_t context) {
     json_writer *out = &s->out;
     json_writer_reset(out);
     json_raw(out, "{\"ok\":false,\"code\":");
-    json_string(out, wire_status_code(status),
-                strlen(wire_status_code(status)));
+    json_string(out, runtime_status_code(status),
+                strlen(runtime_status_code(status)));
     json_raw(out, ",\"error\":");
     json_string(out, text, strlen(text));
     serve_error_detail(out, status, tokens, context);
@@ -367,25 +367,25 @@ static void serve_error_with(serve *s, serve_conn *c, wire_status status,
     serve_emit(s, c);
 }
 
-static void serve_error(serve *s, serve_conn *c, wire_status status,
+static void serve_error(serve *s, serve_conn *c, runtime_status status,
                         const char *text) {
     serve_error_with(s, c, status, text, 0, 0);
 }
 
-static void serve_wire_error(serve *s, serve_conn *c, wire_status status) {
-    const char *text = wire_error_text(s->w);
+static void serve_runtime_error(serve *s, serve_conn *c, runtime_status status) {
+    const char *text = runtime_error_text(s->w);
     uint64_t tokens = 0, context = 0;
-    wire_error_detail(s->w, &tokens, &context);
-    serve_error_with(s, c, status, *text ? text : wire_status_code(status),
+    runtime_error_detail(s->w, &tokens, &context);
+    serve_error_with(s, c, status, *text ? text : runtime_status_code(status),
                      tokens, context);
 }
 
 static const char *serve_stop_name(uint32_t stop) {
     switch (stop) {
-    case WIRE_STOP_STOP: return "stop";
-    case WIRE_STOP_TOOL_USE: return "tool_use";
-    case WIRE_STOP_LENGTH: return "length";
-    case WIRE_STOP_ABORTED: return "aborted";
+    case RUNTIME_STOP_STOP: return "stop";
+    case RUNTIME_STOP_TOOL_USE: return "tool_use";
+    case RUNTIME_STOP_LENGTH: return "length";
+    case RUNTIME_STOP_ABORTED: return "aborted";
     }
     return "unknown";
 }
@@ -422,7 +422,7 @@ typedef struct {
 } serve_tools;
 
 typedef struct {
-    wire_message *items;
+    runtime_message *items;
     size_t count;
     profile_call *calls;
     char **owned;
@@ -512,14 +512,14 @@ static int serve_messages_parse(const json_value *request,
     }
     size_t i = 0, call_at = 0;
     for (const json_value *v = array->child; v; v = v->next, i++) {
-        wire_message *m = &out->items[i];
+        runtime_message *m = &out->items[i];
         const char *role = serve_str(v, "role");
         if (!role) return 0;
         m->text = serve_str(v, "text");
         if (!strcmp(role, "user")) {
-            m->kind = WIRE_MESSAGE_USER;
+            m->kind = RUNTIME_MESSAGE_USER;
         } else if (!strcmp(role, "assistant")) {
-            m->kind = WIRE_MESSAGE_ASSISTANT;
+            m->kind = RUNTIME_MESSAGE_ASSISTANT;
             m->reasoning = serve_str(v, "reasoning");
             const json_value *calls = json_member(v, "calls");
             if (calls && calls->type == JSON_ARRAY && calls->child) {
@@ -543,7 +543,7 @@ static int serve_messages_parse(const json_value *request,
                 }
             }
         } else if (!strcmp(role, "tool")) {
-            m->kind = WIRE_MESSAGE_TOOL_RESULT;
+            m->kind = RUNTIME_MESSAGE_TOOL_RESULT;
             m->tool_name = serve_str(v, "tool");
             serve_u64(v, "call_id", &m->call_id);
             const char *status = serve_str(v, "status");
@@ -559,7 +559,7 @@ static int serve_messages_parse(const json_value *request,
 }
 
 static int serve_params_parse(const json_value *request,
-                              wire_gen_params *params) {
+                              runtime_gen_params *params) {
     memset(params, 0, sizeof *params);
     params->temperature = -1.0f;
     params->top_k = -1;
@@ -625,27 +625,27 @@ static int serve_params_parse(const json_value *request,
     return 1;
 }
 
-static int serve_ckpt_noteworthy(const wire_checkpoint_report *r) {
-    return !r->saved && r->reason != WIRE_CKPT_NOTHING_NEW &&
-           r->reason != WIRE_CKPT_EMPTY;
+static int serve_ckpt_noteworthy(const runtime_checkpoint_report *r) {
+    return !r->saved && r->reason != RUNTIME_CKPT_NOTHING_NEW &&
+           r->reason != RUNTIME_CKPT_EMPTY;
 }
 
 static void serve_log_checkpoint(const char *where,
-                                 const wire_checkpoint_report *r) {
+                                 const runtime_checkpoint_report *r) {
     if (!serve_ckpt_noteworthy(r)) return;
     fprintf(stderr, "xenolith: checkpoint (%s): not saved, %s, %llu tokens\n",
-            where, wire_ckpt_reason_name(r->reason),
+            where, runtime_ckpt_reason_name(r->reason),
             (unsigned long long)r->tokens);
 }
 
-static void serve_log_resume(const wire_resume_report *r) {
+static void serve_log_resume(const runtime_resume_report *r) {
     if (r->loaded) return;
     fprintf(stderr, "xenolith: resume: snapshot not loaded, %s, %llu tokens\n",
-            wire_resume_reason_name(r->reason), (unsigned long long)r->tokens);
+            runtime_resume_reason_name(r->reason), (unsigned long long)r->tokens);
 }
 
-static void serve_log_kvstore(const wire *w, const char *cache_dir) {
-    int status = wire_kvstore_open_status(w);
+static void serve_log_kvstore(const runtime *w, const char *cache_dir) {
+    int status = runtime_kvstore_open_status(w);
     if (status == KVSTORE_OK) return;
     fprintf(stderr, "xenolith: kvstore disabled: open failed (%s) at %s; "
             "sessions will not resume from cache\n",
@@ -654,38 +654,38 @@ static void serve_log_kvstore(const wire *w, const char *cache_dir) {
 }
 
 static void serve_emit_event(serve *s, serve_conn *c,
-                             const wire_event *event) {
+                             const runtime_event *event) {
     json_writer *out = &s->out;
     json_writer_reset(out);
     switch (event->kind) {
-    case WIRE_EVENT_START:
+    case RUNTIME_EVENT_START:
         json_raw(out, "{\"event\":\"start\"}");
         break;
-    case WIRE_EVENT_PROGRESS:
+    case RUNTIME_EVENT_PROGRESS:
         json_raw(out, "{\"event\":\"progress\",\"prefilled\":");
         json_u64(out, event->prefilled);
         json_raw(out, ",\"total\":");
         json_u64(out, event->prefill_total);
         json_raw(out, "}");
         break;
-    case WIRE_EVENT_TEXT_DELTA:
+    case RUNTIME_EVENT_TEXT_DELTA:
         json_raw(out, "{\"event\":\"text_delta\",\"text\":");
         json_string(out, (const char *)event->text, event->text_length);
         json_raw(out, "}");
         break;
-    case WIRE_EVENT_REASONING_DELTA:
+    case RUNTIME_EVENT_REASONING_DELTA:
         json_raw(out, "{\"event\":\"reasoning_delta\",\"text\":");
         json_string(out, (const char *)event->text, event->text_length);
         json_raw(out, "}");
         break;
-    case WIRE_EVENT_TOOLCALL_START:
+    case RUNTIME_EVENT_TOOLCALL_START:
         json_raw(out, "{\"event\":\"toolcall_start\",\"id\":");
         json_u64(out, event->call_id);
         json_raw(out, ",\"name\":");
         json_string(out, event->call_name, strlen(event->call_name));
         json_raw(out, "}");
         break;
-    case WIRE_EVENT_TOOLCALL_END:
+    case RUNTIME_EVENT_TOOLCALL_END:
         json_raw(out, "{\"event\":\"toolcall_end\",\"id\":");
         json_u64(out, event->call_id);
         json_raw(out, ",\"name\":");
@@ -694,7 +694,7 @@ static void serve_emit_event(serve *s, serve_conn *c,
         json_raw(out, event->arguments_json);
         json_raw(out, "}");
         break;
-    case WIRE_EVENT_DONE:
+    case RUNTIME_EVENT_DONE:
         json_raw(out, "{\"event\":\"done\",\"stop\":\"");
         json_raw(out, serve_stop_name(event->stop));
         json_raw(out, "\",\"usage\":{\"input\":");
@@ -720,7 +720,7 @@ static void serve_emit_event(serve *s, serve_conn *c,
         json_raw(out, ",\"total\":");
         json_u64(out, event->usage.total);
         json_raw(out, "},\"marker\":");
-        if (event->marker == WIRE_MARKER_NONE) json_raw(out, "null");
+        if (event->marker == RUNTIME_MARKER_NONE) json_raw(out, "null");
         else json_u64(out, event->marker);
         if (event->reasoning_close != CONVERSATION_REASONING_NONE) {
             const char *close = serve_reasoning_close_name(
@@ -729,7 +729,7 @@ static void serve_emit_event(serve *s, serve_conn *c,
             json_string(out, close, strlen(close));
         }
         if (event->checkpoint_attempted) {
-            const char *reason = wire_ckpt_reason_name(event->checkpoint.reason);
+            const char *reason = runtime_ckpt_reason_name(event->checkpoint.reason);
             serve_log_checkpoint("autosave", &event->checkpoint);
             json_raw(out, ",\"checkpoint\":{\"saved\":");
             json_raw(out, event->checkpoint.saved ? "true" : "false");
@@ -742,7 +742,7 @@ static void serve_emit_event(serve *s, serve_conn *c,
             json_raw(out, "}");
         }
         if (event->resume_attempted) {
-            const char *reason = wire_resume_reason_name(event->resume.reason);
+            const char *reason = runtime_resume_reason_name(event->resume.reason);
             serve_log_resume(&event->resume);
             json_raw(out, ",\"resume\":{\"loaded\":");
             json_raw(out, event->resume.loaded ? "true" : "false");
@@ -756,14 +756,14 @@ static void serve_emit_event(serve *s, serve_conn *c,
         }
         json_raw(out, "}");
         break;
-    case WIRE_EVENT_ERROR:
+    case RUNTIME_EVENT_ERROR:
         json_raw(out, "{\"event\":\"error\",\"code\":");
-        json_string(out, wire_status_code(event->error),
-                    strlen(wire_status_code(event->error)));
+        json_string(out, runtime_status_code(event->error),
+                    strlen(runtime_status_code(event->error)));
         json_raw(out, ",\"error\":");
         json_string(out, event->error_text ? event->error_text : "",
                     event->error_text ? strlen(event->error_text) : 0);
-        serve_error_detail(out, (wire_status)event->error,
+        serve_error_detail(out, (runtime_status)event->error,
                            event->error_tokens, event->error_context);
         json_raw(out, "}");
         break;
@@ -776,15 +776,15 @@ static int serve_dispatch(serve *s, serve_conn *c,
     json_writer *out = &s->out;
     const char *op = serve_str(request, "op");
     if (!op) {
-        serve_error(s, c, WIRE_INVALID_ARGUMENT, "missing op");
+        serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "missing op");
         return 0;
     }
-    wire_status status;
+    runtime_status status;
     if (!strcmp(op, "describe")) {
-        wire_info info;
-        status = wire_describe(s->w, &info);
-        if (status != WIRE_OK) {
-            serve_wire_error(s, c, status);
+        runtime_info info;
+        status = runtime_describe(s->w, &info);
+        if (status != RUNTIME_OK) {
+            serve_runtime_error(s, c, status);
             return 0;
         }
         serve_ok_begin(s);
@@ -812,17 +812,17 @@ static int serve_dispatch(serve *s, serve_conn *c,
         serve_tools tools;
         if (!serve_tools_parse(request, &tools)) {
             serve_tools_free(&tools);
-            serve_error(s, c, WIRE_INVALID_ARGUMENT, "invalid tools");
+            serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "invalid tools");
             return 0;
         }
         conversation_id id;
-        wire_marker marker;
-        status = wire_session_create(s->w, serve_str(request, "system"),
+        runtime_marker marker;
+        status = runtime_session_create(s->w, serve_str(request, "system"),
                                      tools.tools, tools.count, &id,
                                      &marker);
         serve_tools_free(&tools);
-        if (status != WIRE_OK) {
-            serve_wire_error(s, c, status);
+        if (status != RUNTIME_OK) {
+            serve_runtime_error(s, c, status);
             return 0;
         }
         c->session = id;
@@ -842,14 +842,14 @@ static int serve_dispatch(serve *s, serve_conn *c,
         !strcmp(op, "delete")) {
         conversation_id id;
         if (!serve_id_parse(serve_str(request, "session"), &id)) {
-            serve_error(s, c, WIRE_INVALID_ARGUMENT, "invalid session id");
+            serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "invalid session id");
             return 0;
         }
         if (!strcmp(op, "delete")) {
             int bound = c->has_session &&
                         memcmp(c->session.bytes, id.bytes, 16) == 0;
-            status = wire_session_delete(s->w, &id);
-            if (status != WIRE_OK) serve_wire_error(s, c, status);
+            status = runtime_session_delete(s->w, &id);
+            if (status != RUNTIME_OK) serve_runtime_error(s, c, status);
             else {
                 if (bound) c->has_session = 0;
                 serve_ok_begin(s);
@@ -860,9 +860,9 @@ static int serve_dispatch(serve *s, serve_conn *c,
         }
         if (!strcmp(op, "stat")) {
             conversation_summary summary;
-            status = wire_session_stat(s->w, &id, &summary);
-            if (status != WIRE_OK) {
-                serve_wire_error(s, c, status);
+            status = runtime_session_stat(s->w, &id, &summary);
+            if (status != RUNTIME_OK) {
+                serve_runtime_error(s, c, status);
                 return 0;
             }
             char hex[33];
@@ -884,10 +884,10 @@ static int serve_dispatch(serve *s, serve_conn *c,
             serve_emit(s, c);
             return 0;
         }
-        wire_open_report report;
-        status = wire_session_open(s->w, &id, &report);
-        if (status != WIRE_OK) {
-            serve_wire_error(s, c, status);
+        runtime_open_report report;
+        status = runtime_session_open(s->w, &id, &report);
+        if (status != RUNTIME_OK) {
+            serve_runtime_error(s, c, status);
             return 0;
         }
         c->session = id;
@@ -896,7 +896,7 @@ static int serve_dispatch(serve *s, serve_conn *c,
         json_raw(out, ",\"tokens\":");
         json_u64(out, report.token_count);
         json_raw(out, ",\"marker\":");
-        if (report.marker == WIRE_MARKER_NONE) json_raw(out, "null");
+        if (report.marker == RUNTIME_MARKER_NONE) json_raw(out, "null");
         else json_u64(out, report.marker);
         json_raw(out, ",\"turn_open\":");
         json_raw(out, report.turn_open ? "true" : "false");
@@ -907,7 +907,7 @@ static int serve_dispatch(serve *s, serve_conn *c,
                       : report.resume_stale ? "\"stale\"" : "\"none\"");
         json_raw(out, ",\"pending\":[");
         uint64_t pending[64];
-        size_t pending_count = wire_pending_calls(
+        size_t pending_count = runtime_pending_calls(
             s->w, pending, sizeof pending / sizeof pending[0]);
         if (pending_count > sizeof pending / sizeof pending[0])
             pending_count = sizeof pending / sizeof pending[0];
@@ -922,9 +922,9 @@ static int serve_dispatch(serve *s, serve_conn *c,
     if (!strcmp(op, "list")) {
         conversation_summary *summaries = NULL;
         size_t count = 0;
-        status = wire_session_list(s->w, &summaries, &count);
-        if (status != WIRE_OK) {
-            serve_wire_error(s, c, status);
+        status = runtime_session_list(s->w, &summaries, &count);
+        if (status != RUNTIME_OK) {
+            serve_runtime_error(s, c, status);
             return 0;
         }
         serve_ok_begin(s);
@@ -950,16 +950,16 @@ static int serve_dispatch(serve *s, serve_conn *c,
         return 0;
     }
     if (!strcmp(op, "append")) {
-        wire_message message;
+        runtime_message message;
         memset(&message, 0, sizeof message);
         const char *role = serve_str(request, "role");
         message.text = serve_str(request, "text");
         if (role && !strcmp(role, "user")) {
-            message.kind = WIRE_MESSAGE_USER;
+            message.kind = RUNTIME_MESSAGE_USER;
         } else if (role && !strcmp(role, "tool")) {
-            message.kind = WIRE_MESSAGE_TOOL_RESULT;
+            message.kind = RUNTIME_MESSAGE_TOOL_RESULT;
             if (!serve_u64(request, "call_id", &message.call_id)) {
-                serve_error(s, c, WIRE_INVALID_ARGUMENT, "missing call_id");
+                serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "missing call_id");
                 return 0;
             }
             const char *tool_status = serve_str(request, "status");
@@ -968,13 +968,13 @@ static int serve_dispatch(serve *s, serve_conn *c,
                                   ? CONVERSATION_TOOL_ERROR
                                   : CONVERSATION_TOOL_OK;
         } else {
-            serve_error(s, c, WIRE_INVALID_ARGUMENT, "invalid role");
+            serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "invalid role");
             return 0;
         }
-        wire_marker marker;
-        status = wire_append(s->w, &message, &marker);
-        if (status != WIRE_OK) {
-            serve_wire_error(s, c, status);
+        runtime_marker marker;
+        status = runtime_append(s->w, &message, &marker);
+        if (status != RUNTIME_OK) {
+            serve_runtime_error(s, c, status);
             return 0;
         }
         serve_ok_begin(s);
@@ -985,15 +985,15 @@ static int serve_dispatch(serve *s, serve_conn *c,
         return 0;
     }
     if (!strcmp(op, "generate")) {
-        wire_gen_params params;
+        runtime_gen_params params;
         if (!serve_params_parse(request, &params)) {
-            serve_error(s, c, WIRE_INVALID_ARGUMENT,
+            serve_error(s, c, RUNTIME_INVALID_ARGUMENT,
                         "invalid reasoning settings");
             return 0;
         }
-        status = wire_generate(s->w, &params);
-        if (status != WIRE_OK) {
-            serve_wire_error(s, c, status);
+        status = runtime_generate(s->w, &params);
+        if (status != RUNTIME_OK) {
+            serve_runtime_error(s, c, status);
             return 0;
         }
         return 1;
@@ -1003,31 +1003,31 @@ static int serve_dispatch(serve *s, serve_conn *c,
         serve_messages messages;
         if (!serve_tools_parse(request, &tools)) {
             serve_tools_free(&tools);
-            serve_error(s, c, WIRE_INVALID_ARGUMENT, "invalid tools");
+            serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "invalid tools");
             return 0;
         }
         if (!serve_messages_parse(request, &messages)) {
             serve_tools_free(&tools);
             serve_messages_free(&messages);
-            serve_error(s, c, WIRE_INVALID_ARGUMENT, "invalid messages");
+            serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "invalid messages");
             return 0;
         }
-        wire_gen_params params;
+        runtime_gen_params params;
         if (!serve_params_parse(request, &params)) {
             serve_tools_free(&tools);
             serve_messages_free(&messages);
-            serve_error(s, c, WIRE_INVALID_ARGUMENT,
+            serve_error(s, c, RUNTIME_INVALID_ARGUMENT,
                         "invalid reasoning settings");
             return 0;
         }
-        status = wire_ephemeral_generate(s->w, serve_str(request, "system"),
+        status = runtime_ephemeral_generate(s->w, serve_str(request, "system"),
                                          tools.tools, tools.count,
                                          messages.items, messages.count,
                                          &params);
         serve_tools_free(&tools);
         serve_messages_free(&messages);
-        if (status != WIRE_OK) {
-            serve_wire_error(s, c, status);
+        if (status != RUNTIME_OK) {
+            serve_runtime_error(s, c, status);
             return 0;
         }
         return 1;
@@ -1037,23 +1037,23 @@ static int serve_dispatch(serve *s, serve_conn *c,
         serve_messages messages;
         if (!serve_tools_parse(request, &tools)) {
             serve_tools_free(&tools);
-            serve_error(s, c, WIRE_INVALID_ARGUMENT, "invalid tools");
+            serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "invalid tools");
             return 0;
         }
         if (!serve_messages_parse(request, &messages)) {
             serve_tools_free(&tools);
             serve_messages_free(&messages);
-            serve_error(s, c, WIRE_INVALID_ARGUMENT, "invalid messages");
+            serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "invalid messages");
             return 0;
         }
-        wire_marker marker;
-        status = wire_rebuild(s->w, serve_str(request, "system"),
+        runtime_marker marker;
+        status = runtime_rebuild(s->w, serve_str(request, "system"),
                               tools.tools, tools.count, messages.items,
                               messages.count, &marker);
         serve_tools_free(&tools);
         serve_messages_free(&messages);
-        if (status != WIRE_OK) {
-            serve_wire_error(s, c, status);
+        if (status != RUNTIME_OK) {
+            serve_runtime_error(s, c, status);
             return 0;
         }
         serve_ok_begin(s);
@@ -1066,12 +1066,12 @@ static int serve_dispatch(serve *s, serve_conn *c,
     if (!strcmp(op, "rewind") || !strcmp(op, "rewind_cost")) {
         uint64_t marker;
         if (!serve_u64(request, "marker", &marker)) {
-            serve_error(s, c, WIRE_INVALID_ARGUMENT, "missing marker");
+            serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "missing marker");
             return 0;
         }
         if (!strcmp(op, "rewind")) {
-            status = wire_rewind(s->w, marker);
-            if (status != WIRE_OK) serve_wire_error(s, c, status);
+            status = runtime_rewind(s->w, marker);
+            if (status != RUNTIME_OK) serve_runtime_error(s, c, status);
             else {
                 serve_ok_begin(s);
                 json_raw(out, "}");
@@ -1080,9 +1080,9 @@ static int serve_dispatch(serve *s, serve_conn *c,
             return 0;
         }
         uint64_t prefill;
-        status = wire_rewind_cost(s->w, marker, &prefill);
-        if (status != WIRE_OK) {
-            serve_wire_error(s, c, status);
+        status = runtime_rewind_cost(s->w, marker, &prefill);
+        if (status != RUNTIME_OK) {
+            serve_runtime_error(s, c, status);
             return 0;
         }
         serve_ok_begin(s);
@@ -1093,16 +1093,16 @@ static int serve_dispatch(serve *s, serve_conn *c,
         return 0;
     }
     if (!strcmp(op, "checkpoint")) {
-        wire_checkpoint_report report;
-        status = wire_checkpoint(s->w, &report);
-        if (status != WIRE_OK) serve_wire_error(s, c, status);
+        runtime_checkpoint_report report;
+        status = runtime_checkpoint(s->w, &report);
+        if (status != RUNTIME_OK) serve_runtime_error(s, c, status);
         else {
             serve_log_checkpoint("checkpoint", &report);
             serve_ok_begin(s);
             json_raw(out, ",\"saved\":");
             json_raw(out, report.saved ? "true" : "false");
             if (!report.saved) {
-                const char *reason = wire_ckpt_reason_name(report.reason);
+                const char *reason = runtime_ckpt_reason_name(report.reason);
                 json_raw(out, ",\"reason\":");
                 json_string(out, reason, strlen(reason));
             }
@@ -1115,7 +1115,7 @@ static int serve_dispatch(serve *s, serve_conn *c,
     }
     if (!strcmp(op, "pending")) {
         uint64_t pending[256];
-        size_t count = wire_pending_calls(
+        size_t count = runtime_pending_calls(
             s->w, pending, sizeof pending / sizeof pending[0]);
         if (count > sizeof pending / sizeof pending[0])
             count = sizeof pending / sizeof pending[0];
@@ -1130,17 +1130,17 @@ static int serve_dispatch(serve *s, serve_conn *c,
         return 0;
     }
     if (!strcmp(op, "history")) {
-        uint64_t count = wire_history_count(s->w);
+        uint64_t count = runtime_history_count(s->w);
         serve_ok_begin(s);
         json_raw(out, ",\"entries\":[");
         for (uint64_t i = 0; i < count; i++) {
-            wire_history_entry entry;
-            if (wire_history_at(s->w, i, &entry) != WIRE_OK) break;
+            runtime_history_entry entry;
+            if (runtime_history_at(s->w, i, &entry) != RUNTIME_OK) break;
             if (i) json_raw(out, ",");
             json_raw(out, "{\"kind\":\"");
-            json_raw(out, entry.kind == WIRE_MESSAGE_SYSTEM ? "system"
-                          : entry.kind == WIRE_MESSAGE_USER ? "user"
-                          : entry.kind == WIRE_MESSAGE_ASSISTANT
+            json_raw(out, entry.kind == RUNTIME_MESSAGE_SYSTEM ? "system"
+                          : entry.kind == RUNTIME_MESSAGE_USER ? "user"
+                          : entry.kind == RUNTIME_MESSAGE_ASSISTANT
                           ? "assistant" : "tool_result");
             json_raw(out, "\",\"marker\":");
             json_u64(out, entry.marker);
@@ -1156,7 +1156,7 @@ static int serve_dispatch(serve *s, serve_conn *c,
                 json_raw(out, ",\"extra\":");
                 json_rawn(out, entry.extra_json, entry.extra_length);
             }
-            if (entry.kind == WIRE_MESSAGE_TOOL_RESULT) {
+            if (entry.kind == RUNTIME_MESSAGE_TOOL_RESULT) {
                 json_raw(out, ",\"call_id\":");
                 json_u64(out, entry.call_id);
                 json_raw(out, ",\"status\":\"");
@@ -1181,17 +1181,17 @@ static int serve_dispatch(serve *s, serve_conn *c,
         return 0;
     }
     if (!strcmp(op, "cancel")) {
-        serve_error(s, c, WIRE_INVALID_ARGUMENT, "no generation in progress");
+        serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "no generation in progress");
         return 0;
     }
-    serve_error(s, c, WIRE_INVALID_ARGUMENT, "unknown op");
+    serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "unknown op");
     return 0;
 }
 
 static void serve_cancel(serve *s, serve_conn *c) {
     int index = serve_conn_index(s, c);
     if (s->generating && s->gen_owner == index) {
-        wire_cancel(s->w);
+        runtime_cancel(s->w);
         serve_ok_begin(s);
         json_raw(&s->out, "}");
         serve_emit(s, c);
@@ -1208,16 +1208,16 @@ static void serve_cancel(serve *s, serve_conn *c) {
             json_raw(&s->out, "}");
             serve_emit(s, c);
             if (!c->active) return;
-            wire_event event;
+            runtime_event event;
             memset(&event, 0, sizeof event);
-            event.kind = WIRE_EVENT_DONE;
-            event.stop = WIRE_STOP_ABORTED;
-            event.marker = WIRE_MARKER_NONE;
+            event.kind = RUNTIME_EVENT_DONE;
+            event.stop = RUNTIME_STOP_ABORTED;
+            event.marker = RUNTIME_MARKER_NONE;
             serve_emit_event(s, c, &event);
             return;
         }
     }
-    serve_error(s, c, WIRE_INVALID_ARGUMENT, "no generation in progress");
+    serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "no generation in progress");
 }
 
 static int serve_binding_other(const serve *s, const conversation_id *id,
@@ -1235,7 +1235,7 @@ static int serve_binding_other(const serve *s, const conversation_id *id,
 static int serve_route(serve *s, serve_conn *c, const json_value *request) {
     const char *op = serve_str(request, "op");
     if (!op) {
-        serve_error(s, c, WIRE_INVALID_ARGUMENT, "missing op");
+        serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "missing op");
         return SERVE_ROUTE_DONE;
     }
     if (!strcmp(op, "describe") || !strcmp(op, "list") ||
@@ -1248,11 +1248,11 @@ static int serve_route(serve *s, serve_conn *c, const json_value *request) {
     if (!strcmp(op, "delete")) {
         conversation_id id;
         if (!serve_id_parse(serve_str(request, "session"), &id)) {
-            serve_error(s, c, WIRE_INVALID_ARGUMENT, "invalid session id");
+            serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "invalid session id");
             return SERVE_ROUTE_DONE;
         }
         if (serve_binding_other(s, &id, serve_conn_index(s, c)) >= 0) {
-            serve_error(s, c, WIRE_BUSY,
+            serve_error(s, c, RUNTIME_BUSY,
                         "session is bound by another connection");
             return SERVE_ROUTE_DONE;
         }
@@ -1276,12 +1276,12 @@ static int serve_execute(serve *s, serve_conn *c,
     const char *op = serve_str(request, "op");
     if (op && serve_needs_session(op)) {
         if (!c->has_session) {
-            serve_error(s, c, WIRE_SESSION_NOT_FOUND, "no open session");
+            serve_error(s, c, RUNTIME_SESSION_NOT_FOUND, "no open session");
             return 0;
         }
-        wire_status status = wire_session_open(s->w, &c->session, NULL);
-        if (status != WIRE_OK) {
-            serve_wire_error(s, c, status);
+        runtime_status status = runtime_session_open(s->w, &c->session, NULL);
+        if (status != RUNTIME_OK) {
+            serve_runtime_error(s, c, status);
             return 0;
         }
     }
@@ -1315,19 +1315,19 @@ static void serve_run_queue(serve *s) {
 static void serve_stream_pull(serve *s) {
     serve_conn *owner = s->gen_owner >= 0 ? &s->conns[s->gen_owner] : NULL;
     if (owner && !owner->active) owner = NULL;
-    wire_event event;
-    wire_status status = wire_next_event(s->w, &event);
-    if (status != WIRE_OK) {
-        event.kind = WIRE_EVENT_ERROR;
+    runtime_event event;
+    runtime_status status = runtime_next_event(s->w, &event);
+    if (status != RUNTIME_OK) {
+        event.kind = RUNTIME_EVENT_ERROR;
         event.error = status;
-        event.error_text = wire_error_text(s->w);
+        event.error_text = runtime_error_text(s->w);
         if (owner) serve_emit_event(s, owner, &event);
         s->generating = 0;
         s->gen_owner = -1;
         return;
     }
     if (owner) serve_emit_event(s, owner, &event);
-    if (event.kind == WIRE_EVENT_DONE || event.kind == WIRE_EVENT_ERROR) {
+    if (event.kind == RUNTIME_EVENT_DONE || event.kind == RUNTIME_EVENT_ERROR) {
         s->generating = 0;
         s->gen_owner = -1;
     }
@@ -1354,7 +1354,7 @@ static void serve_consume(serve_conn *c, size_t length) {
 static void serve_handle_request(serve *s, serve_conn *c,
                                  json_value *request) {
     if (!request || request->type != JSON_OBJECT) {
-        serve_error(s, c, WIRE_INVALID_ARGUMENT, "invalid request");
+        serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "invalid request");
         json_free(request);
         return;
     }
@@ -1389,12 +1389,12 @@ static void serve_input(serve *s, serve_conn *c) {
             serve_consume(c, length);
             const char *op = request ? serve_str(request, "op") : NULL;
             if (op && !strcmp(op, "cancel")) {
-                wire_cancel(s->w);
+                runtime_cancel(s->w);
                 serve_ok_begin(s);
                 json_raw(&s->out, "}");
                 serve_emit(s, c);
             } else {
-                serve_error(s, c, WIRE_BUSY, "generation in progress");
+                serve_error(s, c, RUNTIME_BUSY, "generation in progress");
             }
             json_free(request);
             continue;
@@ -1419,7 +1419,7 @@ static void serve_input(serve *s, serve_conn *c) {
     }
     if (c->active && c->in_length >= s->max_frame &&
         !memchr(c->in, '\n', c->in_length)) {
-        serve_error(s, c, WIRE_INVALID_ARGUMENT, "request line is too long");
+        serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "request line is too long");
         serve_drop(s, c);
     }
 }
@@ -1428,7 +1428,7 @@ static void serve_residue(serve *s, serve_conn *c) {
     if (!c->active || !c->in_length) return;
     if (memchr(c->in, '\n', c->in_length)) return;
     c->in_length = 0;
-    serve_error(s, c, WIRE_INVALID_ARGUMENT, "invalid request");
+    serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "invalid request");
 }
 
 static void serve_read(serve *s, serve_conn *c) {
@@ -1461,7 +1461,7 @@ static void serve_read(serve *s, serve_conn *c) {
             c->head_checked = 0;
             if (c->in_length >= s->max_frame &&
                 !memchr(c->in, '\n', c->in_length)) {
-                serve_error(s, c, WIRE_INVALID_ARGUMENT,
+                serve_error(s, c, RUNTIME_INVALID_ARGUMENT,
                             "request line is too long");
                 serve_drop(s, c);
                 return;
@@ -1471,7 +1471,7 @@ static void serve_read(serve *s, serve_conn *c) {
         }
         if (n == 0) {
             if (s->generating && s->gen_owner == serve_conn_index(s, c))
-                wire_cancel(s->w);
+                runtime_cancel(s->w);
             c->eof = 1;
             return;
         }
@@ -1666,13 +1666,13 @@ static void serve_loop(serve *s) {
 }
 
 static void serve_shutdown_checkpoint(serve *s) {
-    wire_checkpoint_report r;
-    if (wire_checkpoint(s->w, &r) == WIRE_OK) serve_log_checkpoint("shutdown", &r);
+    runtime_checkpoint_report r;
+    if (runtime_checkpoint(s->w, &r) == RUNTIME_OK) serve_log_checkpoint("shutdown", &r);
 }
 
 static void serve_shutdown(serve *s) {
     if (s->generating) {
-        wire_cancel(s->w);
+        runtime_cancel(s->w);
         while (s->generating) serve_stream_pull(s);
     }
     serve_shutdown_checkpoint(s);
@@ -1711,9 +1711,9 @@ int serve_stdio(xe_engine *engine, const char *state_dir,
                 const char *cache_dir) {
     serve s;
     serve_init(&s, engine);
-    wire_status status = wire_open(&s.w, engine, state_dir, cache_dir);
-    if (status != WIRE_OK) {
-        fprintf(stderr, "xenolith: wire: %s\n", wire_status_code(status));
+    runtime_status status = runtime_open(&s.w, engine, state_dir, cache_dir);
+    if (status != RUNTIME_OK) {
+        fprintf(stderr, "xenolith: wire: %s\n", runtime_status_code(status));
         return 1;
     }
     serve_log_kvstore(s.w, cache_dir);
@@ -1734,7 +1734,7 @@ int serve_stdio(xe_engine *engine, const char *state_dir,
         }
     }
     json_writer_free(&s.out);
-    wire_close(s.w);
+    runtime_close(s.w);
     return 0;
 }
 
@@ -1776,9 +1776,9 @@ int serve_run(xe_engine *engine, const char *state_dir, const char *cache_dir,
         if (ms > 9.0e15) ms = 9.0e15;
         s.idle_ms = ms < 1.0 ? 1 : (int64_t)ms;
     }
-    wire_status status = wire_open(&s.w, engine, state_dir, cache_dir);
-    if (status != WIRE_OK) {
-        fprintf(stderr, "xenolith: serve: %s\n", wire_status_code(status));
+    runtime_status status = runtime_open(&s.w, engine, state_dir, cache_dir);
+    if (status != RUNTIME_OK) {
+        fprintf(stderr, "xenolith: serve: %s\n", runtime_status_code(status));
         return 1;
     }
     serve_log_kvstore(s.w, cache_dir);
@@ -1798,7 +1798,7 @@ int serve_run(xe_engine *engine, const char *state_dir, const char *cache_dir,
         fprintf(stderr, "xenolith: serve: cannot listen on %s\n",
                 socket_path ? socket_path : "");
         json_writer_free(&s.out);
-        wire_close(s.w);
+        runtime_close(s.w);
         serve_signal_reset();
         return 1;
     }
@@ -1806,7 +1806,7 @@ int serve_run(xe_engine *engine, const char *state_dir, const char *cache_dir,
     serve_loop(&s);
     serve_shutdown(&s);
     json_writer_free(&s.out);
-    wire_close(s.w);
+    runtime_close(s.w);
     serve_signal_reset();
     return 0;
 }

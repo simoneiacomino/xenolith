@@ -11,8 +11,8 @@ LDLIBS=-lm -lze_loader
 GPU_SPV=xenolith_gpu.spv
 GPU_OBJ=xenolith_gpu_spv.o
 
-xenolith: main.o xenolith.o format.o json.o profile.o kvstore.o conversation.o wire.o serve.o $(GPU_OBJ)
-	$(CC) $(CFLAGS) -o $@ main.o xenolith.o format.o json.o profile.o kvstore.o conversation.o wire.o serve.o $(GPU_OBJ) $(LDLIBS)
+xenolith: main.o xenolith.o format.o json.o profile.o kvstore.o conversation.o runtime.o serve.o $(GPU_OBJ)
+	$(CC) $(CFLAGS) -o $@ main.o xenolith.o format.o json.o profile.o kvstore.o conversation.o runtime.o serve.o $(GPU_OBJ) $(LDLIBS)
 
 main.o: main.c xenolith.h profile.h serve.h conversation.h kvstore.h
 xenolith.o: xenolith.c xenolith.cl xenolith.h xenolith_internal.h format.h
@@ -21,8 +21,8 @@ json.o: json.c json.h
 profile.o: profile.c profile.h xenolith.h format.h json.h
 kvstore.o: kvstore.c kvstore.h xenolith.h format.h
 conversation.o: conversation.c conversation.h kvstore.h xenolith.h format.h
-wire.o: wire.c wire.h xenolith.h xenolith_internal.h kvstore.h conversation.h profile.h format.h json.h
-serve.o: serve.c serve.h wire.h xenolith.h kvstore.h conversation.h profile.h json.h
+runtime.o: runtime.c runtime.h xenolith.h xenolith_internal.h kvstore.h conversation.h profile.h format.h json.h
+serve.o: serve.c serve.h runtime.h xenolith.h kvstore.h conversation.h profile.h json.h
 
 clean:
 	rm -f *.o xenolith tests/certify tests/test_kv tests/test_decode \
@@ -34,8 +34,8 @@ clean:
 		tests/test_snapshot_model \
 		tests/test_kvstore tests/test_conversation \
 		tests/test_conversation_model \
-		tests/test_json tests/test_profile tests/test_wire \
-		tests/test_wire_model tests/test_serve tests/test_serve_model \
+		tests/test_json tests/test_profile tests/test_runtime \
+		tests/test_runtime_model tests/test_serve tests/test_serve_model \
 		bench/bench_attention bench/bench_tg bench/bench_b3b bench/bench_b3b_8e \
 		bench/bench_guard bench/compare_pp_tg_xe bench/compare_pp_tg_tokens \
 		bench/bench_b3b.spv bench/bench_b3b_adlp.spv \
@@ -71,7 +71,7 @@ ENGINE_TESTS=tests/test_snapshot tests/test_snapshot_model tests/test_kvstore \
 	tests/test_prefill_session_safe tests/test_session_sync
 
 $(ENGINE_TESTS): xenolith_internal.h format.h
-tests/test_wire tests/test_wire_model tests/test_serve: xenolith.h conversation.h kvstore.h profile.h json.h
+tests/test_runtime tests/test_runtime_model tests/test_serve: xenolith.h conversation.h kvstore.h profile.h json.h
 tests/test_serve: serve.h
 tests/test_profile: json.h
 
@@ -92,14 +92,14 @@ tests/test_json: tests/test_json.c json.o json.h
 tests/test_profile: tests/test_profile.c profile.o profile.h json.o format.o xenolith.o xenolith.h $(GPU_OBJ)
 	$(CC) $(CFLAGS) -I. -o $@ tests/test_profile.c profile.o json.o format.o xenolith.o $(GPU_OBJ) $(LDLIBS)
 
-tests/test_wire: tests/test_wire.c wire.o wire.h profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_wire.c wire.o profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ) $(LDLIBS)
+tests/test_runtime: tests/test_runtime.c runtime.o runtime.h profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_runtime.c runtime.o profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ) $(LDLIBS)
 
-tests/test_wire_model: tests/test_wire_model.c wire.o wire.h profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_wire_model.c wire.o profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ) $(LDLIBS)
+tests/test_runtime_model: tests/test_runtime_model.c runtime.o runtime.h profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_runtime_model.c runtime.o profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ) $(LDLIBS)
 
-tests/test_serve: tests/test_serve.c serve.o serve.h wire.o wire.h profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_serve.c serve.o wire.o profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ) $(LDLIBS)
+tests/test_serve: tests/test_serve.c serve.o serve.h runtime.o runtime.h profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_serve.c serve.o runtime.o profile.o json.o conversation.o kvstore.o format.o xenolith.o $(GPU_OBJ) $(LDLIBS)
 
 tests/test_serve_model: tests/test_serve_model.c json.o json.h xenolith
 	$(CC) $(TEST_CFLAGS) -I. -o $@ tests/test_serve_model.c json.o -pthread -lm
@@ -235,19 +235,19 @@ check-all: require-model
 	$(MAKE) check
 	$(MAKE) check-persistence
 	$(MAKE) check-prefill
-	$(MAKE) check-wire
+	$(MAKE) check-runtime
 	$(MAKE) check-serve
 
 check-serve: require-model xenolith tests/test_serve tests/test_serve_model
 	./tests/test_serve "$(MODEL)"
 	./tests/test_serve_model "$(MODEL)"
 
-check-wire: require-model xenolith tests/test_json tests/test_profile tests/test_wire \
-		tests/test_wire_model
+check-runtime: require-model xenolith tests/test_json tests/test_profile tests/test_runtime \
+		tests/test_runtime_model
 	./tests/test_json
 	./tests/test_profile "$(MODEL)"
-	./tests/test_wire "$(MODEL)"
-	./tests/test_wire_model "$(MODEL)"
+	./tests/test_runtime "$(MODEL)"
+	./tests/test_runtime_model "$(MODEL)"
 
 golden: require-model test-tools
 	mkdir -p tests/golden tests/fixtures
@@ -291,5 +291,5 @@ require-model:
 	@test -f "$(MODEL)" || { printf '%s\n' 'Set MODEL to the path of the Gemma 4 GGUF file.' >&2; exit 2; }
 
 .PHONY: require-model clean check check-unit check-gpu check-persistence check-prefill check-all \
-	check-kv check-wire check-serve golden test-tools test-tools-clean \
+	check-kv check-runtime check-serve golden test-tools test-tools-clean \
 	bench-b3b bench-b14 bench-prefill-gemm

@@ -1,6 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
-#include "wire.h"
+#include "runtime.h"
 #include "format.h"
 #include "json.h"
 #include "xenolith_internal.h"
@@ -12,12 +12,12 @@
 #include <time.h>
 
 enum {
-    WIRE_GEN_NONE = 0,
-    WIRE_GEN_DURABLE = 1,
-    WIRE_GEN_EPHEMERAL = 2,
-    WIRE_PHASE_PREFILL = 0,
-    WIRE_PHASE_DECODE = 1,
-    WIRE_PREFILL_CHUNK = 512
+    RUNTIME_GEN_NONE = 0,
+    RUNTIME_GEN_DURABLE = 1,
+    RUNTIME_GEN_EPHEMERAL = 2,
+    RUNTIME_PHASE_PREFILL = 0,
+    RUNTIME_PHASE_DECODE = 1,
+    RUNTIME_PREFILL_CHUNK = 512
 };
 
 typedef struct {
@@ -25,16 +25,16 @@ typedef struct {
     char *name;
     char *arguments;
     int complete;
-} wire_gen_call;
+} runtime_gen_call;
 
 typedef struct {
     uint8_t *render;
     uint64_t render_length;
     int32_t *tokens;
     uint32_t token_count;
-} wire_render_copy;
+} runtime_render_copy;
 
-struct wire {
+struct runtime {
     xe_engine *engine;
     profile *prof;
     conversation_store *cstore;
@@ -51,9 +51,9 @@ struct wire {
     int ckpt_autosave_off;    /* set on budget: the session cannot fit, stop trying */
     int kv_open_status;       /* kvstore_status of the open attempt */
     int autosave_attempted;   /* last turn ran an autosave */
-    wire_checkpoint_report autosave;
+    runtime_checkpoint_report autosave;
     int resume_attempted;     /* last generation tried a snapshot load */
-    wire_resume_report resume;
+    runtime_resume_report resume;
 
     xe_session *session;
     xe_session *ephemeral;
@@ -90,12 +90,12 @@ struct wire {
     int prompt_common;
     int framing_offset;
     int sampled_length;
-    wire_usage usage;
+    runtime_usage usage;
 
     json_writer content;
     json_writer reasoning;
     json_writer render;
-    wire_gen_call *calls;
+    runtime_gen_call *calls;
     size_t call_count;
     size_t call_capacity;
     int call_open;
@@ -107,25 +107,25 @@ struct wire {
     json_writer calls_scratch;
 };
 
-static void wire_settings_defaults(conversation_settings *settings);
-static wire_status wire_project_mutation(wire *w, conversation *c,
+static void runtime_settings_defaults(conversation_settings *settings);
+static runtime_status runtime_project_mutation(runtime *w, conversation *c,
                                          int thinking, uint32_t history);
 
-const char *wire_status_code(wire_status status) {
+const char *runtime_status_code(runtime_status status) {
     switch (status) {
-    case WIRE_OK: return "ok";
-    case WIRE_CONTEXT_LENGTH_EXCEEDED: return "context_length_exceeded";
-    case WIRE_SESSION_NOT_FOUND: return "session_not_found";
-    case WIRE_MARKER_UNAVAILABLE: return "marker_unavailable";
-    case WIRE_INVALID_ARGUMENT: return "invalid_request";
-    case WIRE_BUSY: return "busy";
-    case WIRE_IO: return "io_error";
-    case WIRE_NOMEM: return "out_of_memory";
+    case RUNTIME_OK: return "ok";
+    case RUNTIME_CONTEXT_LENGTH_EXCEEDED: return "context_length_exceeded";
+    case RUNTIME_SESSION_NOT_FOUND: return "session_not_found";
+    case RUNTIME_MARKER_UNAVAILABLE: return "marker_unavailable";
+    case RUNTIME_INVALID_ARGUMENT: return "invalid_request";
+    case RUNTIME_BUSY: return "busy";
+    case RUNTIME_IO: return "io_error";
+    case RUNTIME_NOMEM: return "out_of_memory";
     }
     return "unknown";
 }
 
-const char *wire_error_text(const wire *w) {
+const char *runtime_error_text(const runtime *w) {
     return w && w->error_text[0] ? w->error_text : "";
 }
 
@@ -134,9 +134,9 @@ const char *wire_error_text(const wire *w) {
  * the text (pi matches bare "429"/"5xx" substrings as retryable), so a
  * marker, call id or tool name inside the text can turn a deterministic
  * error into a retried one. Quantities travel as structured fields
- * (see wire_error_detail). test_wire enforces the rule on every failure
+ * (see runtime_error_detail). test_runtime enforces the rule on every failure
  * it provokes. */
-static wire_status wire_fail(wire *w, wire_status status,
+static runtime_status runtime_fail(runtime *w, runtime_status status,
                              const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -147,62 +147,62 @@ static wire_status wire_fail(wire *w, wire_status status,
     return status;
 }
 
-int wire_error_detail(const wire *w, uint64_t *tokens, uint64_t *context) {
+int runtime_error_detail(const runtime *w, uint64_t *tokens, uint64_t *context) {
     if (!w || !w->error_context) return 0;
     if (tokens) *tokens = w->error_tokens;
     if (context) *context = w->error_context;
     return 1;
 }
 
-static wire_status wire_from_conversation(wire *w, conversation_status s) {
+static runtime_status runtime_from_conversation(runtime *w, conversation_status s) {
     switch (s) {
     case CONVERSATION_OK:
-        return WIRE_OK;
+        return RUNTIME_OK;
     case CONVERSATION_MISS:
-        return wire_fail(w, WIRE_SESSION_NOT_FOUND, "session not found");
+        return runtime_fail(w, RUNTIME_SESSION_NOT_FOUND, "session not found");
     case CONVERSATION_LOCKED:
-        return wire_fail(w, WIRE_BUSY, "session record is locked");
+        return runtime_fail(w, RUNTIME_BUSY, "session record is locked");
     case CONVERSATION_IO:
-        return wire_fail(w, WIRE_IO,
+        return runtime_fail(w, RUNTIME_IO,
                          "session record io failed, temporarily unavailable");
     case CONVERSATION_NOMEM:
-        return wire_fail(w, WIRE_NOMEM, "out of memory");
+        return runtime_fail(w, RUNTIME_NOMEM, "out of memory");
     case CONVERSATION_DAMAGED:
-        return wire_fail(w, WIRE_INVALID_ARGUMENT,
+        return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                          "session record is damaged");
     case CONVERSATION_VERSION:
-        return wire_fail(w, WIRE_INVALID_ARGUMENT,
+        return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                          "session record version is unsupported");
     default:
-        return wire_fail(w, WIRE_INVALID_ARGUMENT, "%s",
+        return runtime_fail(w, RUNTIME_INVALID_ARGUMENT, "%s",
                          conversation_status_name(s));
     }
 }
 
-static wire_status wire_from_profile(wire *w, profile_status s) {
+static runtime_status runtime_from_profile(runtime *w, profile_status s) {
     switch (s) {
     case PROFILE_OK:
-        return WIRE_OK;
+        return RUNTIME_OK;
     case PROFILE_NOMEM:
-        return wire_fail(w, WIRE_NOMEM, "out of memory");
+        return runtime_fail(w, RUNTIME_NOMEM, "out of memory");
     default:
-        return wire_fail(w, WIRE_INVALID_ARGUMENT, "render failed");
+        return runtime_fail(w, RUNTIME_INVALID_ARGUMENT, "render failed");
     }
 }
 
-static int64_t wire_now(void) {
+static int64_t runtime_now(void) {
     struct timespec now;
     if (clock_gettime(CLOCK_REALTIME, &now) != 0) return 0;
     return (int64_t)now.tv_sec * INT64_C(1000000000) + now.tv_nsec;
 }
 
-static int64_t wire_monotonic(void) {
+static int64_t runtime_monotonic(void) {
     struct timespec now;
     if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
     return (int64_t)now.tv_sec * INT64_C(1000000000) + now.tv_nsec;
 }
 
-static int wire_default_cache_dir(char *out, size_t cap) {
+static int runtime_default_cache_dir(char *out, size_t cap) {
     const char *cache = getenv("XDG_CACHE_HOME");
     int n;
     if (cache && *cache == '/') {
@@ -215,38 +215,38 @@ static int wire_default_cache_dir(char *out, size_t cap) {
     return n > 0 && (size_t)n < cap;
 }
 
-wire_status wire_open(wire **out, xe_engine *engine, const char *state_dir,
+runtime_status runtime_open(runtime **out, xe_engine *engine, const char *state_dir,
                       const char *cache_dir) {
-    if (!out || !engine) return WIRE_INVALID_ARGUMENT;
+    if (!out || !engine) return RUNTIME_INVALID_ARGUMENT;
     *out = NULL;
-    wire *w = calloc(1, sizeof *w);
-    if (!w) return WIRE_NOMEM;
+    runtime *w = calloc(1, sizeof *w);
+    if (!w) return RUNTIME_NOMEM;
     w->engine = engine;
     w->context = xe_context_size(engine);
     w->call_open = -1;
     if (profile_open(&w->prof, engine) != PROFILE_OK) {
         free(w);
-        return WIRE_INVALID_ARGUMENT;
+        return RUNTIME_INVALID_ARGUMENT;
     }
     char state_path[4096];
     if (!state_dir) {
         if (!conversation_default_state_dir(state_path, sizeof state_path)) {
             profile_close(w->prof);
             free(w);
-            return WIRE_IO;
+            return RUNTIME_IO;
         }
         state_dir = state_path;
     }
     conversation_status opened = conversation_store_open(&w->cstore,
                                                          state_dir);
     if (opened != CONVERSATION_OK) {
-        wire_status status = wire_from_conversation(w, opened);
+        runtime_status status = runtime_from_conversation(w, opened);
         profile_close(w->prof);
         free(w);
         return status;
     }
     char cache_path[4096];
-    if (!cache_dir && wire_default_cache_dir(cache_path, sizeof cache_path))
+    if (!cache_dir && runtime_default_cache_dir(cache_path, sizeof cache_path))
         cache_dir = cache_path;
     w->kv_open_status = KVSTORE_OK;
     if (cache_dir) {
@@ -255,41 +255,41 @@ wire_status wire_open(wire **out, xe_engine *engine, const char *state_dir,
         if (w->kv_open_status != KVSTORE_OK) w->kv = NULL;
     }
     *out = w;
-    return WIRE_OK;
+    return RUNTIME_OK;
 }
 
-int wire_kvstore_open_status(const wire *w) {
+int runtime_kvstore_open_status(const runtime *w) {
     return w ? w->kv_open_status : (int)KVSTORE_INVALID_ARGUMENT;
 }
 
-const char *wire_ckpt_reason_name(wire_ckpt_reason reason) {
+const char *runtime_ckpt_reason_name(runtime_ckpt_reason reason) {
     switch (reason) {
-    case WIRE_CKPT_SAVED: return "saved";
-    case WIRE_CKPT_NO_KVSTORE: return "no_kvstore";
-    case WIRE_CKPT_EMPTY: return "empty";
-    case WIRE_CKPT_NOTHING_NEW: return "nothing_new";
-    case WIRE_CKPT_KV_DIVERGED: return "kv_diverged";
-    case WIRE_CKPT_BUDGET: return "budget";
-    case WIRE_CKPT_IO: return "io";
-    case WIRE_CKPT_REJECTED: return "rejected";
-    case WIRE_CKPT_RECORD_FAILED: return "record_failed";
+    case RUNTIME_CKPT_SAVED: return "saved";
+    case RUNTIME_CKPT_NO_KVSTORE: return "no_kvstore";
+    case RUNTIME_CKPT_EMPTY: return "empty";
+    case RUNTIME_CKPT_NOTHING_NEW: return "nothing_new";
+    case RUNTIME_CKPT_KV_DIVERGED: return "kv_diverged";
+    case RUNTIME_CKPT_BUDGET: return "budget";
+    case RUNTIME_CKPT_IO: return "io";
+    case RUNTIME_CKPT_REJECTED: return "rejected";
+    case RUNTIME_CKPT_RECORD_FAILED: return "record_failed";
     }
     return "unknown";
 }
 
-const char *wire_resume_reason_name(wire_resume_reason reason) {
+const char *runtime_resume_reason_name(runtime_resume_reason reason) {
     switch (reason) {
-    case WIRE_RESUME_LOADED: return "loaded";
-    case WIRE_RESUME_EVICTED: return "evicted";
-    case WIRE_RESUME_MODEL_MISMATCH: return "model_mismatch";
-    case WIRE_RESUME_TOKEN_MISMATCH: return "token_mismatch";
-    case WIRE_RESUME_IO: return "io";
-    case WIRE_RESUME_REJECTED: return "rejected";
+    case RUNTIME_RESUME_LOADED: return "loaded";
+    case RUNTIME_RESUME_EVICTED: return "evicted";
+    case RUNTIME_RESUME_MODEL_MISMATCH: return "model_mismatch";
+    case RUNTIME_RESUME_TOKEN_MISMATCH: return "token_mismatch";
+    case RUNTIME_RESUME_IO: return "io";
+    case RUNTIME_RESUME_REJECTED: return "rejected";
     }
     return "unknown";
 }
 
-static void wire_calls_reset(wire *w) {
+static void runtime_calls_reset(runtime *w) {
     for (size_t i = 0; i < w->call_count; i++) {
         free(w->calls[i].name);
         free(w->calls[i].arguments);
@@ -298,37 +298,37 @@ static void wire_calls_reset(wire *w) {
     w->call_open = -1;
 }
 
-static void wire_shadow_record(wire *w, int rows, int background) {
+static void runtime_shadow_record(runtime *w, int rows, int background) {
     if (rows <= 0) return;
     w->shadow_prefilled += (uint64_t)rows;
     if (background) w->shadow_background += (uint64_t)rows;
-    if (w->gen_kind != WIRE_GEN_NONE) {
+    if (w->gen_kind != RUNTIME_GEN_NONE) {
         w->usage.input += (uint64_t)rows;
         w->usage.replayed += (uint64_t)rows;
     }
 }
 
-static int wire_shadow_poll(wire *w, int background) {
+static int runtime_shadow_poll(runtime *w, int background) {
     if (!w->shadow || !w->shadow_inflight) return 1;
     int rows = xe_session_shadow_poll(w->shadow);
     if (!rows) return 0;
     w->shadow_inflight = 0;
-    wire_shadow_record(w, rows, background);
+    runtime_shadow_record(w, rows, background);
     if (background) w->shadow_cooldown = 32;
     return 1;
 }
 
-static void wire_shadow_wait(wire *w, int background) {
+static void runtime_shadow_wait(runtime *w, int background) {
     if (!w->shadow || !w->shadow_inflight) return;
     int rows = xe_session_shadow_wait(w->shadow);
     w->shadow_inflight = 0;
-    wire_shadow_record(w, rows, background);
+    runtime_shadow_record(w, rows, background);
     if (background) w->shadow_cooldown = 32;
 }
 
-static void wire_shadow_drop(wire *w) {
+static void runtime_shadow_drop(runtime *w) {
     if (!w->shadow) return;
-    wire_shadow_wait(w, 1);
+    runtime_shadow_wait(w, 1);
     xe_session_free(w->shadow);
     w->shadow = NULL;
     w->shadow_inflight = 0;
@@ -338,57 +338,57 @@ static void wire_shadow_drop(wire *w) {
     w->shadow_peak_kv = 0;
 }
 
-static wire_status wire_shadow_target(wire *w, int32_t **tokens,
+static runtime_status runtime_shadow_target(runtime *w, int32_t **tokens,
                                       uint64_t *count) {
     conversation_settings settings;
     if (!conversation_get_settings(w->current, &settings))
-        wire_settings_defaults(&settings);
-    return wire_from_conversation(
+        runtime_settings_defaults(&settings);
+    return runtime_from_conversation(
         w, conversation_project_copy(
                w->current,
                settings.reasoning_effort != CONVERSATION_REASONING_OFF,
                settings.reasoning_history, 1, tokens, count));
 }
 
-static wire_status wire_shadow_tick(wire *w) {
-    if (!w->shadow || !w->has_current) return WIRE_OK;
-    if (!wire_shadow_poll(w, 1)) return WIRE_OK;
+static runtime_status runtime_shadow_tick(runtime *w) {
+    if (!w->shadow || !w->has_current) return RUNTIME_OK;
+    if (!runtime_shadow_poll(w, 1)) return RUNTIME_OK;
     if (w->shadow_cooldown > 0) {
         w->shadow_cooldown--;
-        return WIRE_OK;
+        return RUNTIME_OK;
     }
     int32_t *tokens;
     uint64_t count;
-    wire_status status = wire_shadow_target(w, &tokens, &count);
-    if (status != WIRE_OK) return status;
+    runtime_status status = runtime_shadow_target(w, &tokens, &count);
+    if (status != RUNTIME_OK) return status;
     if (count < (uint64_t)xe_session_shadow_split(w->shadow)) {
         free(tokens);
-        return WIRE_OK;
+        return RUNTIME_OK;
     }
     xe_tokens target = { tokens, (int)count, (int)count };
     int rows = xe_session_shadow_start(w->shadow, &target, 64);
     free(tokens);
     if (rows < 0) {
-        wire_shadow_drop(w);
-        return WIRE_OK;
+        runtime_shadow_drop(w);
+        return RUNTIME_OK;
     }
     if (rows > 0) w->shadow_inflight = rows;
     uint64_t bytes = xe_session_shadow_kv_bytes(w->shadow);
     if (bytes > w->shadow_peak_kv) w->shadow_peak_kv = bytes;
-    return WIRE_OK;
+    return RUNTIME_OK;
 }
 
-static void wire_shadow_begin(wire *w) {
-    wire_shadow_drop(w);
+static void runtime_shadow_begin(runtime *w) {
+    runtime_shadow_drop(w);
     w->shadow = xe_session_shadow_new(w->session);
     if (!w->shadow) return;
     w->shadow_cooldown = 0;
     w->shadow_peak_kv = xe_session_shadow_kv_bytes(w->shadow);
 }
 
-static int wire_shadow_promote_resume(wire *w) {
+static int runtime_shadow_promote_resume(runtime *w) {
     if (!w->shadow || !w->session || !w->has_current) return 0;
-    wire_shadow_wait(w, 1);
+    runtime_shadow_wait(w, 1);
     uint64_t count;
     const int32_t *tokens = conversation_tokens(w->current, &count);
     xe_tokens prefix = { (int32_t *)tokens, (int)count, (int)count };
@@ -407,16 +407,16 @@ static int wire_shadow_promote_resume(wire *w) {
     return 1;
 }
 
-void wire_close(wire *w) {
+void runtime_close(runtime *w) {
     if (!w) return;
-    wire_shadow_drop(w);
+    runtime_shadow_drop(w);
     if (w->current) conversation_close(w->current);
     if (w->session) xe_session_free(w->session);
     if (w->ephemeral) xe_session_free(w->ephemeral);
     conversation_store_close(w->cstore);
     kvstore_close(w->kv);
     profile_close(w->prof);
-    wire_calls_reset(w);
+    runtime_calls_reset(w);
     free(w->calls);
     free(w->prompt);
     json_writer_free(&w->content);
@@ -427,17 +427,17 @@ void wire_close(wire *w) {
     free(w);
 }
 
-wire_status wire_describe(wire *w, wire_info *out) {
-    if (!w || !out) return WIRE_INVALID_ARGUMENT;
+runtime_status runtime_describe(runtime *w, runtime_info *out) {
+    if (!w || !out) return RUNTIME_INVALID_ARGUMENT;
     out->model = profile_model(w->prof);
     out->context_window = w->context;
     out->max_output = w->context;
     out->kvstore = w->kv != NULL;
     out->reasoning = 1;
-    return WIRE_OK;
+    return RUNTIME_OK;
 }
 
-static int wire_render_copy_set(wire_render_copy *copy,
+static int runtime_render_copy_set(runtime_render_copy *copy,
                                 const profile_render *render) {
     memset(copy, 0, sizeof *copy);
     copy->render = malloc(render->render_length ? render->render_length : 1);
@@ -460,13 +460,13 @@ static int wire_render_copy_set(wire_render_copy *copy,
     return 1;
 }
 
-static void wire_render_copy_free(wire_render_copy *copy) {
+static void runtime_render_copy_free(runtime_render_copy *copy) {
     free(copy->render);
     free(copy->tokens);
     memset(copy, 0, sizeof *copy);
 }
 
-static uint32_t wire_turn(const conversation *c) {
+static uint32_t runtime_turn(const conversation *c) {
     uint64_t count = conversation_visible_count(c);
     if (!count) return PROFILE_TURN_PADDED;
     const conversation_event *last = conversation_event_at(
@@ -496,27 +496,27 @@ static uint32_t wire_turn(const conversation *c) {
     }
 }
 
-static const conversation_event *wire_last_visible(const conversation *c) {
+static const conversation_event *runtime_last_visible(const conversation *c) {
     uint64_t count = conversation_visible_count(c);
     if (!count) return NULL;
     return conversation_event_at(c,
         conversation_visible_index(c, count - 1));
 }
 
-static int wire_after_tool(const conversation *c) {
-    const conversation_event *last = wire_last_visible(c);
+static int runtime_after_tool(const conversation *c) {
+    const conversation_event *last = runtime_last_visible(c);
     return last && last->type == CONVERSATION_EVENT_TOOL_RESULT;
 }
 
-static int wire_reasoning_continues(const conversation *c) {
-    const conversation_event *last = wire_last_visible(c);
+static int runtime_reasoning_continues(const conversation *c) {
+    const conversation_event *last = runtime_last_visible(c);
     return last &&
            last->type == CONVERSATION_EVENT_GENERATION_RESULT &&
            (last->reasoning_close == CONVERSATION_REASONING_LENGTH ||
             last->reasoning_close == CONVERSATION_REASONING_ABORTED);
 }
 
-static wire_status wire_tools_json(wire *w, const profile_tool *tools,
+static runtime_status runtime_tools_json(runtime *w, const profile_tool *tools,
                                    size_t tool_count) {
     json_writer_reset(&w->tools_scratch);
     json_raw(&w->tools_scratch, "[");
@@ -537,37 +537,37 @@ static wire_status wire_tools_json(wire *w, const profile_tool *tools,
     }
     json_raw(&w->tools_scratch, "]");
     if (w->tools_scratch.failed)
-        return wire_fail(w, WIRE_NOMEM, "out of memory");
-    return WIRE_OK;
+        return runtime_fail(w, RUNTIME_NOMEM, "out of memory");
+    return RUNTIME_OK;
 }
 
-static wire_status wire_budget_check(wire *w, uint64_t total) {
-    if (total + 1 < (uint64_t)w->context) return WIRE_OK;
-    wire_status status = wire_fail(w, WIRE_CONTEXT_LENGTH_EXCEEDED,
+static runtime_status runtime_budget_check(runtime *w, uint64_t total) {
+    if (total + 1 < (uint64_t)w->context) return RUNTIME_OK;
+    runtime_status status = runtime_fail(w, RUNTIME_CONTEXT_LENGTH_EXCEEDED,
                                    "prompt does not fit the context window");
     w->error_tokens = total;
     w->error_context = (uint64_t)w->context;
     return status;
 }
 
-static wire_status wire_append_system_event(wire *w, conversation *c,
+static runtime_status runtime_append_system_event(runtime *w, conversation *c,
                                             const char *system,
                                             const profile_tool *tools,
                                             size_t tool_count,
-                                            wire_marker *marker) {
+                                            runtime_marker *marker) {
     profile_render render;
-    wire_status status = wire_from_profile(
+    runtime_status status = runtime_from_profile(
         w, profile_render_system(w->prof, system, tools, tool_count, 0,
                                  &render));
-    if (status != WIRE_OK) return status;
-    wire_render_copy primary;
-    if (!wire_render_copy_set(&primary, &render))
-        return wire_fail(w, WIRE_NOMEM, "out of memory");
-    status = wire_from_profile(
+    if (status != RUNTIME_OK) return status;
+    runtime_render_copy primary;
+    if (!runtime_render_copy_set(&primary, &render))
+        return runtime_fail(w, RUNTIME_NOMEM, "out of memory");
+    status = runtime_from_profile(
         w, profile_render_system(w->prof, system, tools, tool_count, 1,
                                  &render));
-    if (status != WIRE_OK) {
-        wire_render_copy_free(&primary);
+    if (status != RUNTIME_OK) {
+        runtime_render_copy_free(&primary);
         return status;
     }
     conversation_block blocks[2];
@@ -576,9 +576,9 @@ static wire_status wire_append_system_event(wire *w, conversation *c,
     blocks[0].data = system ? system : "";
     blocks[0].length = system ? strlen(system) : 0;
     if (tool_count) {
-        status = wire_tools_json(w, tools, tool_count);
-        if (status != WIRE_OK) {
-            wire_render_copy_free(&primary);
+        status = runtime_tools_json(w, tools, tool_count);
+        if (status != RUNTIME_OK) {
+            runtime_render_copy_free(&primary);
             return status;
         }
         blocks[1].format = CONVERSATION_BLOCK_JSON;
@@ -586,7 +586,7 @@ static wire_status wire_append_system_event(wire *w, conversation *c,
         blocks[1].length = w->tools_scratch.length;
         block_count = 2;
     }
-    status = wire_from_conversation(
+    status = runtime_from_conversation(
         w, conversation_append_message_variants(
                c, CONVERSATION_ROLE_SYSTEM, blocks, block_count,
                primary.render, primary.render_length,
@@ -594,45 +594,45 @@ static wire_status wire_append_system_event(wire *w, conversation *c,
                render.render, render.render_length,
                render.tokens, render.token_count,
                NULL, 0, CONVERSATION_REASONING_NONE));
-    wire_render_copy_free(&primary);
-    if (status != WIRE_OK) return status;
+    runtime_render_copy_free(&primary);
+    if (status != RUNTIME_OK) return status;
     if (marker) *marker = conversation_event_count(c) - 1;
-    return WIRE_OK;
+    return RUNTIME_OK;
 }
 
 /* Consecutive transient failures push the next autosave out: 30 s, then
  * +30, +90, +210, +450 s on top of the 30 s window, capped. The explicit
  * checkpoint op bypasses this and a success resets it. */
-static void wire_ckpt_backoff(wire *w, int64_t now) {
+static void runtime_ckpt_backoff(runtime *w, int64_t now) {
     if (w->ckpt_failures < 5) w->ckpt_failures++;
     int64_t window = INT64_C(30000000000);
     int64_t extra = window * ((INT64_C(1) << w->ckpt_failures) - 2);
     w->saved_at = now + extra;
 }
 
-static void wire_ckpt_reset(wire *w) {
+static void runtime_ckpt_reset(runtime *w) {
     w->ckpt_failures = 0;
     w->ckpt_autosave_off = 0;
 }
 
-static void wire_checkpoint_now(wire *w, wire_checkpoint_report *out) {
-    wire_checkpoint_report report;
+static void runtime_checkpoint_now(runtime *w, runtime_checkpoint_report *out) {
+    runtime_checkpoint_report report;
     memset(&report, 0, sizeof report);
     if (!out) out = &report;
     memset(out, 0, sizeof *out);
-    if (!w->kv) { out->reason = WIRE_CKPT_NO_KVSTORE; return; }
-    if (!w->session || !w->has_current) { out->reason = WIRE_CKPT_EMPTY; return; }
+    if (!w->kv) { out->reason = RUNTIME_CKPT_NO_KVSTORE; return; }
+    if (!w->session || !w->has_current) { out->reason = RUNTIME_CKPT_EMPTY; return; }
     conversation *c = w->current;
     uint64_t total;
     const int32_t *tokens = conversation_tokens(c, &total);
     out->tokens = total;
-    if (!total) { out->reason = WIRE_CKPT_EMPTY; return; }
+    if (!total) { out->reason = RUNTIME_CKPT_EMPTY; return; }
     int position = xe_session_position(w->session);
-    if (position <= 0) { out->reason = WIRE_CKPT_EMPTY; return; }
-    if ((uint64_t)position > total) { out->reason = WIRE_CKPT_KV_DIVERGED; return; }
+    if (position <= 0) { out->reason = RUNTIME_CKPT_EMPTY; return; }
+    if ((uint64_t)position > total) { out->reason = RUNTIME_CKPT_KV_DIVERGED; return; }
     xe_tokens full = { (int32_t *)tokens, (int)total, (int)total };
     if (xe_session_common(w->session, &full) < position) {
-        out->reason = WIRE_CKPT_KV_DIVERGED;
+        out->reason = RUNTIME_CKPT_KV_DIVERGED;
         return;
     }
     if ((uint64_t)position < total) {
@@ -640,7 +640,7 @@ static void wire_checkpoint_now(wire *w, wire_checkpoint_report *out) {
         position = (int)total;
     }
     if ((uint64_t)position <= w->saved_tokens) {
-        out->reason = WIRE_CKPT_NOTHING_NEW;
+        out->reason = RUNTIME_CKPT_NOTHING_NEW;
         return;
     }
     kvstore_save_options options;
@@ -650,77 +650,77 @@ static void wire_checkpoint_now(wire *w, wire_checkpoint_report *out) {
     xe_snapshot_status snapshot_status;
     kvstore_status ks = kvstore_save(w->kv, w->session, &options, &id,
                                      &snapshot_status);
-    int64_t now = wire_now();
+    int64_t now = runtime_now();
     if (ks != KVSTORE_OK) {
         if (ks == KVSTORE_BUDGET) {
-            out->reason = WIRE_CKPT_BUDGET;
+            out->reason = RUNTIME_CKPT_BUDGET;
             w->ckpt_autosave_off = 1;
         } else {
-            out->reason = ks == KVSTORE_REJECTED ? WIRE_CKPT_REJECTED
-                                                 : WIRE_CKPT_IO;
-            wire_ckpt_backoff(w, now);
+            out->reason = ks == KVSTORE_REJECTED ? RUNTIME_CKPT_REJECTED
+                                                 : RUNTIME_CKPT_IO;
+            runtime_ckpt_backoff(w, now);
         }
         return;
     }
     if (conversation_append_snapshot_ref(c, &id, (uint64_t)position)
             != CONVERSATION_OK ||
         conversation_commit(c) != CONVERSATION_OK) {
-        out->reason = WIRE_CKPT_RECORD_FAILED;
-        wire_ckpt_backoff(w, now);
+        out->reason = RUNTIME_CKPT_RECORD_FAILED;
+        runtime_ckpt_backoff(w, now);
         return;
     }
     w->saved_tokens = (uint64_t)position;
     w->saved_at = now;
-    wire_ckpt_reset(w);
+    runtime_ckpt_reset(w);
     out->saved = 1;
-    out->reason = WIRE_CKPT_SAVED;
+    out->reason = RUNTIME_CKPT_SAVED;
     out->tokens = (uint64_t)position;
 }
 
-static void wire_park(wire *w, wire_checkpoint_report *out) {
+static void runtime_park(runtime *w, runtime_checkpoint_report *out) {
     if (out) memset(out, 0, sizeof *out);
     if (!w->has_current) return;
-    wire_shadow_drop(w);
-    wire_checkpoint_now(w, out);
+    runtime_shadow_drop(w);
+    runtime_checkpoint_now(w, out);
     conversation_close(w->current);
     w->current = NULL;
     w->has_current = 0;
     if (w->session) xe_session_anchor_clear(w->session);
 }
 
-wire_status wire_session_create(wire *w, const char *system,
+runtime_status runtime_session_create(runtime *w, const char *system,
                                 const profile_tool *tools, size_t tool_count,
-                                conversation_id *id, wire_marker *marker) {
-    if (!w || !id) return WIRE_INVALID_ARGUMENT;
-    if (w->gen_kind != WIRE_GEN_NONE)
-        return wire_fail(w, WIRE_BUSY, "generation in progress");
+                                conversation_id *id, runtime_marker *marker) {
+    if (!w || !id) return RUNTIME_INVALID_ARGUMENT;
+    if (w->gen_kind != RUNTIME_GEN_NONE)
+        return runtime_fail(w, RUNTIME_BUSY, "generation in progress");
     conversation *c = NULL;
-    wire_status status = wire_from_conversation(
+    runtime_status status = runtime_from_conversation(
         w, conversation_create(w->cstore, &c, id));
-    if (status != WIRE_OK) return status;
-    wire_marker system_marker = 0;
-    status = wire_append_system_event(w, c, system, tools, tool_count,
+    if (status != RUNTIME_OK) return status;
+    runtime_marker system_marker = 0;
+    status = runtime_append_system_event(w, c, system, tools, tool_count,
                                       &system_marker);
-    if (status == WIRE_OK)
-        status = wire_from_conversation(w, conversation_commit(c));
-    if (status != WIRE_OK) {
+    if (status == RUNTIME_OK)
+        status = runtime_from_conversation(w, conversation_commit(c));
+    if (status != RUNTIME_OK) {
         conversation_close(c);
         conversation_delete(w->cstore, id);
         return status;
     }
-    wire_park(w, NULL);
+    runtime_park(w, NULL);
     w->current = c;
     w->current_id = *id;
     w->has_current = 1;
     w->next_call_id = 1;
     w->saved_tokens = 0;
     w->saved_at = 0;
-    wire_ckpt_reset(w);
+    runtime_ckpt_reset(w);
     if (marker) *marker = system_marker;
-    return WIRE_OK;
+    return RUNTIME_OK;
 }
 
-static void wire_scan_call_ids(wire *w, conversation *c) {
+static void runtime_scan_call_ids(runtime *w, conversation *c) {
     uint64_t next = 1;
     uint64_t count = conversation_event_count(c);
     for (uint64_t i = 0; i < count; i++) {
@@ -732,15 +732,15 @@ static void wire_scan_call_ids(wire *w, conversation *c) {
     w->next_call_id = next;
 }
 
-static void wire_open_report_fill(wire *w, wire_open_report *out) {
+static void runtime_open_report_fill(runtime *w, runtime_open_report *out) {
     conversation *c = w->current;
     uint64_t tokens;
     conversation_tokens(c, &tokens);
     uint64_t visible = conversation_visible_count(c);
     out->token_count = tokens;
     out->marker = visible ? conversation_visible_index(c, visible - 1)
-                          : WIRE_MARKER_NONE;
-    out->turn_open = wire_turn(c) == PROFILE_TURN_OPEN;
+                          : RUNTIME_MARKER_NONE;
+    out->turn_open = runtime_turn(c) == PROFILE_TURN_OPEN;
     kvstore_id snapshot;
     uint64_t boundary = 0;
     int has_snapshot = conversation_snapshot_current(c, &snapshot, &boundary);
@@ -749,99 +749,99 @@ static void wire_open_report_fill(wire *w, wire_open_report *out) {
     out->pending_calls = conversation_unknown_tool_calls(c, NULL, 0);
 }
 
-wire_status wire_session_open(wire *w, const conversation_id *id,
-                              wire_open_report *out) {
-    if (!w || !id) return WIRE_INVALID_ARGUMENT;
-    if (w->gen_kind != WIRE_GEN_NONE)
-        return wire_fail(w, WIRE_BUSY, "generation in progress");
+runtime_status runtime_session_open(runtime *w, const conversation_id *id,
+                              runtime_open_report *out) {
+    if (!w || !id) return RUNTIME_INVALID_ARGUMENT;
+    if (w->gen_kind != RUNTIME_GEN_NONE)
+        return runtime_fail(w, RUNTIME_BUSY, "generation in progress");
     if (w->has_current &&
         memcmp(w->current_id.bytes, id->bytes, 16) == 0) {
-        if (out) wire_open_report_fill(w, out);
-        return WIRE_OK;
+        if (out) runtime_open_report_fill(w, out);
+        return RUNTIME_OK;
     }
     conversation *c = NULL;
-    wire_status status = wire_from_conversation(
+    runtime_status status = runtime_from_conversation(
         w, conversation_open(w->cstore, id, &c));
-    if (status != WIRE_OK) return status;
+    if (status != RUNTIME_OK) return status;
     conversation_settings settings;
     if (!conversation_get_settings(c, &settings))
-        wire_settings_defaults(&settings);
-    status = wire_from_conversation(
+        runtime_settings_defaults(&settings);
+    status = runtime_from_conversation(
         w, conversation_project(
                c, settings.reasoning_effort != CONVERSATION_REASONING_OFF,
                settings.reasoning_history));
-    if (status != WIRE_OK) {
+    if (status != RUNTIME_OK) {
         conversation_close(c);
         return status;
     }
-    wire_park(w, NULL);
+    runtime_park(w, NULL);
     w->current = c;
     w->current_id = *id;
     w->has_current = 1;
-    wire_scan_call_ids(w, c);
+    runtime_scan_call_ids(w, c);
     kvstore_id snapshot;
     uint64_t boundary = 0;
     w->saved_tokens = conversation_snapshot_current(c, &snapshot, &boundary)
                       ? boundary : 0;
     w->saved_at = 0;
-    wire_ckpt_reset(w);
-    if (out) wire_open_report_fill(w, out);
-    return WIRE_OK;
+    runtime_ckpt_reset(w);
+    if (out) runtime_open_report_fill(w, out);
+    return RUNTIME_OK;
 }
 
-wire_status wire_session_list(wire *w, conversation_summary **out,
+runtime_status runtime_session_list(runtime *w, conversation_summary **out,
                               size_t *count) {
-    if (!w || !out || !count) return WIRE_INVALID_ARGUMENT;
-    return wire_from_conversation(
+    if (!w || !out || !count) return RUNTIME_INVALID_ARGUMENT;
+    return runtime_from_conversation(
         w, conversation_list(w->cstore, out, count));
 }
 
-wire_status wire_session_stat(wire *w, const conversation_id *id,
+runtime_status runtime_session_stat(runtime *w, const conversation_id *id,
                               conversation_summary *out) {
-    if (!w || !id || !out) return WIRE_INVALID_ARGUMENT;
+    if (!w || !id || !out) return RUNTIME_INVALID_ARGUMENT;
     conversation_summary *all = NULL;
     size_t count = 0;
-    wire_status status = wire_from_conversation(
+    runtime_status status = runtime_from_conversation(
         w, conversation_list(w->cstore, &all, &count));
-    if (status != WIRE_OK) return status;
-    status = wire_fail(w, WIRE_SESSION_NOT_FOUND, "session not found");
+    if (status != RUNTIME_OK) return status;
+    status = runtime_fail(w, RUNTIME_SESSION_NOT_FOUND, "session not found");
     for (size_t i = 0; i < count; i++)
         if (memcmp(all[i].id.bytes, id->bytes, 16) == 0) {
             *out = all[i];
-            status = WIRE_OK;
+            status = RUNTIME_OK;
             break;
         }
     free(all);
     return status;
 }
 
-wire_status wire_session_delete(wire *w, const conversation_id *id) {
-    if (!w || !id) return WIRE_INVALID_ARGUMENT;
-    if (w->gen_kind != WIRE_GEN_NONE)
-        return wire_fail(w, WIRE_BUSY, "generation in progress");
+runtime_status runtime_session_delete(runtime *w, const conversation_id *id) {
+    if (!w || !id) return RUNTIME_INVALID_ARGUMENT;
+    if (w->gen_kind != RUNTIME_GEN_NONE)
+        return runtime_fail(w, RUNTIME_BUSY, "generation in progress");
     if (w->has_current &&
         memcmp(w->current_id.bytes, id->bytes, 16) == 0) {
-        wire_shadow_drop(w);
+        runtime_shadow_drop(w);
         conversation_close(w->current);
         w->current = NULL;
         w->has_current = 0;
         if (w->session) xe_session_anchor_clear(w->session);
     }
-    return wire_from_conversation(w,
+    return runtime_from_conversation(w,
                                   conversation_delete(w->cstore, id));
 }
 
-size_t wire_pending_calls(wire *w, uint64_t *call_ids, size_t cap) {
+size_t runtime_pending_calls(runtime *w, uint64_t *call_ids, size_t cap) {
     if (!w || !w->has_current) return 0;
     return conversation_unknown_tool_calls(w->current, call_ids, cap);
 }
 
-uint64_t wire_history_count(wire *w) {
+uint64_t runtime_history_count(runtime *w) {
     if (!w || !w->has_current) return 0;
     return conversation_visible_count(w->current);
 }
 
-static const char *wire_tool_name_of(conversation *c, uint64_t call_id) {
+static const char *runtime_tool_name_of(conversation *c, uint64_t call_id) {
     uint64_t count = conversation_event_count(c);
     for (uint64_t i = count; i > 0; i--) {
         const conversation_event *ev = conversation_event_at(c, i - 1);
@@ -852,14 +852,14 @@ static const char *wire_tool_name_of(conversation *c, uint64_t call_id) {
     return NULL;
 }
 
-wire_status wire_history_at(wire *w, uint64_t position,
-                            wire_history_entry *out) {
-    if (!w || !out) return WIRE_INVALID_ARGUMENT;
+runtime_status runtime_history_at(runtime *w, uint64_t position,
+                            runtime_history_entry *out) {
+    if (!w || !out) return RUNTIME_INVALID_ARGUMENT;
     if (!w->has_current)
-        return wire_fail(w, WIRE_SESSION_NOT_FOUND, "no open session");
+        return runtime_fail(w, RUNTIME_SESSION_NOT_FOUND, "no open session");
     conversation *c = w->current;
     if (position >= conversation_visible_count(c))
-        return wire_fail(w, WIRE_INVALID_ARGUMENT,
+        return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                          "history position out of range");
     uint64_t index = conversation_visible_index(c, position);
     const conversation_event *ev = conversation_event_at(c, index);
@@ -879,81 +879,81 @@ wire_status wire_history_at(wire *w, uint64_t position,
     case CONVERSATION_EVENT_MESSAGE:
         out->role = ev->role;
         out->kind = ev->role == CONVERSATION_ROLE_SYSTEM
-                    ? WIRE_MESSAGE_SYSTEM
+                    ? RUNTIME_MESSAGE_SYSTEM
                     : ev->role == CONVERSATION_ROLE_ASSISTANT
-                    ? WIRE_MESSAGE_ASSISTANT : WIRE_MESSAGE_USER;
+                    ? RUNTIME_MESSAGE_ASSISTANT : RUNTIME_MESSAGE_USER;
         break;
     case CONVERSATION_EVENT_GENERATION_RESULT:
         out->role = CONVERSATION_ROLE_ASSISTANT;
-        out->kind = WIRE_MESSAGE_ASSISTANT;
+        out->kind = RUNTIME_MESSAGE_ASSISTANT;
         out->stop_reason = ev->stop_reason;
         break;
     case CONVERSATION_EVENT_TOOL_RESULT:
         out->role = CONVERSATION_ROLE_TOOL;
-        out->kind = WIRE_MESSAGE_TOOL_RESULT;
+        out->kind = RUNTIME_MESSAGE_TOOL_RESULT;
         out->call_id = ev->call_id;
         out->tool_status = ev->tool_status;
-        out->tool_name = wire_tool_name_of(c, ev->call_id);
+        out->tool_name = runtime_tool_name_of(c, ev->call_id);
         break;
     default:
-        return wire_fail(w, WIRE_INVALID_ARGUMENT, "unexpected event");
+        return runtime_fail(w, RUNTIME_INVALID_ARGUMENT, "unexpected event");
     }
-    return WIRE_OK;
+    return RUNTIME_OK;
 }
 
-wire_status wire_append(wire *w, const wire_message *message,
-                        wire_marker *out) {
-    if (!w || !message) return WIRE_INVALID_ARGUMENT;
-    if (w->gen_kind != WIRE_GEN_NONE)
-        return wire_fail(w, WIRE_BUSY, "generation in progress");
+runtime_status runtime_append(runtime *w, const runtime_message *message,
+                        runtime_marker *out) {
+    if (!w || !message) return RUNTIME_INVALID_ARGUMENT;
+    if (w->gen_kind != RUNTIME_GEN_NONE)
+        return runtime_fail(w, RUNTIME_BUSY, "generation in progress");
     if (!w->has_current)
-        return wire_fail(w, WIRE_SESSION_NOT_FOUND, "no open session");
+        return runtime_fail(w, RUNTIME_SESSION_NOT_FOUND, "no open session");
     conversation *c = w->current;
     uint64_t tokens;
     conversation_tokens(c, &tokens);
     profile_render render;
-    wire_status status;
+    runtime_status status;
     conversation_block block;
     block.format = CONVERSATION_BLOCK_TEXT;
     block.data = message->text ? message->text : "";
     block.length = message->text ? strlen(message->text) : 0;
 
-    if (message->kind == WIRE_MESSAGE_USER) {
+    if (message->kind == RUNTIME_MESSAGE_USER) {
         if (!message->text)
-            return wire_fail(w, WIRE_INVALID_ARGUMENT, "missing text");
-        status = wire_from_profile(
-            w, profile_render_user(w->prof, message->text, wire_turn(c),
+            return runtime_fail(w, RUNTIME_INVALID_ARGUMENT, "missing text");
+        status = runtime_from_profile(
+            w, profile_render_user(w->prof, message->text, runtime_turn(c),
                                    &render));
-        if (status != WIRE_OK) return status;
-        status = wire_budget_check(w, tokens + render.token_count);
-        if (status != WIRE_OK) return status;
-        status = wire_from_conversation(
+        if (status != RUNTIME_OK) return status;
+        status = runtime_budget_check(w, tokens + render.token_count);
+        if (status != RUNTIME_OK) return status;
+        status = runtime_from_conversation(
             w, conversation_append_message(c, CONVERSATION_ROLE_USER,
                                            &block, 1, render.render,
                                            render.render_length,
                                            render.tokens,
                                            render.token_count));
-    } else if (message->kind == WIRE_MESSAGE_TOOL_RESULT) {
-        wire_shadow_poll(w, 1);
+    } else if (message->kind == RUNTIME_MESSAGE_TOOL_RESULT) {
+        runtime_shadow_poll(w, 1);
         if (!message->text)
-            return wire_fail(w, WIRE_INVALID_ARGUMENT, "missing text");
-        if (wire_turn(c) != PROFILE_TURN_OPEN)
-            return wire_fail(w, WIRE_INVALID_ARGUMENT,
+            return runtime_fail(w, RUNTIME_INVALID_ARGUMENT, "missing text");
+        if (runtime_turn(c) != PROFILE_TURN_OPEN)
+            return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                              "no open model turn for a tool result");
-        const char *name = wire_tool_name_of(c, message->call_id);
+        const char *name = runtime_tool_name_of(c, message->call_id);
         if (!name)
-            return wire_fail(w, WIRE_INVALID_ARGUMENT,
+            return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                              "unknown tool call id");
-        status = wire_from_profile(
+        status = runtime_from_profile(
             w, profile_render_tool_result(w->prof, name, message->text,
                                           &render));
-        if (status != WIRE_OK) return status;
-        status = wire_budget_check(w, tokens + render.token_count);
-        if (status != WIRE_OK) return status;
+        if (status != RUNTIME_OK) return status;
+        status = runtime_budget_check(w, tokens + render.token_count);
+        if (status != RUNTIME_OK) return status;
         uint32_t tool_status = message->tool_status
                                ? message->tool_status
                                : CONVERSATION_TOOL_OK;
-        status = wire_from_conversation(
+        status = runtime_from_conversation(
             w, conversation_append_tool_result(c, message->call_id,
                                                tool_status, &block, 1,
                                                render.render,
@@ -961,27 +961,27 @@ wire_status wire_append(wire *w, const wire_message *message,
                                                render.tokens,
                                                render.token_count));
     } else {
-        return wire_fail(w, WIRE_INVALID_ARGUMENT,
+        return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                          "unsupported message kind for append");
     }
-    if (status != WIRE_OK) return status;
-    wire_marker marker = conversation_event_count(c) - 1;
+    if (status != RUNTIME_OK) return status;
+    runtime_marker marker = conversation_event_count(c) - 1;
     conversation_settings settings;
     if (!conversation_get_settings(c, &settings))
-        wire_settings_defaults(&settings);
-    status = wire_project_mutation(
+        runtime_settings_defaults(&settings);
+    status = runtime_project_mutation(
         w, c, settings.reasoning_effort != CONVERSATION_REASONING_OFF,
         settings.reasoning_history);
-    if (status != WIRE_OK) return status;
-    status = wire_from_conversation(w, conversation_commit(c));
-    if (status != WIRE_OK) return status;
-    if (message->kind == WIRE_MESSAGE_TOOL_RESULT)
-        wire_shadow_promote_resume(w);
+    if (status != RUNTIME_OK) return status;
+    status = runtime_from_conversation(w, conversation_commit(c));
+    if (status != RUNTIME_OK) return status;
+    if (message->kind == RUNTIME_MESSAGE_TOOL_RESULT)
+        runtime_shadow_promote_resume(w);
     if (out) *out = marker;
-    return WIRE_OK;
+    return RUNTIME_OK;
 }
 
-static void wire_settings_defaults(conversation_settings *settings) {
+static void runtime_settings_defaults(conversation_settings *settings) {
     settings->temperature = 1.0f;
     settings->top_k = 64;
     settings->top_p = 0.95f;
@@ -994,7 +994,7 @@ static void wire_settings_defaults(conversation_settings *settings) {
     settings->reasoning_budget = -1;
 }
 
-static int wire_params_valid(const wire_gen_params *params) {
+static int runtime_params_valid(const runtime_gen_params *params) {
     if (!params) return 1;
     if (params->reasoning_set &&
         params->reasoning_effort > CONVERSATION_REASONING_MAX)
@@ -1008,8 +1008,8 @@ static int wire_params_valid(const wire_gen_params *params) {
     return 1;
 }
 
-static int wire_settings_apply(conversation_settings *settings,
-                               const wire_gen_params *params) {
+static int runtime_settings_apply(conversation_settings *settings,
+                               const runtime_gen_params *params) {
     int changed = 0;
     int effort_changed = 0;
     if (!params) return 0;
@@ -1058,14 +1058,14 @@ static int wire_settings_apply(conversation_settings *settings,
     return changed;
 }
 
-static wire_status wire_prompt_reserve(wire *w) {
-    if (w->prompt) return WIRE_OK;
+static runtime_status runtime_prompt_reserve(runtime *w) {
+    if (w->prompt) return RUNTIME_OK;
     w->prompt = malloc((size_t)w->context * sizeof(*w->prompt));
-    if (!w->prompt) return wire_fail(w, WIRE_NOMEM, "out of memory");
-    return WIRE_OK;
+    if (!w->prompt) return runtime_fail(w, RUNTIME_NOMEM, "out of memory");
+    return RUNTIME_OK;
 }
 
-static void wire_gen_reset(wire *w, int reasoning_open) {
+static void runtime_gen_reset(runtime *w, int reasoning_open) {
     w->cancel_requested = 0;
     w->started_emitted = 0;
     w->first_sync_done = 0;
@@ -1078,11 +1078,11 @@ static void wire_gen_reset(wire *w, int reasoning_open) {
     json_writer_reset(&w->content);
     json_writer_reset(&w->reasoning);
     json_writer_reset(&w->render);
-    wire_calls_reset(w);
+    runtime_calls_reset(w);
     profile_parser_reset(w->prof, reasoning_open);
 }
 
-static wire_status wire_reasoning_policy_load(wire *w) {
+static runtime_status runtime_reasoning_policy_load(runtime *w) {
     uint32_t effort;
     switch (w->gen_settings.reasoning_effort) {
     case CONVERSATION_REASONING_LOW:
@@ -1101,14 +1101,14 @@ static wire_status wire_reasoning_policy_load(wire *w) {
         effort = PROFILE_REASONING_OFF;
         break;
     }
-    return wire_from_profile(
+    return runtime_from_profile(
         w, profile_get_reasoning_policy(
                w->prof, effort, w->gen_settings.reasoning_budget,
                w->gen_max_tokens, w->context - w->prompt_length,
                &w->reasoning_policy));
 }
 
-static void wire_utf8_feed(wire *w, const uint8_t *data, size_t length) {
+static void runtime_utf8_feed(runtime *w, const uint8_t *data, size_t length) {
     for (size_t i = 0; i < length; i++) {
         uint8_t byte = data[i];
         if (w->utf8_pending) {
@@ -1124,7 +1124,7 @@ static void wire_utf8_feed(wire *w, const uint8_t *data, size_t length) {
     }
 }
 
-static wire_status wire_best_snapshot(conversation *c, uint64_t limit,
+static runtime_status runtime_best_snapshot(conversation *c, uint64_t limit,
                                       kvstore_id *id, uint64_t *boundary) {
     uint64_t best = 0;
     int found = 0;
@@ -1140,12 +1140,12 @@ static wire_status wire_best_snapshot(conversation *c, uint64_t limit,
         *id = ev->snapshot;
         found = 1;
     }
-    if (!found) return WIRE_SESSION_NOT_FOUND;
+    if (!found) return RUNTIME_SESSION_NOT_FOUND;
     *boundary = best;
-    return WIRE_OK;
+    return RUNTIME_OK;
 }
 
-static wire_status wire_gen_prepare(wire *w, xe_session *session,
+static runtime_status runtime_gen_prepare(runtime *w, xe_session *session,
                                     conversation *c) {
     w->gen_session = session;
     w->autosave_attempted = 0;
@@ -1155,8 +1155,8 @@ static wire_status wire_gen_prepare(wire *w, xe_session *session,
     if (c && w->kv) {
         kvstore_id id;
         uint64_t boundary = 0;
-        if (wire_best_snapshot(c, (uint64_t)w->prompt_length, &id,
-                               &boundary) == WIRE_OK &&
+        if (runtime_best_snapshot(c, (uint64_t)w->prompt_length, &id,
+                               &boundary) == RUNTIME_OK &&
             boundary > (uint64_t)common) {
             xe_tokens expected = { w->prompt, (int)boundary,
                                    (int)boundary };
@@ -1169,50 +1169,50 @@ static wire_status wire_gen_prepare(wire *w, xe_session *session,
             if (ks == KVSTORE_OK) {
                 common = xe_session_common(session, &prompt);
                 w->resume.loaded = 1;
-                w->resume.reason = WIRE_RESUME_LOADED;
+                w->resume.reason = RUNTIME_RESUME_LOADED;
             } else if (ks == KVSTORE_MISS) {
-                w->resume.reason = WIRE_RESUME_EVICTED;
+                w->resume.reason = RUNTIME_RESUME_EVICTED;
             } else if (ks == KVSTORE_REJECTED) {
                 switch (snapshot_status) {
                 case XE_SNAPSHOT_MODEL_MISMATCH:
-                    w->resume.reason = WIRE_RESUME_MODEL_MISMATCH; break;
+                    w->resume.reason = RUNTIME_RESUME_MODEL_MISMATCH; break;
                 case XE_SNAPSHOT_TOKEN_MISMATCH:
-                    w->resume.reason = WIRE_RESUME_TOKEN_MISMATCH; break;
+                    w->resume.reason = RUNTIME_RESUME_TOKEN_MISMATCH; break;
                 case XE_SNAPSHOT_IO:
-                    w->resume.reason = WIRE_RESUME_IO; break;
+                    w->resume.reason = RUNTIME_RESUME_IO; break;
                 default:
-                    w->resume.reason = WIRE_RESUME_REJECTED; break;
+                    w->resume.reason = RUNTIME_RESUME_REJECTED; break;
                 }
             } else {
-                w->resume.reason = WIRE_RESUME_IO;
+                w->resume.reason = RUNTIME_RESUME_IO;
             }
         }
     }
     w->prompt_common = common;
     w->prompt_synced = common;
-    w->gen_phase = WIRE_PHASE_PREFILL;
-    return WIRE_OK;
+    w->gen_phase = RUNTIME_PHASE_PREFILL;
+    return RUNTIME_OK;
 }
 
-wire_status wire_generate(wire *w, const wire_gen_params *params) {
-    if (!w) return WIRE_INVALID_ARGUMENT;
-    if (w->gen_kind != WIRE_GEN_NONE)
-        return wire_fail(w, WIRE_BUSY, "generation in progress");
+runtime_status runtime_generate(runtime *w, const runtime_gen_params *params) {
+    if (!w) return RUNTIME_INVALID_ARGUMENT;
+    if (w->gen_kind != RUNTIME_GEN_NONE)
+        return runtime_fail(w, RUNTIME_BUSY, "generation in progress");
     if (!w->has_current)
-        return wire_fail(w, WIRE_SESSION_NOT_FOUND, "no open session");
-    if (!wire_params_valid(params))
-        return wire_fail(w, WIRE_INVALID_ARGUMENT,
+        return runtime_fail(w, RUNTIME_SESSION_NOT_FOUND, "no open session");
+    if (!runtime_params_valid(params))
+        return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                          "invalid reasoning settings");
     conversation *c = w->current;
 
     conversation_settings settings;
     int stored = conversation_get_settings(c, &settings);
-    if (!stored) wire_settings_defaults(&settings);
+    if (!stored) runtime_settings_defaults(&settings);
     if (settings.sampler_abi != CONVERSATION_SAMPLER_ABI)
-        return wire_fail(w, WIRE_INVALID_ARGUMENT,
+        return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                          "sampler abi mismatch");
     conversation_settings previous = settings;
-    int changed = wire_settings_apply(&settings, params);
+    int changed = runtime_settings_apply(&settings, params);
     int was_thinking = previous.reasoning_effort !=
                        CONVERSATION_REASONING_OFF;
     int is_thinking = settings.reasoning_effort !=
@@ -1222,45 +1222,45 @@ wire_status wire_generate(wire *w, const wire_gen_params *params) {
          (is_thinking &&
           previous.reasoning_history != settings.reasoning_history));
     if (projection_changed) {
-        wire_shadow_drop(w);
-        wire_status status = wire_from_conversation(
+        runtime_shadow_drop(w);
+        runtime_status status = runtime_from_conversation(
             w, conversation_append_cache_epoch(c));
-        if (status != WIRE_OK) return status;
+        if (status != RUNTIME_OK) return status;
         w->saved_tokens = 0;
         w->saved_at = 0;
-        wire_ckpt_reset(w);
+        runtime_ckpt_reset(w);
         if (w->session) xe_session_anchor_clear(w->session);
     }
     if (!stored || changed) {
-        wire_status status = wire_from_conversation(
+        runtime_status status = runtime_from_conversation(
             w, conversation_append_settings(c, &settings));
-        if (status != WIRE_OK) return status;
+        if (status != RUNTIME_OK) return status;
     }
 
-    wire_status status = wire_from_conversation(
+    runtime_status status = runtime_from_conversation(
         w, conversation_project(
                c, settings.reasoning_effort != CONVERSATION_REASONING_OFF,
                settings.reasoning_history));
-    if (status != WIRE_OK) return status;
+    if (status != RUNTIME_OK) return status;
 
     uint64_t tokens;
     const int32_t *projection = conversation_tokens(c, &tokens);
     profile_render render;
-    uint32_t turn = wire_turn(c);
-    int after_tool = wire_after_tool(c);
+    uint32_t turn = runtime_turn(c);
+    int after_tool = runtime_after_tool(c);
     int reasoning_open =
         settings.reasoning_effort != CONVERSATION_REASONING_OFF &&
-        (wire_reasoning_continues(c) || after_tool);
-    status = wire_from_profile(
+        (runtime_reasoning_continues(c) || after_tool);
+    status = runtime_from_profile(
         w, profile_render_reply_open(
                w->prof, turn,
                settings.reasoning_effort != CONVERSATION_REASONING_OFF,
                after_tool, &render));
-    if (status != WIRE_OK) return status;
-    status = wire_budget_check(w, tokens + render.token_count);
-    if (status != WIRE_OK) return status;
-    status = wire_prompt_reserve(w);
-    if (status != WIRE_OK) return status;
+    if (status != RUNTIME_OK) return status;
+    status = runtime_budget_check(w, tokens + render.token_count);
+    if (status != RUNTIME_OK) return status;
+    status = runtime_prompt_reserve(w);
+    if (status != RUNTIME_OK) return status;
     if (tokens) memcpy(w->prompt, projection,
                        (size_t)tokens * sizeof(*w->prompt));
     if (render.token_count)
@@ -1271,95 +1271,95 @@ wire_status wire_generate(wire *w, const wire_gen_params *params) {
 
     w->generation_id = conversation_event_count(c);
     conversation_generation generation = { w->generation_id, settings };
-    status = wire_from_conversation(
+    status = runtime_from_conversation(
         w, conversation_append_generation_started(c, &generation));
-    if (status == WIRE_OK)
-        status = wire_from_conversation(w, conversation_commit(c));
-    if (status != WIRE_OK) return status;
+    if (status == RUNTIME_OK)
+        status = runtime_from_conversation(w, conversation_commit(c));
+    if (status != RUNTIME_OK) return status;
 
     w->gen_thinking = settings.reasoning_effort !=
                       CONVERSATION_REASONING_OFF;
     w->gen_after_tool = after_tool;
     w->gen_turn = turn;
     w->capture_anchor = w->gen_thinking && turn == PROFILE_TURN_PADDED;
-    wire_gen_reset(w, reasoning_open);
+    runtime_gen_reset(w, reasoning_open);
     if (json_rawn(&w->render, render.render,
                   render.render_length) == 0)
-        return wire_fail(w, WIRE_NOMEM, "out of memory");
+        return runtime_fail(w, RUNTIME_NOMEM, "out of memory");
     w->gen_settings = settings;
     w->sampler.temperature = settings.temperature;
     w->sampler.top_k = settings.top_k;
     w->sampler.top_p = settings.top_p;
     w->sampler.rng_state = settings.rng_state;
     w->gen_max_tokens = settings.max_tokens;
-    status = wire_reasoning_policy_load(w);
-    if (status != WIRE_OK) return status;
+    status = runtime_reasoning_policy_load(w);
+    if (status != RUNTIME_OK) return status;
     if (!w->session) w->session = xe_session_new(w->engine);
-    w->gen_kind = WIRE_GEN_DURABLE;
+    w->gen_kind = RUNTIME_GEN_DURABLE;
     if (w->session && xe_session_anchor_valid(w->session))
         w->replay_from = xe_session_anchor_restore(w->session);
-    return wire_gen_prepare(w, w->session, c);
+    return runtime_gen_prepare(w, w->session, c);
 }
 
-wire_status wire_ephemeral_generate(wire *w, const char *system,
+runtime_status runtime_ephemeral_generate(runtime *w, const char *system,
                                     const profile_tool *tools,
                                     size_t tool_count,
-                                    const wire_message *messages,
+                                    const runtime_message *messages,
                                     size_t count,
-                                    const wire_gen_params *params) {
-    if (!w) return WIRE_INVALID_ARGUMENT;
-    if (w->gen_kind != WIRE_GEN_NONE)
-        return wire_fail(w, WIRE_BUSY, "generation in progress");
-    if (!wire_params_valid(params))
-        return wire_fail(w, WIRE_INVALID_ARGUMENT,
+                                    const runtime_gen_params *params) {
+    if (!w) return RUNTIME_INVALID_ARGUMENT;
+    if (w->gen_kind != RUNTIME_GEN_NONE)
+        return runtime_fail(w, RUNTIME_BUSY, "generation in progress");
+    if (!runtime_params_valid(params))
+        return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                          "invalid reasoning settings");
-    wire_status status = wire_prompt_reserve(w);
-    if (status != WIRE_OK) return status;
+    runtime_status status = runtime_prompt_reserve(w);
+    if (status != RUNTIME_OK) return status;
 
     conversation_settings settings;
-    wire_settings_defaults(&settings);
-    wire_settings_apply(&settings, params);
+    runtime_settings_defaults(&settings);
+    runtime_settings_apply(&settings, params);
     int thinking = settings.reasoning_effort !=
                    CONVERSATION_REASONING_OFF;
     profile_render render;
-    status = wire_from_profile(
+    status = runtime_from_profile(
         w, profile_render_system(w->prof, system, tools, tool_count,
                                  thinking,
                                  &render));
-    if (status != WIRE_OK) return status;
+    if (status != RUNTIME_OK) return status;
     int length = 0;
     if ((int)render.token_count >= w->context)
-        return wire_budget_check(w, render.token_count);
+        return runtime_budget_check(w, render.token_count);
     memcpy(w->prompt, render.tokens,
            (size_t)render.token_count * sizeof(*w->prompt));
     length = (int)render.token_count;
 
     size_t last_user = SIZE_MAX;
     for (size_t i = 0; i < count; i++)
-        if (messages[i].kind == WIRE_MESSAGE_USER) last_user = i;
+        if (messages[i].kind == RUNTIME_MESSAGE_USER) last_user = i;
     int current_open = count &&
-        (messages[count - 1].kind == WIRE_MESSAGE_TOOL_RESULT ||
-         (messages[count - 1].kind == WIRE_MESSAGE_ASSISTANT &&
+        (messages[count - 1].kind == RUNTIME_MESSAGE_TOOL_RESULT ||
+         (messages[count - 1].kind == RUNTIME_MESSAGE_ASSISTANT &&
           messages[count - 1].call_count));
     uint32_t turn = PROFILE_TURN_PADDED;
     for (size_t i = 0; i < count; i++) {
-        const wire_message *m = &messages[i];
+        const runtime_message *m = &messages[i];
         switch (m->kind) {
-        case WIRE_MESSAGE_USER:
+        case RUNTIME_MESSAGE_USER:
             if (!m->text)
-                return wire_fail(w, WIRE_INVALID_ARGUMENT, "missing text");
-            status = wire_from_profile(
+                return runtime_fail(w, RUNTIME_INVALID_ARGUMENT, "missing text");
+            status = runtime_from_profile(
                 w, profile_render_user(w->prof, m->text, turn, &render));
             turn = PROFILE_TURN_PADDED;
             break;
-        case WIRE_MESSAGE_ASSISTANT: {
+        case RUNTIME_MESSAGE_ASSISTANT: {
             int current = current_open &&
                           (last_user == SIZE_MAX || i > last_user);
             int historical =
                 settings.reasoning_history ==
                     CONVERSATION_REASONING_PRESERVE_TOOL_CALLS &&
                 m->call_count;
-            status = wire_from_profile(
+            status = runtime_from_profile(
                 w, profile_render_assistant(
                        w->prof, current || historical ? m->reasoning : NULL,
                        1,
@@ -1369,37 +1369,37 @@ wire_status wire_ephemeral_generate(wire *w, const char *system,
             turn = m->call_count ? PROFILE_TURN_OPEN : PROFILE_TURN_BARE;
             break;
         }
-        case WIRE_MESSAGE_TOOL_RESULT:
+        case RUNTIME_MESSAGE_TOOL_RESULT:
             if (turn != PROFILE_TURN_OPEN)
-                return wire_fail(w, WIRE_INVALID_ARGUMENT,
+                return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                                  "no open model turn for a tool result");
             if (!m->tool_name || !m->text)
-                return wire_fail(w, WIRE_INVALID_ARGUMENT,
+                return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                                  "missing tool name or text");
-            status = wire_from_profile(
+            status = runtime_from_profile(
                 w, profile_render_tool_result(w->prof, m->tool_name,
                                               m->text, &render));
             break;
         default:
-            return wire_fail(w, WIRE_INVALID_ARGUMENT,
+            return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                              "unsupported message kind");
         }
-        if (status != WIRE_OK) return status;
-        status = wire_budget_check(w,
+        if (status != RUNTIME_OK) return status;
+        status = runtime_budget_check(w,
                                    (uint64_t)length + render.token_count);
-        if (status != WIRE_OK) return status;
+        if (status != RUNTIME_OK) return status;
         memcpy(w->prompt + length, render.tokens,
                (size_t)render.token_count * sizeof(*w->prompt));
         length += (int)render.token_count;
     }
-    status = wire_from_profile(
+    status = runtime_from_profile(
         w, profile_render_reply_open(w->prof, turn, thinking,
                                      count && messages[count - 1].kind ==
-                                              WIRE_MESSAGE_TOOL_RESULT,
+                                              RUNTIME_MESSAGE_TOOL_RESULT,
                                      &render));
-    if (status != WIRE_OK) return status;
-    status = wire_budget_check(w, (uint64_t)length + render.token_count);
-    if (status != WIRE_OK) return status;
+    if (status != RUNTIME_OK) return status;
+    status = runtime_budget_check(w, (uint64_t)length + render.token_count);
+    if (status != RUNTIME_OK) return status;
     memcpy(w->prompt + length, render.tokens,
            (size_t)render.token_count * sizeof(*w->prompt));
     length += (int)render.token_count;
@@ -1408,53 +1408,53 @@ wire_status wire_ephemeral_generate(wire *w, const char *system,
     w->prompt_length = length;
     w->gen_thinking = thinking;
     w->gen_after_tool = count && messages[count - 1].kind ==
-                                 WIRE_MESSAGE_TOOL_RESULT;
+                                 RUNTIME_MESSAGE_TOOL_RESULT;
     w->gen_turn = turn;
     w->capture_anchor = 0;
-    wire_gen_reset(w, w->gen_after_tool && thinking);
+    runtime_gen_reset(w, w->gen_after_tool && thinking);
     w->gen_settings = settings;
     w->sampler.temperature = settings.temperature;
     w->sampler.top_k = settings.top_k;
     w->sampler.top_p = settings.top_p;
     w->sampler.rng_state = settings.rng_state;
     w->gen_max_tokens = settings.max_tokens;
-    status = wire_reasoning_policy_load(w);
-    if (status != WIRE_OK) return status;
+    status = runtime_reasoning_policy_load(w);
+    if (status != RUNTIME_OK) return status;
     if (!w->ephemeral) w->ephemeral = xe_session_new(w->engine);
-    w->gen_kind = WIRE_GEN_EPHEMERAL;
-    return wire_gen_prepare(w, w->ephemeral, NULL);
+    w->gen_kind = RUNTIME_GEN_EPHEMERAL;
+    return runtime_gen_prepare(w, w->ephemeral, NULL);
 }
 
-wire_status wire_cancel(wire *w) {
-    if (!w) return WIRE_INVALID_ARGUMENT;
-    if (w->gen_kind == WIRE_GEN_NONE)
-        return wire_fail(w, WIRE_INVALID_ARGUMENT,
+runtime_status runtime_cancel(runtime *w) {
+    if (!w) return RUNTIME_INVALID_ARGUMENT;
+    if (w->gen_kind == RUNTIME_GEN_NONE)
+        return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                          "no generation in progress");
     w->cancel_requested = 1;
-    return WIRE_OK;
+    return RUNTIME_OK;
 }
 
-static wire_status wire_call_register(wire *w, const char *name) {
+static runtime_status runtime_call_register(runtime *w, const char *name) {
     if (w->call_count == w->call_capacity) {
         size_t capacity = w->call_capacity ? w->call_capacity * 2 : 4;
-        wire_gen_call *grown = realloc(w->calls,
+        runtime_gen_call *grown = realloc(w->calls,
                                        capacity * sizeof(*grown));
-        if (!grown) return wire_fail(w, WIRE_NOMEM, "out of memory");
+        if (!grown) return runtime_fail(w, RUNTIME_NOMEM, "out of memory");
         w->calls = grown;
         w->call_capacity = capacity;
     }
-    wire_gen_call *call = &w->calls[w->call_count];
+    runtime_gen_call *call = &w->calls[w->call_count];
     call->id = w->next_call_id++;
     call->name = strdup(name);
     call->arguments = NULL;
     call->complete = 0;
-    if (!call->name) return wire_fail(w, WIRE_NOMEM, "out of memory");
+    if (!call->name) return runtime_fail(w, RUNTIME_NOMEM, "out of memory");
     w->call_open = (int)w->call_count;
     w->call_count++;
-    return WIRE_OK;
+    return RUNTIME_OK;
 }
 
-static int wire_render_token(wire *w, int32_t token) {
+static int runtime_render_token(runtime *w, int32_t token) {
     char buffer[512];
     int bytes = xe_detokenize(w->engine, token, buffer, (int)sizeof buffer);
     if (bytes > 0) return json_rawn(&w->render, buffer, (size_t)bytes);
@@ -1465,7 +1465,7 @@ static int wire_render_token(wire *w, int32_t token) {
     return 1;
 }
 
-static wire_status wire_calls_json(wire *w) {
+static runtime_status runtime_calls_json(runtime *w) {
     json_writer_reset(&w->calls_scratch);
     json_raw(&w->calls_scratch, "[");
     for (size_t i = 0; i < w->call_count; i++) {
@@ -1482,39 +1482,39 @@ static wire_status wire_calls_json(wire *w) {
     }
     json_raw(&w->calls_scratch, "]");
     if (w->calls_scratch.failed)
-        return wire_fail(w, WIRE_NOMEM, "out of memory");
-    return WIRE_OK;
+        return runtime_fail(w, RUNTIME_NOMEM, "out of memory");
+    return RUNTIME_OK;
 }
 
-static void wire_gen_teardown(wire *w) {
-    if (w->gen_kind == WIRE_GEN_EPHEMERAL && w->ephemeral) {
+static void runtime_gen_teardown(runtime *w) {
+    if (w->gen_kind == RUNTIME_GEN_EPHEMERAL && w->ephemeral) {
         xe_session_free(w->ephemeral);
         w->ephemeral = NULL;
     }
-    w->gen_kind = WIRE_GEN_NONE;
+    w->gen_kind = RUNTIME_GEN_NONE;
     w->gen_session = NULL;
 }
 
-static wire_status wire_gen_error(wire *w, wire_status status,
-                                  wire_event *out) {
-    wire_gen_teardown(w);
+static runtime_status runtime_gen_error(runtime *w, runtime_status status,
+                                  runtime_event *out) {
+    runtime_gen_teardown(w);
     memset(out, 0, sizeof *out);
-    out->kind = WIRE_EVENT_ERROR;
+    out->kind = RUNTIME_EVENT_ERROR;
     out->error = status;
     out->error_text = w->error_text;
     out->error_tokens = w->error_tokens;
     out->error_context = w->error_context;
-    return WIRE_OK;
+    return RUNTIME_OK;
 }
 
-static wire_status wire_generation_render(wire *w, const char *reasoning,
+static runtime_status runtime_generation_render(runtime *w, const char *reasoning,
                                           int reasoning_complete,
                                           int turn_complete,
-                                          wire_render_copy *out) {
+                                          runtime_render_copy *out) {
     profile_call *calls = NULL;
     if (w->call_count) {
         calls = calloc(w->call_count, sizeof(*calls));
-        if (!calls) return wire_fail(w, WIRE_NOMEM, "out of memory");
+        if (!calls) return runtime_fail(w, RUNTIME_NOMEM, "out of memory");
         for (size_t i = 0; i < w->call_count; i++) {
             calls[i].name = w->calls[i].name;
             calls[i].arguments_json = w->calls[i].arguments
@@ -1527,34 +1527,34 @@ static wire_status wire_generation_render(wire *w, const char *reasoning,
         w->content.data ? w->content.data : NULL,
         calls, w->call_count, w->gen_turn, turn_complete, &render);
     free(calls);
-    wire_status status = wire_from_profile(w, ps);
-    if (status != WIRE_OK) return status;
-    if (!wire_render_copy_set(out, &render))
-        return wire_fail(w, WIRE_NOMEM, "out of memory");
-    return WIRE_OK;
+    runtime_status status = runtime_from_profile(w, ps);
+    if (status != RUNTIME_OK) return status;
+    if (!runtime_render_copy_set(out, &render))
+        return runtime_fail(w, RUNTIME_NOMEM, "out of memory");
+    return RUNTIME_OK;
 }
 
-static wire_status wire_project_mutation(wire *w, conversation *c,
+static runtime_status runtime_project_mutation(runtime *w, conversation *c,
                                          int thinking, uint32_t history) {
     int had_snapshot = conversation_snapshot_current(c, NULL, NULL);
-    wire_status status = wire_from_conversation(
+    runtime_status status = runtime_from_conversation(
         w, conversation_project(c, thinking, history));
-    if (status != WIRE_OK) return status;
+    if (status != RUNTIME_OK) return status;
     if (had_snapshot && !conversation_snapshot_current(c, NULL, NULL)) {
-        status = wire_from_conversation(
+        status = runtime_from_conversation(
             w, conversation_append_cache_epoch(c));
-        if (status == WIRE_OK) {
+        if (status == RUNTIME_OK) {
             w->saved_tokens = 0;
             w->saved_at = 0;
-            wire_ckpt_reset(w);
+            runtime_ckpt_reset(w);
         }
         return status;
     }
-    return WIRE_OK;
+    return RUNTIME_OK;
 }
 
-static wire_status wire_finalize(wire *w, uint32_t wire_stop_reason,
-                                 uint32_t record_stop, wire_event *out) {
+static runtime_status runtime_finalize(runtime *w, uint32_t runtime_stop_reason,
+                                 uint32_t record_stop, runtime_event *out) {
     if (w->reasoning_close == CONVERSATION_REASONING_NONE &&
         profile_parser_reasoning(w->prof)) {
         if (record_stop == CONVERSATION_STOP_LIMIT)
@@ -1572,11 +1572,11 @@ static wire_status wire_finalize(wire *w, uint32_t wire_stop_reason,
     }
     w->usage.output = (uint64_t)w->sampled_length;
     w->usage.reasoning = (uint64_t)w->reasoning_tokens;
-    wire_marker marker = WIRE_MARKER_NONE;
+    runtime_marker marker = RUNTIME_MARKER_NONE;
     int shadow_promoted = 0;
     int main_reconciled = 0;
 
-    if (w->gen_kind == WIRE_GEN_DURABLE) {
+    if (w->gen_kind == RUNTIME_GEN_DURABLE) {
         conversation *c = w->current;
         conversation_block blocks[2];
         uint32_t block_count = 1;
@@ -1584,8 +1584,8 @@ static wire_status wire_finalize(wire *w, uint32_t wire_stop_reason,
         blocks[0].data = w->content.data ? w->content.data : "";
         blocks[0].length = w->content.length;
         if (w->call_count) {
-            wire_status status = wire_calls_json(w);
-            if (status != WIRE_OK) return wire_gen_error(w, status, out);
+            runtime_status status = runtime_calls_json(w);
+            if (status != RUNTIME_OK) return runtime_gen_error(w, status, out);
             blocks[1].format = CONVERSATION_BLOCK_JSON;
             blocks[1].data = w->calls_scratch.data;
             blocks[1].length = w->calls_scratch.length;
@@ -1598,26 +1598,26 @@ static wire_status wire_finalize(wire *w, uint32_t wire_stop_reason,
             w->reasoning_close == CONVERSATION_REASONING_NATURAL ||
             w->reasoning_close == CONVERSATION_REASONING_SOFT ||
             w->reasoning_close == CONVERSATION_REASONING_HARD;
-        wire_render_copy primary;
-        wire_status status = wire_generation_render(
+        runtime_render_copy primary;
+        runtime_status status = runtime_generation_render(
             w, NULL, 1, turn_complete, &primary);
-        if (status != WIRE_OK) return wire_gen_error(w, status, out);
-        wire_render_copy alternate;
+        if (status != RUNTIME_OK) return runtime_gen_error(w, status, out);
+        runtime_render_copy alternate;
         memset(&alternate, 0, sizeof alternate);
         if (w->gen_thinking) {
-            status = wire_generation_render(
+            status = runtime_generation_render(
                 w, w->reasoning.length ? w->reasoning.data : NULL,
                 reasoning_complete, turn_complete, &alternate);
-            if (status != WIRE_OK) {
-                wire_render_copy_free(&primary);
-                return wire_gen_error(w, status, out);
+            if (status != RUNTIME_OK) {
+                runtime_render_copy_free(&primary);
+                return runtime_gen_error(w, status, out);
             }
         }
         const int32_t *raw_tokens = w->prompt + w->framing_offset;
         uint32_t raw_count = (uint32_t)(w->prompt_length -
                                         w->framing_offset +
                                         w->sampled_length);
-        status = wire_from_conversation(
+        status = runtime_from_conversation(
             w, conversation_append_generation_result_variants(
                    c, w->generation_id, record_stop, w->sampler.rng_state,
                    blocks, block_count,
@@ -1629,9 +1629,9 @@ static wire_status wire_finalize(wire *w, uint32_t wire_stop_reason,
                    w->reasoning.length, w->reasoning_close,
                    w->render.data ? w->render.data : "", w->render.length,
                    raw_tokens, raw_count));
-        wire_render_copy_free(&alternate);
-        wire_render_copy_free(&primary);
-        if (status != WIRE_OK) return wire_gen_error(w, status, out);
+        runtime_render_copy_free(&alternate);
+        runtime_render_copy_free(&primary);
+        if (status != RUNTIME_OK) return runtime_gen_error(w, status, out);
         marker = conversation_event_count(c) - 1;
         for (size_t i = 0; i < w->call_count; i++) {
             conversation_tool_call call;
@@ -1649,16 +1649,16 @@ static wire_status wire_finalize(wire *w, uint32_t wire_stop_reason,
             format_sha256_update(&hasher, call.arguments,
                                  call.arguments_length);
             format_sha256_final(&hasher, call.fingerprint);
-            status = wire_from_conversation(
+            status = runtime_from_conversation(
                 w, conversation_append_tool_started(c, &call));
-            if (status != WIRE_OK) return wire_gen_error(w, status, out);
+            if (status != RUNTIME_OK) return runtime_gen_error(w, status, out);
         }
-        status = wire_project_mutation(
+        status = runtime_project_mutation(
             w, c, w->gen_thinking,
             w->gen_settings.reasoning_history);
-        if (status != WIRE_OK) return wire_gen_error(w, status, out);
-        status = wire_from_conversation(w, conversation_commit(c));
-        if (status != WIRE_OK) return wire_gen_error(w, status, out);
+        if (status != RUNTIME_OK) return runtime_gen_error(w, status, out);
+        status = runtime_from_conversation(w, conversation_commit(c));
+        if (status != RUNTIME_OK) return runtime_gen_error(w, status, out);
         uint64_t total;
         const int32_t *projected = conversation_tokens(c, &total);
         w->usage.total = total;
@@ -1676,32 +1676,32 @@ static wire_status wire_finalize(wire *w, uint32_t wire_stop_reason,
                 xe_session_sync_report(w->session, &prefix, &report);
                 w->usage.input += (uint64_t)report.prefilled;
                 w->usage.replayed += (uint64_t)report.prefilled;
-                wire_shadow_drop(w);
+                runtime_shadow_drop(w);
                 xe_session_anchor_clear(w->session);
                 main_reconciled = 1;
             }
         }
         if (open && record_stop == CONVERSATION_STOP_TOOL_CALLS &&
             w->shadow) {
-            wire_shadow_poll(w, 1);
+            runtime_shadow_poll(w, 1);
             w->shadow_cooldown = 0;
-            if (wire_shadow_tick(w) != WIRE_OK)
-                wire_shadow_drop(w);
+            if (runtime_shadow_tick(w) != RUNTIME_OK)
+                runtime_shadow_drop(w);
         }
         if (open && record_stop != CONVERSATION_STOP_TOOL_CALLS)
-            wire_shadow_drop(w);
+            runtime_shadow_drop(w);
         if (!open && w->session && w->shadow) {
-            int64_t started = wire_monotonic();
-            wire_shadow_poll(w, 1);
+            int64_t started = runtime_monotonic();
+            runtime_shadow_poll(w, 1);
             int position = xe_session_position(w->shadow);
             if (position <= (int)total)
                 w->usage.shadow_remaining = total - (uint64_t)position;
-            wire_shadow_wait(w, 0);
+            runtime_shadow_wait(w, 0);
             xe_tokens prefix = { (int32_t *)projected, (int)total,
                                  (int)total };
             int prefilled = xe_session_shadow_sync(w->shadow, &prefix);
             if (prefilled >= 0) {
-                wire_shadow_record(w, prefilled, 0);
+                runtime_shadow_record(w, prefilled, 0);
                 xe_session_shadow_refresh_logits(w->shadow);
                 uint64_t bytes = xe_session_shadow_kv_bytes(w->shadow);
                 if (bytes > w->shadow_peak_kv)
@@ -1709,7 +1709,7 @@ static wire_status wire_finalize(wire *w, uint32_t wire_stop_reason,
                 shadow_promoted = xe_session_shadow_promote(
                     w->session, w->shadow);
             }
-            int64_t finished = wire_monotonic();
+            int64_t finished = runtime_monotonic();
             if (shadow_promoted) {
                 if (finished > started)
                     w->usage.shadow_wait_us =
@@ -1721,7 +1721,7 @@ static wire_status wire_finalize(wire *w, uint32_t wire_stop_reason,
                 w->shadow = NULL;
                 w->shadow_inflight = 0;
             } else {
-                wire_shadow_drop(w);
+                runtime_shadow_drop(w);
             }
         }
         if (!open && w->session && !shadow_promoted && !main_reconciled) {
@@ -1738,9 +1738,9 @@ static wire_status wire_finalize(wire *w, uint32_t wire_stop_reason,
         }
         if (!open && w->kv && !w->ckpt_autosave_off &&
             conversation_autosave_due(total, w->saved_tokens,
-                                      w->saved_at, wire_now())) {
+                                      w->saved_at, runtime_now())) {
             w->autosave_attempted = 1;
-            wire_checkpoint_now(w, &w->autosave);
+            runtime_checkpoint_now(w, &w->autosave);
         }
         if (open) {
             w->usage.shadow_prefilled = w->shadow_prefilled;
@@ -1751,16 +1751,16 @@ static wire_status wire_finalize(wire *w, uint32_t wire_stop_reason,
         w->usage.total = (uint64_t)(w->prompt_length + w->sampled_length);
     }
 
-    wire_usage usage = w->usage;
+    runtime_usage usage = w->usage;
     if (shadow_promoted) {
         w->shadow_prefilled = 0;
         w->shadow_background = 0;
         w->shadow_peak_kv = 0;
     }
-    wire_gen_teardown(w);
+    runtime_gen_teardown(w);
     memset(out, 0, sizeof *out);
-    out->kind = WIRE_EVENT_DONE;
-    out->stop = wire_stop_reason;
+    out->kind = RUNTIME_EVENT_DONE;
+    out->stop = runtime_stop_reason;
     out->reasoning_close = w->reasoning_close;
     out->usage = usage;
     out->marker = marker;
@@ -1768,32 +1768,32 @@ static wire_status wire_finalize(wire *w, uint32_t wire_stop_reason,
     out->checkpoint = w->autosave;
     out->resume_attempted = w->resume_attempted;
     out->resume = w->resume;
-    return WIRE_OK;
+    return RUNTIME_OK;
 }
 
-wire_status wire_next_event(wire *w, wire_event *out) {
-    if (!w || !out) return WIRE_INVALID_ARGUMENT;
-    if (w->gen_kind == WIRE_GEN_NONE)
-        return wire_fail(w, WIRE_INVALID_ARGUMENT,
+runtime_status runtime_next_event(runtime *w, runtime_event *out) {
+    if (!w || !out) return RUNTIME_INVALID_ARGUMENT;
+    if (w->gen_kind == RUNTIME_GEN_NONE)
+        return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                          "no generation in progress");
     memset(out, 0, sizeof *out);
 
     if (!w->started_emitted) {
         w->started_emitted = 1;
-        out->kind = WIRE_EVENT_START;
-        return WIRE_OK;
+        out->kind = RUNTIME_EVENT_START;
+        return RUNTIME_OK;
     }
 
     for (;;) {
         if (w->cancel_requested)
-            return wire_finalize(w, WIRE_STOP_ABORTED,
+            return runtime_finalize(w, RUNTIME_STOP_ABORTED,
                                  CONVERSATION_STOP_CANCELLED, out);
 
-        if (w->gen_phase == WIRE_PHASE_PREFILL) {
-            int target = w->prompt_synced + WIRE_PREFILL_CHUNK;
+        if (w->gen_phase == RUNTIME_PHASE_PREFILL) {
+            int target = w->prompt_synced + RUNTIME_PREFILL_CHUNK;
             if (target > w->prompt_length) target = w->prompt_length;
             if (!w->first_sync_done || w->prompt_synced < w->prompt_length) {
-                wire_shadow_wait(w, 1);
+                runtime_shadow_wait(w, 1);
                 xe_tokens prefix = { w->prompt, target, w->context };
                 xe_sync_report report;
                 xe_session_sync_report(w->gen_session, &prefix, &report);
@@ -1806,41 +1806,41 @@ wire_status wire_next_event(wire *w, wire_event *out) {
                     w->usage.replayed += (uint64_t)report.prefilled;
                 w->prompt_synced = target;
                 if (w->prompt_synced >= w->prompt_length) {
-                    w->gen_phase = WIRE_PHASE_DECODE;
+                    w->gen_phase = RUNTIME_PHASE_DECODE;
                     w->replay_from = 0;
                     if (w->capture_anchor) {
                         xe_session_anchor_capture(w->gen_session);
                         w->capture_anchor = 0;
-                        wire_shadow_begin(w);
+                        runtime_shadow_begin(w);
                     }
-                    wire_status shadow_status = wire_shadow_tick(w);
-                    if (shadow_status != WIRE_OK)
-                        return wire_gen_error(w, shadow_status, out);
+                    runtime_status shadow_status = runtime_shadow_tick(w);
+                    if (shadow_status != RUNTIME_OK)
+                        return runtime_gen_error(w, shadow_status, out);
                 }
                 if (w->usage.input > 0 &&
                     (uint64_t)w->prompt_length > w->usage.cache_read) {
-                    out->kind = WIRE_EVENT_PROGRESS;
+                    out->kind = RUNTIME_EVENT_PROGRESS;
                     out->prefilled = w->usage.input;
                     out->prefill_total = (uint64_t)w->prompt_length -
                                          w->usage.cache_read;
-                    return WIRE_OK;
+                    return RUNTIME_OK;
                 }
                 continue;
             }
-            w->gen_phase = WIRE_PHASE_DECODE;
+            w->gen_phase = RUNTIME_PHASE_DECODE;
             continue;
         }
 
-        wire_status shadow_status = wire_shadow_tick(w);
-        if (shadow_status != WIRE_OK)
-            return wire_gen_error(w, shadow_status, out);
+        runtime_status shadow_status = runtime_shadow_tick(w);
+        if (shadow_status != RUNTIME_OK)
+            return runtime_gen_error(w, shadow_status, out);
 
         if (w->gen_max_tokens > 0 &&
             w->sampled_length >= w->gen_max_tokens)
-            return wire_finalize(w, WIRE_STOP_LENGTH,
+            return runtime_finalize(w, RUNTIME_STOP_LENGTH,
                                  CONVERSATION_STOP_LIMIT, out);
         if (w->prompt_length + w->sampled_length >= w->context - 1)
-            return wire_finalize(w, WIRE_STOP_LENGTH,
+            return runtime_finalize(w, RUNTIME_STOP_LENGTH,
                                  CONVERSATION_STOP_LIMIT, out);
 
         uint32_t forced_close = CONVERSATION_REASONING_NONE;
@@ -1866,8 +1866,8 @@ wire_status wire_next_event(wire *w, wire_event *out) {
         profile_parse_event event;
         profile_status parsed = profile_parser_feed(w->prof, token, &event);
         if (parsed != PROFILE_OK)
-            return wire_gen_error(
-                w, wire_fail(w, WIRE_NOMEM, "out of memory"), out);
+            return runtime_gen_error(
+                w, runtime_fail(w, RUNTIME_NOMEM, "out of memory"), out);
         if (was_reasoning && !profile_parser_reasoning(w->prof))
             w->reasoning_close = forced_close !=
                                  CONVERSATION_REASONING_NONE
@@ -1878,31 +1878,31 @@ wire_status wire_next_event(wire *w, wire_event *out) {
             if (event.include_token) {
                 w->prompt[w->prompt_length + w->sampled_length] = token;
                 w->sampled_length++;
-                if (!wire_render_token(w, token))
-                    return wire_gen_error(
-                        w, wire_fail(w, WIRE_NOMEM, "out of memory"), out);
+                if (!runtime_render_token(w, token))
+                    return runtime_gen_error(
+                        w, runtime_fail(w, RUNTIME_NOMEM, "out of memory"), out);
             }
             switch (event.stop_reason) {
             case PROFILE_STOP_TOOL_CALLS:
                 if (w->call_count)
-                    return wire_finalize(w, WIRE_STOP_TOOL_USE,
+                    return runtime_finalize(w, RUNTIME_STOP_TOOL_USE,
                                          CONVERSATION_STOP_TOOL_CALLS, out);
-                return wire_finalize(w, WIRE_STOP_STOP,
+                return runtime_finalize(w, RUNTIME_STOP_STOP,
                                      CONVERSATION_STOP_TOOL_CALLS, out);
             case PROFILE_STOP_EOS:
-                return wire_finalize(w, WIRE_STOP_STOP,
+                return runtime_finalize(w, RUNTIME_STOP_STOP,
                                      CONVERSATION_STOP_EOS, out);
             default:
-                return wire_finalize(w, WIRE_STOP_STOP,
+                return runtime_finalize(w, RUNTIME_STOP_STOP,
                                      CONVERSATION_STOP_EOT_SAMPLED, out);
             }
         }
 
         w->prompt[w->prompt_length + w->sampled_length] = token;
         w->sampled_length++;
-        if (!wire_render_token(w, token))
-            return wire_gen_error(
-                w, wire_fail(w, WIRE_NOMEM, "out of memory"), out);
+        if (!runtime_render_token(w, token))
+            return runtime_gen_error(
+                w, runtime_fail(w, RUNTIME_NOMEM, "out of memory"), out);
         xe_tokens prefix = { w->prompt,
                              w->prompt_length + w->sampled_length,
                              w->context };
@@ -1911,48 +1911,48 @@ wire_status wire_next_event(wire *w, wire_event *out) {
         switch (event.kind) {
         case PROFILE_PARSE_REASONING:
             if (!json_rawn(&w->reasoning, event.text, event.text_length))
-                return wire_gen_error(
-                    w, wire_fail(w, WIRE_NOMEM, "out of memory"), out);
-            wire_utf8_feed(w, event.text, event.text_length);
+                return runtime_gen_error(
+                    w, runtime_fail(w, RUNTIME_NOMEM, "out of memory"), out);
+            runtime_utf8_feed(w, event.text, event.text_length);
             w->reasoning_tokens++;
-            out->kind = WIRE_EVENT_REASONING_DELTA;
+            out->kind = RUNTIME_EVENT_REASONING_DELTA;
             out->text = event.text;
             out->text_length = event.text_length;
-            return WIRE_OK;
+            return RUNTIME_OK;
         case PROFILE_PARSE_TEXT:
             if (!json_rawn(&w->content, event.text, event.text_length))
-                return wire_gen_error(
-                    w, wire_fail(w, WIRE_NOMEM, "out of memory"), out);
-            out->kind = WIRE_EVENT_TEXT_DELTA;
+                return runtime_gen_error(
+                    w, runtime_fail(w, RUNTIME_NOMEM, "out of memory"), out);
+            out->kind = RUNTIME_EVENT_TEXT_DELTA;
             out->text = event.text;
             out->text_length = event.text_length;
-            return WIRE_OK;
+            return RUNTIME_OK;
         case PROFILE_PARSE_CALL_START: {
-            wire_status status = wire_call_register(w, event.call_name);
-            if (status != WIRE_OK) return wire_gen_error(w, status, out);
-            out->kind = WIRE_EVENT_TOOLCALL_START;
+            runtime_status status = runtime_call_register(w, event.call_name);
+            if (status != RUNTIME_OK) return runtime_gen_error(w, status, out);
+            out->kind = RUNTIME_EVENT_TOOLCALL_START;
             out->call_id = w->calls[w->call_count - 1].id;
             out->call_name = w->calls[w->call_count - 1].name;
-            return WIRE_OK;
+            return RUNTIME_OK;
         }
         case PROFILE_PARSE_CALL_END: {
             if (w->call_open < 0)
-                return wire_gen_error(
-                    w, wire_fail(w, WIRE_INVALID_ARGUMENT,
+                return runtime_gen_error(
+                    w, runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                                  "call end without start"), out);
-            wire_gen_call *call = &w->calls[w->call_open];
+            runtime_gen_call *call = &w->calls[w->call_open];
             call->arguments = strdup(event.arguments_json
                                      ? event.arguments_json : "{}");
             call->complete = 1;
             w->call_open = -1;
             if (!call->arguments)
-                return wire_gen_error(
-                    w, wire_fail(w, WIRE_NOMEM, "out of memory"), out);
-            out->kind = WIRE_EVENT_TOOLCALL_END;
+                return runtime_gen_error(
+                    w, runtime_fail(w, RUNTIME_NOMEM, "out of memory"), out);
+            out->kind = RUNTIME_EVENT_TOOLCALL_END;
             out->call_id = call->id;
             out->call_name = call->name;
             out->arguments_json = call->arguments;
-            return WIRE_OK;
+            return RUNTIME_OK;
         }
         default:
             continue;
@@ -1960,42 +1960,42 @@ wire_status wire_next_event(wire *w, wire_event *out) {
     }
 }
 
-wire_status wire_rewind(wire *w, wire_marker marker) {
-    if (!w) return WIRE_INVALID_ARGUMENT;
-    if (w->gen_kind != WIRE_GEN_NONE)
-        return wire_fail(w, WIRE_BUSY, "generation in progress");
+runtime_status runtime_rewind(runtime *w, runtime_marker marker) {
+    if (!w) return RUNTIME_INVALID_ARGUMENT;
+    if (w->gen_kind != RUNTIME_GEN_NONE)
+        return runtime_fail(w, RUNTIME_BUSY, "generation in progress");
     if (!w->has_current)
-        return wire_fail(w, WIRE_SESSION_NOT_FOUND, "no open session");
+        return runtime_fail(w, RUNTIME_SESSION_NOT_FOUND, "no open session");
     conversation *c = w->current;
     uint64_t position;
     if (!conversation_visible_position(c, marker, &position))
-        return wire_fail(w, WIRE_MARKER_UNAVAILABLE,
+        return runtime_fail(w, RUNTIME_MARKER_UNAVAILABLE,
                          "marker is not addressable");
-    if (position + 1 == conversation_visible_count(c)) return WIRE_OK;
-    wire_shadow_drop(w);
-    wire_status status = wire_from_conversation(
+    if (position + 1 == conversation_visible_count(c)) return RUNTIME_OK;
+    runtime_shadow_drop(w);
+    runtime_status status = runtime_from_conversation(
         w, conversation_append_rewind(c, marker));
-    if (status != WIRE_OK) return status;
-    status = wire_from_conversation(w, conversation_commit(c));
-    if (status != WIRE_OK) return status;
+    if (status != RUNTIME_OK) return status;
+    status = runtime_from_conversation(w, conversation_commit(c));
+    if (status != RUNTIME_OK) return status;
     if (w->session) xe_session_anchor_clear(w->session);
     kvstore_id snapshot;
     uint64_t boundary = 0;
     w->saved_tokens = conversation_snapshot_current(c, &snapshot, &boundary)
                       ? boundary : 0;
-    wire_ckpt_reset(w);
-    return WIRE_OK;
+    runtime_ckpt_reset(w);
+    return RUNTIME_OK;
 }
 
-wire_status wire_rewind_cost(wire *w, wire_marker marker,
+runtime_status runtime_rewind_cost(runtime *w, runtime_marker marker,
                              uint64_t *prefill_tokens) {
-    if (!w || !prefill_tokens) return WIRE_INVALID_ARGUMENT;
+    if (!w || !prefill_tokens) return RUNTIME_INVALID_ARGUMENT;
     if (!w->has_current)
-        return wire_fail(w, WIRE_SESSION_NOT_FOUND, "no open session");
+        return runtime_fail(w, RUNTIME_SESSION_NOT_FOUND, "no open session");
     conversation *c = w->current;
     uint64_t position;
     if (!conversation_visible_position(c, marker, &position))
-        return wire_fail(w, WIRE_MARKER_UNAVAILABLE,
+        return runtime_fail(w, RUNTIME_MARKER_UNAVAILABLE,
                          "marker is not addressable");
     uint64_t boundary = conversation_visible_boundary(c, position);
     if (w->session && boundary) {
@@ -2010,46 +2010,46 @@ wire_status wire_rewind_cost(wire *w, wire_marker marker,
                 (uint64_t)frontier >= boundary &&
                 (uint64_t)frontier - boundary <= 1024) {
                 *prefill_tokens = 0;
-                return WIRE_OK;
+                return RUNTIME_OK;
             }
         }
     }
     kvstore_id id;
     uint64_t snapshot_boundary = 0;
-    if (wire_best_snapshot(c, boundary, &id, &snapshot_boundary)
-            == WIRE_OK) {
+    if (runtime_best_snapshot(c, boundary, &id, &snapshot_boundary)
+            == RUNTIME_OK) {
         *prefill_tokens = boundary - snapshot_boundary;
-        return WIRE_OK;
+        return RUNTIME_OK;
     }
     *prefill_tokens = boundary;
-    return WIRE_OK;
+    return RUNTIME_OK;
 }
 
-wire_status wire_rebuild(wire *w, const char *system,
+runtime_status runtime_rebuild(runtime *w, const char *system,
                          const profile_tool *tools, size_t tool_count,
-                         const wire_message *messages, size_t count,
-                         wire_marker *out) {
-    if (!w) return WIRE_INVALID_ARGUMENT;
-    if (w->gen_kind != WIRE_GEN_NONE)
-        return wire_fail(w, WIRE_BUSY, "generation in progress");
+                         const runtime_message *messages, size_t count,
+                         runtime_marker *out) {
+    if (!w) return RUNTIME_INVALID_ARGUMENT;
+    if (w->gen_kind != RUNTIME_GEN_NONE)
+        return runtime_fail(w, RUNTIME_BUSY, "generation in progress");
     if (!w->has_current)
-        return wire_fail(w, WIRE_SESSION_NOT_FOUND, "no open session");
+        return runtime_fail(w, RUNTIME_SESSION_NOT_FOUND, "no open session");
     conversation *c = w->current;
-    wire_shadow_drop(w);
+    runtime_shadow_drop(w);
     if (w->session) xe_session_anchor_clear(w->session);
-    wire_status status = wire_from_conversation(
+    runtime_status status = runtime_from_conversation(
         w, conversation_append_rewind(c, CONVERSATION_REWIND_ALL));
-    if (status != WIRE_OK) return status;
-    status = wire_from_conversation(w, conversation_append_cache_epoch(c));
-    if (status != WIRE_OK) goto abort;
-    status = wire_append_system_event(w, c, system, tools, tool_count,
+    if (status != RUNTIME_OK) return status;
+    status = runtime_from_conversation(w, conversation_append_cache_epoch(c));
+    if (status != RUNTIME_OK) goto abort;
+    status = runtime_append_system_event(w, c, system, tools, tool_count,
                                       NULL);
-    if (status != WIRE_OK) goto abort;
+    if (status != RUNTIME_OK) goto abort;
 
     uint32_t turn = PROFILE_TURN_PADDED;
     profile_render render;
     for (size_t i = 0; i < count; i++) {
-        const wire_message *m = &messages[i];
+        const runtime_message *m = &messages[i];
         uint64_t tokens;
         conversation_tokens(c, &tokens);
         conversation_block blocks[2];
@@ -2058,64 +2058,64 @@ wire_status wire_rebuild(wire *w, const char *system,
         blocks[0].data = m->text ? m->text : "";
         blocks[0].length = m->text ? strlen(m->text) : 0;
         switch (m->kind) {
-        case WIRE_MESSAGE_USER:
+        case RUNTIME_MESSAGE_USER:
             if (!m->text) {
-                status = wire_fail(w, WIRE_INVALID_ARGUMENT,
+                status = runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                                    "missing text");
                 goto abort;
             }
-            status = wire_from_profile(
+            status = runtime_from_profile(
                 w, profile_render_user(w->prof, m->text, turn, &render));
-            if (status != WIRE_OK) goto abort;
-            status = wire_budget_check(w, tokens + render.token_count);
-            if (status != WIRE_OK) goto abort;
-            status = wire_from_conversation(
+            if (status != RUNTIME_OK) goto abort;
+            status = runtime_budget_check(w, tokens + render.token_count);
+            if (status != RUNTIME_OK) goto abort;
+            status = runtime_from_conversation(
                 w, conversation_append_message(c, CONVERSATION_ROLE_USER,
                                                blocks, 1, render.render,
                                                render.render_length,
                                                render.tokens,
                                                render.token_count));
-            if (status != WIRE_OK) goto abort;
+            if (status != RUNTIME_OK) goto abort;
             turn = PROFILE_TURN_PADDED;
             break;
-        case WIRE_MESSAGE_ASSISTANT: {
-            status = wire_from_profile(
+        case RUNTIME_MESSAGE_ASSISTANT: {
+            status = runtime_from_profile(
                 w, profile_render_assistant(w->prof, NULL, 1, m->text,
                                             m->calls, m->call_count, turn,
                                             1, &render));
-            if (status != WIRE_OK) goto abort;
-            wire_render_copy primary;
-            if (!wire_render_copy_set(&primary, &render)) {
-                status = wire_fail(w, WIRE_NOMEM, "out of memory");
+            if (status != RUNTIME_OK) goto abort;
+            runtime_render_copy primary;
+            if (!runtime_render_copy_set(&primary, &render)) {
+                status = runtime_fail(w, RUNTIME_NOMEM, "out of memory");
                 goto abort;
             }
-            wire_render_copy alternate;
+            runtime_render_copy alternate;
             memset(&alternate, 0, sizeof alternate);
             if (m->reasoning && *m->reasoning) {
-                status = wire_from_profile(
+                status = runtime_from_profile(
                     w, profile_render_assistant(
                            w->prof, m->reasoning, 1, m->text,
                            m->calls, m->call_count, turn, 1, &render));
-                if (status != WIRE_OK ||
-                    !wire_render_copy_set(&alternate, &render)) {
-                    wire_render_copy_free(&primary);
-                    if (status == WIRE_OK)
-                        status = wire_fail(w, WIRE_NOMEM, "out of memory");
+                if (status != RUNTIME_OK ||
+                    !runtime_render_copy_set(&alternate, &render)) {
+                    runtime_render_copy_free(&primary);
+                    if (status == RUNTIME_OK)
+                        status = runtime_fail(w, RUNTIME_NOMEM, "out of memory");
                     goto abort;
                 }
             }
-            status = wire_budget_check(w, tokens + primary.token_count);
-            if (status != WIRE_OK) {
-                wire_render_copy_free(&alternate);
-                wire_render_copy_free(&primary);
+            status = runtime_budget_check(w, tokens + primary.token_count);
+            if (status != RUNTIME_OK) {
+                runtime_render_copy_free(&alternate);
+                runtime_render_copy_free(&primary);
                 goto abort;
             }
-            wire_calls_reset(w);
+            runtime_calls_reset(w);
             for (size_t j = 0; j < m->call_count; j++) {
-                status = wire_call_register(w, m->calls[j].name);
-                if (status != WIRE_OK) {
-                    wire_render_copy_free(&alternate);
-                    wire_render_copy_free(&primary);
+                status = runtime_call_register(w, m->calls[j].name);
+                if (status != RUNTIME_OK) {
+                    runtime_render_copy_free(&alternate);
+                    runtime_render_copy_free(&primary);
                     goto abort;
                 }
                 w->calls[j].arguments = strdup(
@@ -2123,18 +2123,18 @@ wire_status wire_rebuild(wire *w, const char *system,
                     ? m->calls[j].arguments_json : "{}");
                 w->calls[j].complete = 1;
                 if (!w->calls[j].arguments) {
-                    wire_render_copy_free(&alternate);
-                    wire_render_copy_free(&primary);
-                    status = wire_fail(w, WIRE_NOMEM, "out of memory");
+                    runtime_render_copy_free(&alternate);
+                    runtime_render_copy_free(&primary);
+                    status = runtime_fail(w, RUNTIME_NOMEM, "out of memory");
                     goto abort;
                 }
             }
             w->call_open = -1;
             if (m->call_count) {
-                status = wire_calls_json(w);
-                if (status != WIRE_OK) {
-                    wire_render_copy_free(&alternate);
-                    wire_render_copy_free(&primary);
+                status = runtime_calls_json(w);
+                if (status != RUNTIME_OK) {
+                    runtime_render_copy_free(&alternate);
+                    runtime_render_copy_free(&primary);
                     goto abort;
                 }
                 blocks[1].format = CONVERSATION_BLOCK_JSON;
@@ -2142,7 +2142,7 @@ wire_status wire_rebuild(wire *w, const char *system,
                 blocks[1].length = w->calls_scratch.length;
                 block_count = 2;
             }
-            status = wire_from_conversation(
+            status = runtime_from_conversation(
                 w, conversation_append_message_variants(
                        c, CONVERSATION_ROLE_ASSISTANT, blocks, block_count,
                        primary.render, primary.render_length,
@@ -2154,9 +2154,9 @@ wire_status wire_rebuild(wire *w, const char *system,
                        m->reasoning && *m->reasoning
                        ? CONVERSATION_REASONING_NATURAL
                        : CONVERSATION_REASONING_NONE));
-            wire_render_copy_free(&alternate);
-            wire_render_copy_free(&primary);
-            if (status != WIRE_OK) goto abort;
+            runtime_render_copy_free(&alternate);
+            runtime_render_copy_free(&primary);
+            if (status != RUNTIME_OK) goto abort;
             for (size_t j = 0; j < w->call_count; j++) {
                 conversation_tool_call call;
                 memset(&call, 0, sizeof call);
@@ -2172,21 +2172,21 @@ wire_status wire_rebuild(wire *w, const char *system,
                 format_sha256_update(&hasher, call.arguments,
                                      call.arguments_length);
                 format_sha256_final(&hasher, call.fingerprint);
-                status = wire_from_conversation(
+                status = runtime_from_conversation(
                     w, conversation_append_tool_started(c, &call));
-                if (status != WIRE_OK) goto abort;
+                if (status != RUNTIME_OK) goto abort;
             }
             turn = m->call_count ? PROFILE_TURN_OPEN : PROFILE_TURN_BARE;
             break;
         }
-        case WIRE_MESSAGE_TOOL_RESULT: {
+        case RUNTIME_MESSAGE_TOOL_RESULT: {
             if (turn != PROFILE_TURN_OPEN) {
-                status = wire_fail(w, WIRE_INVALID_ARGUMENT,
+                status = runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                                    "no open model turn for a tool result");
                 goto abort;
             }
             if (!m->text) {
-                status = wire_fail(w, WIRE_INVALID_ARGUMENT,
+                status = runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                                    "missing text");
                 goto abort;
             }
@@ -2194,16 +2194,16 @@ wire_status wire_rebuild(wire *w, const char *system,
             size_t pending_count = conversation_unknown_tool_calls(
                 c, pending, sizeof pending / sizeof pending[0]);
             if (!pending_count) {
-                status = wire_fail(w, WIRE_INVALID_ARGUMENT,
+                status = runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                                    "no pending tool call");
                 goto abort;
             }
             uint64_t call_id = pending[0];
-            const char *name = wire_tool_name_of(c, call_id);
+            const char *name = runtime_tool_name_of(c, call_id);
             if (m->tool_name) {
                 size_t k = 0;
                 for (; k < pending_count; k++) {
-                    const char *candidate = wire_tool_name_of(c,
+                    const char *candidate = runtime_tool_name_of(c,
                                                               pending[k]);
                     if (candidate && strcmp(candidate,
                                             m->tool_name) == 0) {
@@ -2213,74 +2213,74 @@ wire_status wire_rebuild(wire *w, const char *system,
                     }
                 }
                 if (k == pending_count) {
-                    status = wire_fail(w, WIRE_INVALID_ARGUMENT,
+                    status = runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                                        "no pending call for that tool");
                     goto abort;
                 }
             }
             if (!name) {
-                status = wire_fail(w, WIRE_INVALID_ARGUMENT,
+                status = runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                                    "unknown tool call");
                 goto abort;
             }
-            status = wire_from_profile(
+            status = runtime_from_profile(
                 w, profile_render_tool_result(w->prof, name, m->text,
                                               &render));
-            if (status != WIRE_OK) goto abort;
-            status = wire_budget_check(w, tokens + render.token_count);
-            if (status != WIRE_OK) goto abort;
+            if (status != RUNTIME_OK) goto abort;
+            status = runtime_budget_check(w, tokens + render.token_count);
+            if (status != RUNTIME_OK) goto abort;
             uint32_t tool_status = m->tool_status ? m->tool_status
                                                   : CONVERSATION_TOOL_OK;
-            status = wire_from_conversation(
+            status = runtime_from_conversation(
                 w, conversation_append_tool_result(
                        c, call_id, tool_status, blocks, 1, render.render,
                        render.render_length, render.tokens,
                        render.token_count));
-            if (status != WIRE_OK) goto abort;
+            if (status != RUNTIME_OK) goto abort;
             break;
         }
         default:
-            status = wire_fail(w, WIRE_INVALID_ARGUMENT,
+            status = runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                                "unsupported message kind");
             goto abort;
         }
     }
     conversation_settings settings;
     if (!conversation_get_settings(c, &settings))
-        wire_settings_defaults(&settings);
-    status = wire_from_conversation(
+        runtime_settings_defaults(&settings);
+    status = runtime_from_conversation(
         w, conversation_project(
                c, settings.reasoning_effort != CONVERSATION_REASONING_OFF,
                settings.reasoning_history));
-    if (status != WIRE_OK) goto abort;
-    status = wire_from_conversation(w, conversation_commit(c));
-    if (status != WIRE_OK) goto abort;
+    if (status != RUNTIME_OK) goto abort;
+    status = runtime_from_conversation(w, conversation_commit(c));
+    if (status != RUNTIME_OK) goto abort;
     w->saved_tokens = 0;
     w->saved_at = 0;
-    wire_ckpt_reset(w);
+    runtime_ckpt_reset(w);
     if (out) *out = conversation_event_count(c) - 1;
-    return WIRE_OK;
+    return RUNTIME_OK;
 
 abort:
     {
         conversation_status rollback = conversation_rollback(c);
         if (rollback != CONVERSATION_OK)
-            return wire_from_conversation(w, rollback);
+            return runtime_from_conversation(w, rollback);
     }
     return status;
 }
 
-wire_status wire_checkpoint(wire *w, wire_checkpoint_report *out) {
-    if (!w) return WIRE_INVALID_ARGUMENT;
-    if (w->gen_kind != WIRE_GEN_NONE)
-        return wire_fail(w, WIRE_BUSY, "generation in progress");
+runtime_status runtime_checkpoint(runtime *w, runtime_checkpoint_report *out) {
+    if (!w) return RUNTIME_INVALID_ARGUMENT;
+    if (w->gen_kind != RUNTIME_GEN_NONE)
+        return runtime_fail(w, RUNTIME_BUSY, "generation in progress");
     if (!w->has_current)
-        return wire_fail(w, WIRE_SESSION_NOT_FOUND, "no open session");
-    wire_shadow_wait(w, 1);
+        return runtime_fail(w, RUNTIME_SESSION_NOT_FOUND, "no open session");
+    runtime_shadow_wait(w, 1);
     /* Explicit: bypass the autosave backoff and re-arm it on success. */
     w->ckpt_autosave_off = 0;
-    int64_t now = wire_now();
+    int64_t now = runtime_now();
     if (w->saved_at > now) w->saved_at = now;
-    wire_checkpoint_now(w, out);
-    return WIRE_OK;
+    runtime_checkpoint_now(w, out);
+    return RUNTIME_OK;
 }
