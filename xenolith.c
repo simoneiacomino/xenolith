@@ -406,35 +406,62 @@ static void xe_free(const xe_engine *e, void *p, xe_mem_kind kind) {
 }
 
 typedef enum {
-    XE_GPU_UNSUPPORTED,
-    XE_GPU_SUPPORTED,
-    XE_GPU_EXPERIMENTAL
-} xe_gpu_support_status;
+    XE_GPU_NOT_ENABLED,
+    XE_GPU_TESTED,
+    XE_GPU_UNTESTED
+} xe_gpu_status;
 
-static xe_gpu_support_status xe_gpu_support(uint32_t id) {
-    static const uint16_t ids[] = {
-        0x9a49, 0x9a40, 0x9a59, 0x9a60, 0x9a68, 0x9a70, 0x9a78,
-        0x4905, 0x4906, 0x4907, 0x4908, 0x4909,
-        0x4c80, 0x4c8a, 0x4c8b, 0x4c8c, 0x4c90, 0x4c9a,
-        0x4680, 0x4682, 0x4688, 0x468a, 0x468b, 0x4690, 0x4692, 0x4693,
-        0xa780, 0xa781, 0xa782, 0xa783, 0xa788, 0xa789, 0xa78a, 0xa78b,
-        0x46d0, 0x46d1, 0x46d2, 0x46d3, 0x46d4,
-        0x46a0, 0x46b0, 0x46a1, 0x46a3, 0x46a6, 0x46a8, 0x46aa,
-        0x462a, 0x4626, 0x4628, 0x46b1, 0x46b3, 0x46c0, 0x46c1, 0x46c3,
-        0xa7a0, 0xa720, 0xa7a8, 0xa7a1, 0xa721, 0xa7a9,
-        0xa7aa, 0xa7ab, 0xa7ac, 0xa7ad,
-        0x7d51
-    };
-    for (size_t i = 0; i < sizeof ids / sizeof ids[0]; i++)
-        if (id == ids[i]) return XE_GPU_SUPPORTED;
-    /* Experimental Meteor Lake (Xe-LPG) and Arrow Lake (Xe-LPG / Xe-LPG+).
-     * IDs from intel/compute-runtime shared/source/dll/devices/devices_base.inl. */
+static xe_gpu_status xe_gpu_classify(uint32_t id) {
+    /* Integrated GPUs only. Keep these IDs and test status in sync with README.md.
+     * IDs: intel/compute-runtime shared/source/dll/devices/devices_base.inl;
+     * Wildcat Lake grouping: Linux include/drm/intel/pciids.h. */
     switch (id) {
+        case 0xa7a0: /* Maintainer's Core i7-13700H. */
+        case 0x7d51: /* Core Ultra 7 255H, reported by aziis98 in PR #2. */
+            return XE_GPU_TESTED;
+        /* Tiger Lake. */
+        case 0x9a40: case 0x9a49: case 0x9a59: case 0x9a60:
+        case 0x9a68: case 0x9a70: case 0x9a78:
+        /* Rocket Lake. */
+        case 0x4c80: case 0x4c8a: case 0x4c8b: case 0x4c8c:
+        case 0x4c90: case 0x4c9a:
+        /* Alder Lake mobile. */
+        case 0x4626: case 0x4628: case 0x462a: case 0x46a0:
+        case 0x46a1: case 0x46a3: case 0x46a6: case 0x46a8:
+        case 0x46aa: case 0x46b0: case 0x46b1: case 0x46b3:
+        case 0x46c0: case 0x46c1: case 0x46c3:
+        /* Alder Lake desktop. */
+        case 0x4680: case 0x4682: case 0x4688: case 0x468a:
+        case 0x468b: case 0x4690: case 0x4692: case 0x4693:
+        /* Alder Lake-N / Twin Lake. */
+        case 0x46d0: case 0x46d1: case 0x46d2: case 0x46d3: case 0x46d4:
+        /* Raptor Lake mobile / refresh. */
+        case 0xa720: case 0xa721: case 0xa7a1: case 0xa7a8:
+        case 0xa7a9: case 0xa7aa: case 0xa7ab: case 0xa7ac: case 0xa7ad:
+        /* Raptor Lake desktop / refresh. */
+        case 0xa780: case 0xa781: case 0xa782: case 0xa783:
+        case 0xa788: case 0xa789: case 0xa78a: case 0xa78b:
+        /* Meteor Lake and Arrow Lake. */
         case 0x7d40: case 0x7d45: case 0x7d55: case 0x7dd5:
         case 0x7d41: case 0x7d67: case 0x7dd1:
-            return XE_GPU_EXPERIMENTAL;
+        /* Lunar Lake. */
+        case 0x6420: case 0x64a0: case 0x64b0:
+        /* Panther Lake. */
+        case 0xb080: case 0xb081: case 0xb082: case 0xb083:
+        case 0xb084: case 0xb085: case 0xb086: case 0xb087:
+        case 0xb08f: case 0xb090: case 0xb0a0: case 0xb0b0:
+        /* Wildcat Lake. */
+        case 0xfd80: case 0xfd81:
+        /* Nova Lake, Xe3 (IGFX_NVL_XE3G). */
+        case 0xd740: case 0xd741: case 0xd742: case 0xd743:
+        case 0xd744: case 0xd745:
+        /* Nova Lake, Xe3P (IGFX_NVL). */
+        case 0xd74a: case 0xd74b:
+        case 0xd750: case 0xd751: case 0xd752: case 0xd753:
+        case 0xd754: case 0xd755: case 0xd756: case 0xd757: case 0xd75f:
+            return XE_GPU_UNTESTED;
         default:
-            return XE_GPU_UNSUPPORTED;
+            return XE_GPU_NOT_ENABLED;
     }
 }
 
@@ -457,13 +484,16 @@ static void xe_gpu_init(xe_engine *e) {
         .stype = ZE_STRUCTURE_TYPE_DEVICE_PROPERTIES
     };
     xe_ze_check("zeDeviceGetProperties", zeDeviceGetProperties(e->gpu.device, &properties));
-    xe_gpu_support_status support = xe_gpu_support(properties.deviceId);
-    if (properties.vendorId != 0x8086 || support == XE_GPU_UNSUPPORTED)
-        xe_fatal("expected Intel Xe-LP, Xe-LPG or Xe-LPG+ GPU, found %04x:%04x",
+    xe_gpu_status status = xe_gpu_classify(properties.deviceId);
+    if (properties.vendorId != 0x8086 || status == XE_GPU_NOT_ENABLED)
+        xe_fatal("GPU %04x:%04x is not enabled; see README.md for Intel Xe integrated GPU device IDs",
                  properties.vendorId, properties.deviceId);
-    if (support == XE_GPU_EXPERIMENTAL)
-        fprintf(stderr, "xenolith: experimental Xe-LPG/Xe-LPG+ support for %s (%04x:%04x); "
-                        "not validated on maintainer hardware, using Xe-LP kernels without XMX\n",
+    if (status == XE_GPU_UNTESTED)
+        fprintf(stderr, "xenolith: %s (%04x:%04x) is enabled but has not yet been tested with Xenolith; "
+                        "using existing kernels without XMX.\n"
+                        "xenolith: if inference works, please report your results so this device can be marked tested; "
+                        "if it fails, please report the problem. Include your device ID, system/driver versions, "
+                        "Xenolith commit, command and output: https://github.com/simoneiacomino/xenolith/issues\n",
                 properties.name, properties.vendorId, properties.deviceId);
 
     ze_context_desc_t context_desc = {
