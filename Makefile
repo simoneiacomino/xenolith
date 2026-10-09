@@ -1,6 +1,7 @@
 CC=gcc
+CTX?=262144
 BUILD_COMMIT=$(shell git rev-parse --short=9 HEAD 2>/dev/null || printf unknown)
-BASE_CFLAGS=-O3 -march=native -std=c11 -Wall -Wextra -pthread
+BASE_CFLAGS=-O3 -march=native -std=c11 -Wall -Wextra -pthread -DXE_CTX=$(CTX)
 NUMERIC_SOURCE_HASH=$(shell sha256sum xenolith.c xenolith.cl | sha256sum | cut -d' ' -f1)
 NUMERIC_CFLAGS_HASH=$(shell printf '%s' '$(BASE_CFLAGS)' | sha256sum | cut -d' ' -f1)
 CFLAGS=$(BASE_CFLAGS) -DXE_BUILD_COMMIT='"$(BUILD_COMMIT)"' \
@@ -35,7 +36,7 @@ clean:
 		tests/test_kvstore tests/test_conversation \
 		tests/test_conversation_model \
 		tests/test_json tests/test_profile tests/test_inference tests/test_runtime \
-		tests/test_runtime_model tests/test_serve tests/test_serve_model \
+		tests/test_runtime_model tests/test_serve tests/test_serve_model tests/test_gpu_alloc \
 		bench/bench_attention bench/bench_tg bench/bench_b3b bench/bench_b3b_8e \
 		bench/bench_guard bench/compare_pp_tg_xe bench/compare_pp_tg_tokens \
 		bench/bench_b3b.spv bench/bench_b3b_adlp.spv \
@@ -60,7 +61,7 @@ LLAMA_LDLIBS=-lllama -lggml -lggml-base
 
 TEST_CFLAGS=-O2 -std=c11 -Wall -Wextra -pthread
 
-UNIT_TESTS=tests/test_inference tests/test_format tests/test_json tests/test_decode tests/test_conversation
+UNIT_TESTS=tests/test_inference tests/test_format tests/test_json tests/test_decode tests/test_conversation tests/test_gpu_alloc
 GPU_TESTS=tests/test_kv tests/test_snapshot tests/test_kvstore tests/test_prefill_session
 PERSISTENCE_TESTS=tests/test_snapshot_model tests/test_conversation_model tests/test_session_sync
 PREFILL_TESTS=tests/test_prefill_projection tests/test_prefill_qkv tests/test_prefill_swa \
@@ -82,6 +83,10 @@ ORACLE_PROMPTS=short long
 
 tests/certify: tests/certify.c xenolith.o format.o profile.o json.o xenolith.h profile.h $(GPU_OBJ)
 	$(CC) $(TEST_CFLAGS) -I. -o $@ tests/certify.c xenolith.o format.o profile.o json.o $(GPU_OBJ) $(LDLIBS)
+
+tests/test_gpu_alloc: tests/test_gpu_alloc.c xenolith.c xenolith.h xenolith_internal.h format.h
+	$(CC) $(CFLAGS) -ffunction-sections -fdata-sections -I. -o $@ $< \
+		-Wl,--gc-sections -lm
 
 tests/test_format: tests/test_format.c format.o format.h
 	$(CC) $(TEST_CFLAGS) -I. -o $@ tests/test_format.c format.o -pthread
