@@ -89,7 +89,7 @@ static void snapshot_fill(xe_session *s, int n, int salt) {
         int global = XE_IS_GLOBAL(layer);
         int heads = global ? XE_GLOBAL_KV_HEADS : XE_SWA_KV_HEADS;
         int dimension = global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM;
-        int capacity = global ? XE_CTX : XE_SWA_WINDOW;
+        int capacity = global ? s->engine->context : XE_SWA_WINDOW;
         int first = global ? 0 : (n > XE_SWA_WINDOW ? n - XE_SWA_WINDOW : 0);
         for (int value = 0; value < 2; value++) {
             _Float16 *base = xe_kv_layer_ptr(s, layer, value);
@@ -118,7 +118,7 @@ static int snapshot_matches(const xe_session *s, int n, int salt) {
         int global = XE_IS_GLOBAL(layer);
         int heads = global ? XE_GLOBAL_KV_HEADS : XE_SWA_KV_HEADS;
         int dimension = global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM;
-        int capacity = global ? XE_CTX : XE_SWA_WINDOW;
+        int capacity = global ? s->engine->context : XE_SWA_WINDOW;
         int first = global ? 0 : (n > XE_SWA_WINDOW ? n - XE_SWA_WINDOW : 0);
         for (int value = 0; value < 2; value++) {
             _Float16 *base = xe_kv_layer_ptr((xe_session *)s, layer, value);
@@ -150,7 +150,7 @@ static uint64_t snapshot_state_crc(xe_session *s) {
         int global = XE_IS_GLOBAL(layer);
         int heads = global ? XE_GLOBAL_KV_HEADS : XE_SWA_KV_HEADS;
         int dimension = global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM;
-        int capacity = global ? XE_CTX : XE_SWA_WINDOW;
+        int capacity = global ? s->engine->context : XE_SWA_WINDOW;
         int rows = global ? n : (n < XE_SWA_WINDOW ? n : XE_SWA_WINDOW);
         int first = global ? 0 : n - rows;
         for (int value = 0; value < 2; value++) {
@@ -415,7 +415,7 @@ static int snapshot_rejections(xe_session *s) {
 }
 
 static int snapshot_large(xe_session *session) {
-    const int n = XE_CTX;
+    const int n = session->engine->context;
     session->n_tokens = n;
     for (int i = 0; i < n; i++) session->tokens[i] = snapshot_token(i, 3);
     for (int i = 0; i < XE_VOCAB; i++)
@@ -425,9 +425,9 @@ static int snapshot_large(xe_session *session) {
     memset(session->swa_v, 0x22,
            XE_SWA_SLAB_ELEMS * sizeof(*session->swa_v));
     memset(session->global_k, 0x33,
-           XE_GLOBAL_SLAB_ELEMS * sizeof(*session->global_k));
+           xe_global_slab_elems(session->engine) * sizeof(*session->global_k));
     memset(session->global_v, 0x44,
-           XE_GLOBAL_SLAB_ELEMS * sizeof(*session->global_v));
+           xe_global_slab_elems(session->engine) * sizeof(*session->global_v));
     int32_t *expected_ids = malloc((size_t)n * sizeof(*expected_ids));
     if (!expected_ids) return 0;
     memcpy(expected_ids, session->tokens,
@@ -447,9 +447,9 @@ static int snapshot_large(xe_session *session) {
     memset(session->swa_v, 0xbb,
            XE_SWA_SLAB_ELEMS * sizeof(*session->swa_v));
     memset(session->global_k, 0xcc,
-           XE_GLOBAL_SLAB_ELEMS * sizeof(*session->global_k));
+           xe_global_slab_elems(session->engine) * sizeof(*session->global_k));
     memset(session->global_v, 0xdd,
-           XE_GLOBAL_SLAB_ELEMS * sizeof(*session->global_v));
+           xe_global_slab_elems(session->engine) * sizeof(*session->global_v));
     if (file) ok &= xe_session_snapshot_load(session, file, &expected) ==
                     XE_SNAPSHOT_OK;
     ok &= session->n_tokens == n &&
@@ -460,10 +460,10 @@ static int snapshot_large(xe_session *session) {
                                       sizeof(*session->swa_k) - 1] == 0x11;
     ok &= ((uint8_t *)session->swa_v)[0] == 0x22 &&
           ((uint8_t *)session->global_k)[0] == 0x33 &&
-          ((uint8_t *)session->global_k)[XE_GLOBAL_SLAB_ELEMS *
+          ((uint8_t *)session->global_k)[xe_global_slab_elems(session->engine) *
                                          sizeof(*session->global_k) - 1] == 0x33;
     ok &= ((uint8_t *)session->global_v)[0] == 0x44 &&
-          ((uint8_t *)session->global_v)[XE_GLOBAL_SLAB_ELEMS *
+          ((uint8_t *)session->global_v)[xe_global_slab_elems(session->engine) *
                                          sizeof(*session->global_v) - 1] == 0x44;
     if (file) fclose(file);
     free(expected_ids);
@@ -525,27 +525,66 @@ static int snapshot_twin_wrap(xe_session *source) {
     return ok;
 }
 
+static int snapshot_context_mismatch(xe_session *source) {
+    snapshot_fill(source, 17, 0);
+    xe_tokens expected = { source->tokens, 17, source->engine->context };
+    FILE *file = tmpfile();
+    if (!file || xe_session_snapshot_save(source, file) != XE_SNAPSHOT_OK) {
+        if (file) fclose(file);
+        return 0;
+    }
+    xe_engine other = {0};
+    other.context = source->engine->context == 64 ? 129 : 64;
+    xe_gpu_init(&other);
+    xe_snapshot_fingerprints_init(&other);
+    xe_session *target = xe_session_new(&other);
+    snapshot_fill(target, 17, 7);
+    uint64_t before = snapshot_state_crc(target);
+    int ok = xe_context_size(source->engine) != xe_context_size(&other) &&
+        snapshot_rejected_unchanged(target, file, &expected,
+                                    XE_SNAPSHOT_CONTEXT_MISMATCH, before);
+    xe_session_free(target);
+    xe_worker_pool_destroy(&other);
+    xe_gpu_destroy(&other);
+    fclose(file);
+    printf("snapshot: different runtime capacities rejected unchanged %s\n",
+           ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 int main(int argc, char **argv) {
     xe_engine engine;
     memset(&engine, 0, sizeof engine);
+    engine.context = XE_CONTEXT_DEFAULT;
+    int run_large = 0;
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--large")) run_large = 1;
+        else if (!strcmp(argv[i], "--ctx") && i + 1 < argc) {
+            char *end;
+            errno = 0;
+            long value = strtol(argv[++i], &end, 10);
+            if (errno || end == argv[i] || *end ||
+                value < XE_CONTEXT_MIN || value > XE_CONTEXT_MAX) return 2;
+            engine.context = (int)value;
+        } else return 2;
+    }
     xe_gpu_init(&engine);
-    for (int i = 0; i < XE_SNAPSHOT_FP_COUNT; i++)
-        for (int j = 0; j < 32; j++)
-            engine.snapshot_fingerprint[i][j] = (uint8_t)(31 * i + j);
-    engine.snapshot_fingerprint_ready = 1;
+    xe_snapshot_fingerprints_init(&engine);
     xe_session *session = xe_session_new(&engine);
     int ok = snapshot_round_trip(session, 17);
-    ok &= snapshot_round_trip(session, 1057);
+    ok &= snapshot_round_trip(session, engine.context < 1057 ? engine.context : 1057);
+    ok &= snapshot_context_mismatch(session);
     ok &= snapshot_rejections(session);
-    ok &= snapshot_twin_wrap(session);
-    session->n_tokens = XE_CTX;
+    if (engine.context >= 1057) ok &= snapshot_twin_wrap(session);
+    session->n_tokens = session->engine->context;
     uint64_t maximum_size = 0;
     int large = xe_session_snapshot_size(session, &maximum_size) ==
-                XE_SNAPSHOT_OK && maximum_size > UINT32_MAX;
+                XE_SNAPSHOT_OK && maximum_size > 0 &&
+                (engine.context != XE_CONTEXT_MAX || maximum_size > UINT32_MAX);
     ok &= large;
-    printf("snapshot: 64-bit maximum size %llu %s\n",
-           (unsigned long long)maximum_size, large ? "PASS" : "FAIL");
-    if (argc > 1 && strcmp(argv[1], "--large") == 0)
+    printf("snapshot: capacity %d maximum size %llu %s\n",
+           engine.context, (unsigned long long)maximum_size, large ? "PASS" : "FAIL");
+    if (run_large)
         ok &= snapshot_large(session);
     xe_session_free(session);
     xe_worker_pool_destroy(&engine);

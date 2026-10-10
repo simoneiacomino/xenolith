@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "../runtime.h"
+#include "test_context.h"
 #include "../json.h"
 
 #include <stdio.h>
@@ -171,8 +172,9 @@ static int file_contains(const char *path, const char *needle) {
 }
 
 int main(int argc, char **argv) {
+    int context = test_context_capacity(&argc, argv);
     if (argc < 2 || !argv[1][0]) {
-        fprintf(stderr, "usage: %s <model.gguf>\n", argv[0]);
+        fprintf(stderr, "usage: %s <model.gguf> [--ctx N]\n", argv[0]);
         return 2;
     }
     const char *model = argv[1];
@@ -183,10 +185,13 @@ int main(int argc, char **argv) {
     CHECK(mkdtemp(cache_dir) != NULL);
     CHECK(mkdtemp(ndjson_dir) != NULL);
 
-    xe_engine *e = xe_engine_open(model);
+    xe_engine *e = xe_engine_open_with_context(model, context);
     runtime *w = NULL;
     CHECK(runtime_open(&w, e, state_dir, cache_dir) == RUNTIME_OK);
     if (!w) return 1;
+    runtime_info info;
+    CHECK(runtime_describe(w, &info) == RUNTIME_OK);
+    CHECK(info.context_window == context);
 
     profile_tool weather = {
         "get_weather",
@@ -469,11 +474,14 @@ int main(int argc, char **argv) {
         fclose(requests);
     }
     snprintf(command, sizeof command,
-             "XDG_STATE_HOME=%s ./xenolith wire %s --state %s/state "
+             "XDG_STATE_HOME=%s ./xenolith wire %s --ctx %d --state %s/state "
              "--cache %s/cache < %s > %s 2>%s/stderr.log",
-             ndjson_dir, model, ndjson_dir, ndjson_dir, requests_path,
+             ndjson_dir, model, context, ndjson_dir, ndjson_dir, requests_path,
              output_path, ndjson_dir);
     CHECK(system(command) == 0);
+    char context_field[64];
+    snprintf(context_field, sizeof context_field, "\"context_window\":%d", context);
+    CHECK(file_contains(output_path, context_field));
     CHECK(file_contains(output_path, "\"ok\":true"));
     CHECK(file_contains(output_path, "\"reasoning\":{\"efforts\""));
     CHECK(file_contains(output_path, "\"event\":\"start\""));

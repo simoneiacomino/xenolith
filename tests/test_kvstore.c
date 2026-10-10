@@ -27,7 +27,7 @@ static void store_fill(xe_session *session, int n, int salt) {
         int global = XE_IS_GLOBAL(layer);
         int heads = global ? XE_GLOBAL_KV_HEADS : XE_SWA_KV_HEADS;
         int dimension = global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM;
-        int capacity = global ? XE_CTX : XE_SWA_WINDOW;
+        int capacity = global ? session->engine->context : XE_SWA_WINDOW;
         for (int value = 0; value < 2; value++) {
             _Float16 *base = xe_kv_layer_ptr(session, layer, value);
             for (int head = 0; head < heads; head++) {
@@ -131,6 +131,7 @@ static void store_cleanup(const char *root, const char *cache) {
 int main(void) {
     xe_engine engine;
     memset(&engine, 0, sizeof engine);
+    engine.context = 4097;
     xe_gpu_init(&engine);
     for (int i = 0; i < XE_SNAPSHOT_FP_COUNT; i++)
         for (int j = 0; j < 32; j++)

@@ -100,7 +100,7 @@ static int test_workspace_regions(xe_session *s) {
     TEST_REGION(s->combined, XE_EMBD);
     TEST_REGION(s->router_in, XE_EMBD);
     TEST_REGION(s->router_logits, XE_EXPERTS);
-    TEST_REGION(s->scores, XE_Q_HEADS * XE_CTX);
+    TEST_REGION(s->scores, XE_Q_HEADS * s->engine->context);
     TEST_REGION(s->attn_partial, XE_WORKERS * 8 * XE_GLOBAL_HEAD_DIM);
     TEST_REGION(s->rope_swa_cos, XE_SWA_HEAD_DIM / 2);
     TEST_REGION(s->rope_swa_sin, XE_SWA_HEAD_DIM / 2);
@@ -220,15 +220,65 @@ static int test_shared_allocation(xe_engine *e, const void *p) {
 
 static int test_prefill_global_kv(xe_engine *e);
 
-static int test_session_slabs(void) {
+static int test_context_bounds(void) {
+    int ok = 1;
+    /* These failures must happen before file opening or any GPU access. */
+    for (int operation = 0; operation < 5; operation++) {
+        int fds[2];
+        if (pipe(fds)) return 0;
+        fflush(NULL);
+        pid_t child = fork();
+        if (child == 0) {
+            close(fds[0]);
+            dup2(fds[1], STDERR_FILENO);
+            close(fds[1]);
+            if (operation < 2) {
+                xe_engine_open_with_context("/missing-model.gguf",
+                                            operation ? XE_CONTEXT_MAX + 1 : XE_CONTEXT_MIN - 1);
+            } else {
+                xe_engine e = { .context = 64, .pool_initialized = 1,
+                                .owner = pthread_self() };
+                xe_session s = { .engine = &e, .n_tokens = 64 };
+                int32_t ids[65] = {0};
+                xe_tokens prefix = { ids, 65, 65 };
+                if (operation == 2) xe_session_sync(&s, &prefix);
+                else if (operation == 3) xe_session_kv_append(&s, 5, 64, NULL, NULL);
+                else xe_decode_token_mode(&s, 0, 64, 0, 0, 0, 0);
+            }
+            _exit(0);
+        }
+        close(fds[1]);
+        char message[512];
+        size_t used = 0;
+        ssize_t got;
+        while ((got = read(fds[0], message + used, sizeof message - 1 - used)) > 0)
+            used += (size_t)got;
+        close(fds[0]);
+        message[used] = '\0';
+        int status;
+        int passed = child > 0 && waitpid(child, &status, 0) == child &&
+                     WIFEXITED(status) && WEXITSTATUS(status) == 1 &&
+                     strstr(message, "out of range") != NULL;
+        if (!passed) fprintf(stderr, "context bounds operation %d failed: %s\n",
+                             operation, message);
+        ok &= passed;
+    }
+    printf("kv: runtime context bounds %s\n", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+static int test_session_slabs(int context) {
     xe_engine e;
     memset(&e, 0, sizeof e);
+    e.context = context;
     cpu_set_t original_affinity;
     if (pthread_getaffinity_np(pthread_self(), sizeof original_affinity, &original_affinity) != 0)
         return 0;
     xe_gpu_init(&e);
     xe_session *s = xe_session_new(&e);
-    int ok = s && s->engine == &e && s->n_tokens == 0;
+    int ok = s && s->engine == &e && s->n_tokens == 0 &&
+             xe_context_size(&e) == context;
+    int position = context - 1;
     ok = ok && e.worker_pinned == xe_worker_pin_available(&original_affinity);
     ok = ok && ((uintptr_t)s->swa_k & 63u) == 0;
     ok = ok && ((uintptr_t)s->swa_v & 63u) == 0;
@@ -249,8 +299,8 @@ static int test_session_slabs(void) {
     ok = ok && xe_kv_layer_ptr(s, 0, 0) == s->swa_k;
     ok = ok && xe_kv_layer_ptr(s, 6, 0) == s->swa_k + 5 * XE_SWA_LAYER_ELEMS;
     ok = ok && xe_kv_layer_ptr(s, 5, 0) == s->global_k;
-    ok = ok && xe_kv_layer_ptr(s, 29, 1) == s->global_v + 4 * XE_GLOBAL_LAYER_ELEMS;
-    s->n_tokens = 123;
+    ok = ok && xe_kv_layer_ptr(s, 29, 1) == s->global_v + 4 * xe_global_layer_elems(s->engine);
+    s->n_tokens = context;
     xe_session_reset(s);
     ok = ok && s->n_tokens == 0;
     ok = ok && xe_engine_worker_count(&e) == XE_WORKERS;
@@ -262,18 +312,18 @@ static int test_session_slabs(void) {
     float *swa_v = xe_alloc(NULL, XE_SWA_KV_HEADS * XE_SWA_HEAD_DIM * sizeof(*swa_v), XE_MEM_HOST);
     for (int h = 0; h < XE_SWA_KV_HEADS; h++) {
         for (int d = 0; d < XE_SWA_HEAD_DIM; d++) {
-            swa_k[(size_t)h * XE_SWA_HEAD_DIM + d] = test_k(1024, h, d);
-            swa_v[(size_t)h * XE_SWA_HEAD_DIM + d] = test_v(1024, h, d);
+            swa_k[(size_t)h * XE_SWA_HEAD_DIM + d] = test_k(position, h, d);
+            swa_v[(size_t)h * XE_SWA_HEAD_DIM + d] = test_v(position, h, d);
         }
     }
-    xe_session_kv_append(s, 6, 1024, swa_k, swa_v);
+    xe_session_kv_append(s, 6, position, swa_k, swa_v);
     _Float16 *swa_k_layer = xe_kv_layer_ptr(s, 6, 0);
     _Float16 *swa_v_layer = xe_kv_layer_ptr(s, 6, 1);
     for (int h = 0; h < XE_SWA_KV_HEADS; h++) {
         for (int d = 0; d < XE_SWA_HEAD_DIM; d++) {
-            size_t i = ((size_t)h * XE_SWA_WINDOW) * XE_SWA_HEAD_DIM + d;
-            if (swa_k_layer[i] != (_Float16)test_k(1024, h, d)) ok = 0;
-            if (swa_v_layer[i] != (_Float16)test_v(1024, h, d)) ok = 0;
+            size_t i = ((size_t)h * XE_SWA_WINDOW + (position & (XE_SWA_WINDOW - 1))) * XE_SWA_HEAD_DIM + d;
+            if (swa_k_layer[i] != (_Float16)test_k(position, h, d)) ok = 0;
+            if (swa_v_layer[i] != (_Float16)test_v(position, h, d)) ok = 0;
         }
     }
 
@@ -281,18 +331,18 @@ static int test_session_slabs(void) {
     float *global_v = xe_alloc(NULL, XE_GLOBAL_KV_HEADS * XE_GLOBAL_HEAD_DIM * sizeof(*global_v), XE_MEM_HOST);
     for (int h = 0; h < XE_GLOBAL_KV_HEADS; h++) {
         for (int d = 0; d < XE_GLOBAL_HEAD_DIM; d++) {
-            global_k[(size_t)h * XE_GLOBAL_HEAD_DIM + d] = test_k(1024, h, d);
-            global_v[(size_t)h * XE_GLOBAL_HEAD_DIM + d] = test_v(1024, h, d);
+            global_k[(size_t)h * XE_GLOBAL_HEAD_DIM + d] = test_k(position, h, d);
+            global_v[(size_t)h * XE_GLOBAL_HEAD_DIM + d] = test_v(position, h, d);
         }
     }
-    xe_session_kv_append(s, 5, 1024, global_k, global_v);
+    xe_session_kv_append(s, 5, position, global_k, global_v);
     _Float16 *global_k_layer = xe_kv_layer_ptr(s, 5, 0);
     _Float16 *global_v_layer = xe_kv_layer_ptr(s, 5, 1);
     for (int h = 0; h < XE_GLOBAL_KV_HEADS; h++) {
         for (int d = 0; d < XE_GLOBAL_HEAD_DIM; d++) {
-            size_t i = ((size_t)h * XE_CTX + 1024) * XE_GLOBAL_HEAD_DIM + d;
-            if (global_k_layer[i] != (_Float16)test_k(1024, h, d)) ok = 0;
-            if (global_v_layer[i] != (_Float16)test_v(1024, h, d)) ok = 0;
+            size_t i = ((size_t)h * s->engine->context + position) * XE_GLOBAL_HEAD_DIM + d;
+            if (global_k_layer[i] != (_Float16)test_k(position, h, d)) ok = 0;
+            if (global_v_layer[i] != (_Float16)test_v(position, h, d)) ok = 0;
         }
     }
 
@@ -302,7 +352,16 @@ static int test_session_slabs(void) {
     xe_free(NULL, swa_k, XE_MEM_HOST);
     ok = ok && test_scheduler(s);
     ok = ok && test_workspace_regions(s);
-    ok &= test_prefill_global_kv(&e);
+    xe_tokens prefix = {0};
+    for (int i = 0; i < context; i++) xe_tokens_push(&prefix, 2);
+    memcpy(s->tokens, prefix.v, (size_t)context * sizeof(*s->tokens));
+    s->n_tokens = context;
+    xe_sync_report report;
+    xe_session_sync_report(s, &prefix, &report);
+    ok &= report.reused == context && report.prefilled == 0 &&
+          xe_context_size(&e) == context;
+    xe_tokens_free(&prefix);
+    if (context == 4097) ok &= test_prefill_global_kv(&e);
     xe_session_free(s);
     xe_worker_pool_destroy(&e);
     cpu_set_t restored_affinity;
@@ -310,7 +369,7 @@ static int test_session_slabs(void) {
                                       &restored_affinity) == 0 &&
                CPU_EQUAL(&original_affinity, &restored_affinity);
     xe_gpu_destroy(&e);
-    printf("kv: session slabs %s\n", ok ? "PASS" : "FAIL");
+    printf("kv: session capacity %d slabs %s\n", context, ok ? "PASS" : "FAIL");
     return ok;
 }
 
@@ -487,8 +546,11 @@ static int test_prefill_global_kv(xe_engine *e) {
 
 int main(void) {
     int ok = 1;
+    ok &= test_context_bounds();
     ok &= test_raw_append();
-    ok &= test_session_slabs();
+    const int capacities[] = {64, 65, 129, 4097, 50000, 65536, XE_CONTEXT_MAX};
+    for (size_t i = 0; i < sizeof capacities / sizeof capacities[0]; i++)
+        ok &= test_session_slabs(capacities[i]);
     ok &= test_owner_enforcement();
     ok &= test_attention_case("global", XE_GLOBAL_KV_HEADS, XE_GLOBAL_HEAD_DIM, 128, 127, 0);
     ok &= test_attention_case("global-odd", XE_GLOBAL_KV_HEADS, XE_GLOBAL_HEAD_DIM, 129, 128, 0);

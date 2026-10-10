@@ -62,13 +62,7 @@ size_t xe_test_output_calls;
 #define XE_LAYERS 30
 #define XE_EMBD 2816
 #define XE_VOCAB 262144
-#define XE_MODEL_CTX 262144
-#ifndef XE_CTX
-#define XE_CTX XE_MODEL_CTX
-#endif
-#if XE_CTX < 64 || XE_CTX > XE_MODEL_CTX
-#error "XE_CTX must be between 64 and XE_MODEL_CTX"
-#endif
+#define XE_MODEL_CTX XE_CONTEXT_MAX
 #define XE_Q_HEADS 16
 #define XE_DENSE_FFN 2112
 #define XE_EXPERTS 128
@@ -106,9 +100,7 @@ size_t xe_test_output_calls;
 #define XE_CHAT_TEMPLATE_HASH UINT64_C(0xe9f262823e5bda06)
 
 #define XE_SWA_LAYER_ELEMS ((size_t)XE_SWA_KV_HEADS * XE_SWA_WINDOW * XE_SWA_HEAD_DIM)
-#define XE_GLOBAL_LAYER_ELEMS ((size_t)XE_GLOBAL_KV_HEADS * XE_CTX * XE_GLOBAL_HEAD_DIM)
 #define XE_SWA_SLAB_ELEMS ((size_t)25 * XE_SWA_LAYER_ELEMS)
-#define XE_GLOBAL_SLAB_ELEMS ((size_t)5 * XE_GLOBAL_LAYER_ELEMS)
 #define XE_GLOBAL_LAYERS 5
 
 #define XE_IS_GLOBAL(i) ((i) % 6 == 5)
@@ -229,6 +221,7 @@ typedef struct {
 } xe_gpu;
 
 struct xe_engine {
+    int context;
     void *map;
     size_t map_len;
     int map_fd;
@@ -361,6 +354,14 @@ struct xe_session {
     int prefill_pending_rows;
     float *prefill_pending_hidden;
 };
+
+static size_t xe_global_layer_elems(const xe_engine *e) {
+    return (size_t)XE_GLOBAL_KV_HEADS * e->context * XE_GLOBAL_HEAD_DIM;
+}
+
+static size_t xe_global_slab_elems(const xe_engine *e) {
+    return (size_t)XE_GLOBAL_LAYERS * xe_global_layer_elems(e);
+}
 
 extern const unsigned char _binary_xenolith_gpu_spv_start[];
 extern const unsigned char _binary_xenolith_gpu_spv_end[];
@@ -1978,7 +1979,7 @@ static void xe_prefill_attention_batch_append(
     int global = XE_IS_GLOBAL(layer_index);
     int dimension = global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM;
     int kv_heads = global ? XE_GLOBAL_KV_HEADS : XE_SWA_KV_HEADS;
-    int capacity = global ? XE_CTX : XE_SWA_WINDOW;
+    int capacity = global ? s->engine->context : XE_SWA_WINDOW;
     _Float16 *cache_k = xe_kv_layer_ptr(s, layer_index, 0);
     _Float16 *cache_v = xe_kv_layer_ptr(s, layer_index, 1);
     xe_prefill_attention_qkv_append(e, layer_index, w, rows);
@@ -1986,9 +1987,9 @@ static void xe_prefill_attention_batch_append(
         int slot = layer_index / 6;
         int local_start = batch_start - s->cow_split;
         const _Float16 *prefix_k = s->global_k +
-            (size_t)slot * XE_GLOBAL_LAYER_ELEMS;
+            (size_t)slot * xe_global_layer_elems(s->engine);
         const _Float16 *prefix_v = s->global_v +
-            (size_t)slot * XE_GLOBAL_LAYER_ELEMS;
+            (size_t)slot * xe_global_layer_elems(s->engine);
         xe_prefill_linear_commit_append(
             e, cache_k, cache_v, w->k_batch, w->v_batch, rows,
             local_start, dimension, kv_heads, s->cow_capacity);
@@ -2101,7 +2102,7 @@ static size_t xe_workspace_layout(xe_session *s, void *base) {
     s->combined = xe_workspace_take(&a, XE_EMBD * sizeof(*s->combined));
     s->router_in = xe_workspace_take(&a, XE_EMBD * sizeof(*s->router_in));
     s->router_logits = xe_workspace_take(&a, XE_EXPERTS * sizeof(*s->router_logits));
-    s->scores = xe_workspace_take(&a, (size_t)XE_Q_HEADS * XE_CTX * sizeof(*s->scores));
+    s->scores = xe_workspace_take(&a, (size_t)XE_Q_HEADS * s->engine->context * sizeof(*s->scores));
     s->attn_partial = xe_workspace_take(&a, (size_t)XE_WORKERS * 8 * XE_GLOBAL_HEAD_DIM * sizeof(*s->attn_partial));
     s->rope_swa_cos = xe_workspace_take(&a, (XE_SWA_HEAD_DIM / 2) * sizeof(*s->rope_swa_cos));
     s->rope_swa_sin = xe_workspace_take(&a, (XE_SWA_HEAD_DIM / 2) * sizeof(*s->rope_swa_sin));
@@ -3864,6 +3865,7 @@ static void xe_repack(xe_engine *e, const char *gguf_path) {
 static xe_engine *xe_open_common(const char *gguf_path, int vocab_only, xe_cur *c) {
     xe_engine *e = xe_map_file(gguf_path);
     e->vocab_only = vocab_only;
+    e->context = XE_CONTEXT_DEFAULT;
     e->scalar_rms = 1;
     *c = xe_parse_header(e, gguf_path);
     xe_parse_metadata(e, c, gguf_path);
@@ -3877,9 +3879,13 @@ static xe_engine *xe_open_common(const char *gguf_path, int vocab_only, xe_cur *
 
 static void xe_snapshot_fingerprints_init(xe_engine *e);
 
-xe_engine *xe_engine_open(const char *gguf_path) {
+xe_engine *xe_engine_open_with_context(const char *gguf_path, int context) {
+    if (context < XE_CONTEXT_MIN || context > XE_CONTEXT_MAX)
+        xe_fatal("context: capacity %d out of range [%d, %d]",
+                 context, XE_CONTEXT_MIN, XE_CONTEXT_MAX);
     xe_cur c;
     xe_engine *e = xe_open_common(gguf_path, 0, &c);
+    e->context = context;
     xe_bind_tensors(e, &c, gguf_path);
     xe_check_complete(e, gguf_path);
     xe_constants_init(e);
@@ -3887,6 +3893,10 @@ xe_engine *xe_engine_open(const char *gguf_path) {
     xe_repack(e, gguf_path);
     xe_snapshot_fingerprints_init(e);
     return e;
+}
+
+xe_engine *xe_engine_open(const char *gguf_path) {
+    return xe_engine_open_with_context(gguf_path, XE_CONTEXT_DEFAULT);
 }
 
 xe_engine *xe_engine_open_vocab(const char *gguf_path) {
@@ -3937,6 +3947,7 @@ void xe_engine_info(const xe_engine *e, FILE *out) {
     fprintf(out, "\n");
 
     fprintf(out, "layers           %d\n", XE_LAYERS);
+    fprintf(out, "context capacity %d\n", e->context);
     fprintf(out, "embedding dim    %d\n", XE_EMBD);
     fprintf(out, "vocab            %d\n", XE_VOCAB);
     fprintf(out, "query heads      %d\n", XE_Q_HEADS);
@@ -4214,7 +4225,7 @@ int32_t xe_eot_id(const xe_engine *e) {
 
 int xe_context_size(const xe_engine *e) {
     if (!e) xe_fatal("context_size: missing engine");
-    return XE_CTX;
+    return e->context;
 }
 
 uint64_t xe_engine_model_size(const xe_engine *e) {
@@ -4235,20 +4246,20 @@ int xe_engine_worker_cpu(const xe_engine *e, int worker) {
 }
 
 static int xe_tokens_valid(const xe_tokens *tokens) {
-    return tokens && tokens->len >= 0 && tokens->cap >= 0 && tokens->cap <= XE_CTX &&
+    return tokens && tokens->len >= 0 && tokens->cap >= 0 && tokens->cap <= XE_MODEL_CTX &&
         tokens->len <= tokens->cap && ((tokens->v != NULL) == (tokens->cap != 0));
 }
 
 static void xe_tokens_reserve(xe_tokens *tokens, int need) {
     if (!xe_tokens_valid(tokens)) xe_fatal("tokens: invalid vector");
-    if (need < tokens->len || need > XE_CTX)
-        xe_fatal("tokens: length %d out of range [0, %d]", need, XE_CTX);
+    if (need < tokens->len || need > XE_MODEL_CTX)
+        xe_fatal("tokens: length %d out of range [0, %d]", need, XE_MODEL_CTX);
     if (need <= tokens->cap) return;
 
     int cap = tokens->cap ? tokens->cap : 64;
     while (cap < need) {
-        if (cap > XE_CTX / 2) {
-            cap = XE_CTX;
+        if (cap > XE_MODEL_CTX / 2) {
+            cap = XE_MODEL_CTX;
             break;
         }
         cap *= 2;
@@ -4263,7 +4274,7 @@ static void xe_tokens_reserve(xe_tokens *tokens, int need) {
 
 void xe_tokens_push(xe_tokens *tokens, int32_t token) {
     if (!xe_tokens_valid(tokens)) xe_fatal("tokens_push: invalid vector");
-    if (tokens->len == XE_CTX) xe_fatal("tokens_push: context is full");
+    if (tokens->len == XE_MODEL_CTX) xe_fatal("tokens_push: context is full");
     xe_tokens_reserve(tokens, tokens->len + 1);
     tokens->v[tokens->len++] = token;
 }
@@ -4303,7 +4314,7 @@ static _Float16 *xe_kv_layer_ptr(xe_session *s, int layer, int value) {
             return base;
         }
         _Float16 *base = value ? s->global_v : s->global_k;
-        return base + (size_t)(layer / 6) * XE_GLOBAL_LAYER_ELEMS;
+        return base + (size_t)(layer / 6) * xe_global_layer_elems(s->engine);
     }
     _Float16 *base = value ? s->swa_v : s->swa_k;
     return base + (size_t)(layer - layer / 6) * XE_SWA_LAYER_ELEMS;
@@ -4327,11 +4338,11 @@ void xe_kv_append_f16(_Float16 *k_cache, _Float16 *v_cache, int n_kv_heads,
 }
 
 void xe_session_kv_append(xe_session *s, int layer, int pos, const float *k, const float *v) {
-    if (pos < 0 || pos >= XE_CTX) xe_fatal("kv: position %d out of range [0, %d]", pos, XE_CTX - 1);
+    if (pos < 0 || pos >= s->engine->context) xe_fatal("kv: position %d out of range [0, %d]", pos, s->engine->context - 1);
     int global = XE_IS_GLOBAL(layer);
     int n_kv_heads = global ? XE_GLOBAL_KV_HEADS : XE_SWA_KV_HEADS;
     int head_dim = global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM;
-    int capacity = global ? XE_CTX : XE_SWA_WINDOW;
+    int capacity = global ? s->engine->context : XE_SWA_WINDOW;
     int slot = global ? pos : pos & (XE_SWA_WINDOW - 1);
     xe_kv_append_f16(xe_kv_layer_ptr(s, layer, 0), xe_kv_layer_ptr(s, layer, 1),
                      n_kv_heads, head_dim, capacity, slot, k, v);
@@ -4515,12 +4526,12 @@ void xe_kv_attention_f16(const float *q, const _Float16 *k_cache, const _Float16
 
 void xe_session_kv_attention(xe_session *s, int layer, int pos, const float *q,
                              float *scores, float *out) {
-    if (pos < 0 || pos >= XE_CTX) xe_fatal("kv: position %d out of range [0, %d]", pos, XE_CTX - 1);
+    if (pos < 0 || pos >= s->engine->context) xe_fatal("kv: position %d out of range [0, %d]", pos, s->engine->context - 1);
     int global = XE_IS_GLOBAL(layer);
     xe_kv_attention_f16(q, xe_kv_layer_ptr(s, layer, 0), xe_kv_layer_ptr(s, layer, 1),
                         global ? XE_GLOBAL_KV_HEADS : XE_SWA_KV_HEADS,
                         global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM,
-                        global ? XE_CTX : XE_SWA_WINDOW, pos,
+                        global ? s->engine->context : XE_SWA_WINDOW, pos,
                         global ? 0 : XE_SWA_WINDOW, scores, out);
 }
 
@@ -4542,7 +4553,7 @@ static void xe_head_prepare_phase(xe_session *s, const void *opaque, int worker,
     const xe_head_prepare_arg *a = opaque;
     int head_dim = a->global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM;
     int kv_heads = a->global ? XE_GLOBAL_KV_HEADS : XE_SWA_KV_HEADS;
-    int capacity = a->global ? XE_CTX : XE_SWA_WINDOW;
+    int capacity = a->global ? s->engine->context : XE_SWA_WINDOW;
     int slot = a->global ? a->pos : a->pos & (XE_SWA_WINDOW - 1);
     int tasks = XE_Q_HEADS + 2 * kv_heads;
     int begin = tasks * worker / workers;
@@ -4582,7 +4593,7 @@ static void xe_attention_direct_phase(xe_session *s, const void *opaque, int wor
     int global = XE_IS_GLOBAL(a->layer);
     int kv_heads = global ? XE_GLOBAL_KV_HEADS : XE_SWA_KV_HEADS;
     int head_dim = global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM;
-    int capacity = global ? XE_CTX : XE_SWA_WINDOW;
+    int capacity = global ? s->engine->context : XE_SWA_WINDOW;
     int n_keys = a->pos + 1;
     if (!global && n_keys > XE_SWA_WINDOW) n_keys = XE_SWA_WINDOW;
     int first = a->pos + 1 - n_keys;
@@ -4621,7 +4632,7 @@ static void xe_attention_global_qk_phase(xe_session *s, const void *opaque, int 
         int shard = task % 3;
         int ib = n_keys * shard / 3;
         int ie = n_keys * (shard + 1) / 3;
-        xe_kv_qk_g8(s->scores, s->q, kc, XE_GLOBAL_HEAD_DIM, XE_CTX, 0,
+        xe_kv_qk_g8(s->scores, s->q, kc, XE_GLOBAL_HEAD_DIM, s->engine->context, 0,
                     n_keys, 0, h, ib, ie);
     }
 }
@@ -4649,7 +4660,7 @@ static void xe_attention_global_v_phase(xe_session *s, const void *opaque, int w
         int ie = n_keys * (shard + 1) / 3;
         float *partial = s->attn_partial + (size_t)task * 8 * XE_GLOBAL_HEAD_DIM;
         memset(partial, 0, (size_t)8 * XE_GLOBAL_HEAD_DIM * sizeof(*partial));
-        xe_kv_v_g8(partial, s->scores, vc, XE_GLOBAL_HEAD_DIM, XE_CTX, 0,
+        xe_kv_v_g8(partial, s->scores, vc, XE_GLOBAL_HEAD_DIM, s->engine->context, 0,
                     n_keys, 0, h, 0, ib, ie);
     }
 }
@@ -4943,7 +4954,7 @@ static void xe_decode_token_mode(xe_session *s, int32_t token, int pos,
                                  int moe_mode, int overlap_router, int softcap_mode,
                                  int output_logits) {
     if (token < 0 || token >= XE_VOCAB) xe_fatal("decode: token %d out of range", token);
-    if (pos < 0 || pos >= XE_CTX) xe_fatal("decode: position %d out of range", pos);
+    if (pos < 0 || pos >= s->engine->context) xe_fatal("decode: position %d out of range", pos);
     if (pos != s->n_tokens) xe_fatal("decode: expected position %d, received %d", s->n_tokens, pos);
 #ifdef XE_TEST_SESSION
     extern size_t xe_test_decode_tokens;
@@ -5147,6 +5158,8 @@ static void xe_session_swa_repair(xe_session *s) {
 }
 
 xe_session *xe_session_new(xe_engine *e) {
+    if (!e || e->context < XE_CONTEXT_MIN || e->context > XE_CONTEXT_MAX)
+        xe_fatal("session: invalid engine context capacity");
     if (e->vocab_only) xe_fatal("session: engine opened vocab-only, no weights available");
     xe_worker_pool_init(e);
     xe_session *s = xe_alloc(e, sizeof *s, XE_MEM_HOST);
@@ -5159,9 +5172,9 @@ xe_session *xe_session_new(xe_engine *e) {
     s->swa_spare_v = xe_alloc(e, XE_SWA_SLAB_ELEMS * sizeof(*s->swa_spare_v),
                               XE_MEM_SHARED);
     memset(s->swa_dirty, 1, sizeof s->swa_dirty);
-    s->global_k = xe_alloc(e, XE_GLOBAL_SLAB_ELEMS * sizeof(*s->global_k), XE_MEM_SHARED);
-    s->global_v = xe_alloc(e, XE_GLOBAL_SLAB_ELEMS * sizeof(*s->global_v), XE_MEM_SHARED);
-    s->tokens = xe_alloc(e, XE_CTX * sizeof(*s->tokens), XE_MEM_HOST);
+    s->global_k = xe_alloc(e, xe_global_slab_elems(e) * sizeof(*s->global_k), XE_MEM_SHARED);
+    s->global_v = xe_alloc(e, xe_global_slab_elems(e) * sizeof(*s->global_v), XE_MEM_SHARED);
+    s->tokens = xe_alloc(e, (size_t)e->context * sizeof(*s->tokens), XE_MEM_HOST);
     s->workspace_size = xe_workspace_layout(s, NULL);
     s->workspace = xe_alloc(e, s->workspace_size, XE_MEM_SHARED);
     xe_workspace_layout(s, s->workspace);
@@ -5191,7 +5204,7 @@ xe_session *xe_session_shadow_new(xe_session *source) {
     s->swa_v = source->swa_spare_v;
     source->swa_spare_k = NULL;
     source->swa_spare_v = NULL;
-    s->tokens = xe_alloc(e, XE_CTX * sizeof(*s->tokens), XE_MEM_HOST);
+    s->tokens = xe_alloc(e, (size_t)e->context * sizeof(*s->tokens), XE_MEM_HOST);
     s->workspace_size = xe_workspace_layout(s, NULL);
     s->workspace = xe_alloc(e, s->workspace_size, XE_MEM_SHARED);
     xe_workspace_layout(s, s->workspace);
@@ -5248,7 +5261,7 @@ void xe_session_free(xe_session *s) {
 }
 
 static void xe_session_shadow_reserve(xe_session *s, int end) {
-    if (!s->cow || end < s->cow_split || end > XE_CTX)
+    if (!s->cow || end < s->cow_split || end > s->engine->context)
         xe_fatal("shadow reserve: invalid end %d", end);
     int needed = end - s->cow_split;
     if (needed <= s->cow_capacity) return;
@@ -5353,7 +5366,7 @@ void xe_session_rewind(xe_session *s, int position) {
         s->n_tokens = 0;
         return;
     }
-    xe_tokens prefix = { s->tokens, position, XE_CTX };
+    xe_tokens prefix = { s->tokens, position, s->engine->context };
     xe_session_sync(s, &prefix);
 }
 
@@ -5363,8 +5376,8 @@ void xe_session_sync_report(xe_session *s, const xe_tokens *prefix,
     if (!xe_tokens_valid(prefix)) xe_fatal("session_sync: invalid prefix");
     xe_require_owner(s->engine);
     int n = prefix->len;
-    if (n <= 0 || n > XE_CTX)
-        xe_fatal("session_sync: prefix length %d out of range [1, %d]", n, XE_CTX);
+    if (n <= 0 || n > s->engine->context)
+        xe_fatal("session_sync: prefix length %d out of range [1, %d]", n, s->engine->context);
     for (int i = 0; i < n; i++)
         if (prefix->v[i] < 0 || prefix->v[i] >= XE_VOCAB)
             xe_fatal("session_sync: token %d at position %d out of range [0, %d]",
@@ -5412,7 +5425,7 @@ int xe_session_shadow_start(xe_session *s, const xe_tokens *prefix,
         max_rows < 1 || max_rows > 512 || s->prefill_pending)
         return -1;
     xe_require_owner(s->engine);
-    if (prefix->len < s->cow_split || prefix->len > XE_CTX)
+    if (prefix->len < s->cow_split || prefix->len > s->engine->context)
         return -1;
     int limit = prefix->len < s->n_tokens ? prefix->len : s->n_tokens;
     int common = 0;
@@ -5497,12 +5510,12 @@ int xe_session_shadow_promote(xe_session *source, xe_session *shadow) {
     if (rows > 0) {
         for (int layer = 0; layer < XE_GLOBAL_LAYERS; layer++) {
             _Float16 *target_k = source->global_k +
-                (size_t)layer * XE_GLOBAL_LAYER_ELEMS;
+                (size_t)layer * xe_global_layer_elems(e);
             _Float16 *target_v = source->global_v +
-                (size_t)layer * XE_GLOBAL_LAYER_ELEMS;
+                (size_t)layer * xe_global_layer_elems(e);
             for (int head = 0; head < XE_GLOBAL_KV_HEADS; head++) {
                 size_t target_offset =
-                    ((size_t)head * XE_CTX + shadow->cow_split) *
+                    ((size_t)head * e->context + shadow->cow_split) *
                     XE_GLOBAL_HEAD_DIM;
                 size_t source_offset =
                     (size_t)head * shadow->cow_capacity * XE_GLOBAL_HEAD_DIM;
@@ -5784,7 +5797,7 @@ static void xe_snapshot_fingerprints_init(xe_engine *e) {
     format_sha256_init(&hash);
     format_sha256_update(&hash, "xenolith-context-v1",
                          sizeof("xenolith-context-v1") - 1);
-    xe_snapshot_hash_u32(&hash, XE_CTX);
+    xe_snapshot_hash_u32(&hash, e->context);
     xe_snapshot_hash_u32(&hash, XE_EMBD);
     xe_snapshot_hash_u32(&hash, XE_VOCAB);
     xe_snapshot_hash_u32(&hash, XE_Q_HEADS);
@@ -5841,9 +5854,9 @@ static int xe_snapshot_expected_valid(const xe_tokens *tokens) {
     return 1;
 }
 
-static int xe_snapshot_layout_build(uint64_t position,
+static int xe_snapshot_layout_build(int capacity, uint64_t position,
                                     xe_snapshot_layout *layout) {
-    if (!position || position > XE_CTX) return 0;
+    if (!position || position > (uint64_t)capacity) return 0;
     memset(layout, 0, sizeof *layout);
     for (int i = 0; i < XE_SNAPSHOT_REQUIRED_SECTIONS; i++)
         layout->known[i] = i;
@@ -5895,7 +5908,7 @@ xe_snapshot_status xe_session_snapshot_size(xe_session *s, uint64_t *size) {
     xe_require_owner(s->engine);
     if (!s->n_tokens) return XE_SNAPSHOT_EMPTY;
     xe_snapshot_layout layout;
-    if (!xe_snapshot_layout_build((uint64_t)s->n_tokens, &layout))
+    if (!xe_snapshot_layout_build(s->engine->context, (uint64_t)s->n_tokens, &layout))
         return XE_SNAPSHOT_FORMAT;
     *size = layout.file_size;
     return XE_SNAPSHOT_OK;
@@ -5942,7 +5955,7 @@ static int xe_snapshot_write_kv(FILE *out, xe_session *s, int global,
                                 int value, uint64_t rows, uint64_t *crc) {
     int heads = global ? XE_GLOBAL_KV_HEADS : XE_SWA_KV_HEADS;
     int dimension = global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM;
-    int capacity = global ? XE_CTX : XE_SWA_WINDOW;
+    int capacity = global ? s->engine->context : XE_SWA_WINDOW;
     int first = global ? 0 : s->n_tokens - (int)rows;
     for (int layer = 0; layer < XE_LAYERS; layer++) {
         if (XE_IS_GLOBAL(layer) != global) continue;
@@ -6026,7 +6039,7 @@ xe_snapshot_status xe_session_snapshot_save(xe_session *s, FILE *out) {
     xe_snapshot_fingerprints_init(s->engine);
 
     xe_snapshot_layout layout;
-    if (!xe_snapshot_layout_build((uint64_t)s->n_tokens, &layout))
+    if (!xe_snapshot_layout_build(s->engine->context, (uint64_t)s->n_tokens, &layout))
         return XE_SNAPSHOT_FORMAT;
     uint8_t *buffer = malloc(XE_SNAPSHOT_BUFFER_SIZE);
     if (!buffer) return XE_SNAPSHOT_NOMEM;
@@ -6189,8 +6202,11 @@ static xe_snapshot_status xe_snapshot_parse_header(
         }
     }
 
+    if (memcmp(saved_header + 96 + 32 * XE_SNAPSHOT_FP_CONTEXT,
+               e->snapshot_fingerprint[XE_SNAPSHOT_FP_CONTEXT], 32))
+        return XE_SNAPSHOT_CONTEXT_MISMATCH;
     xe_snapshot_layout expected_layout;
-    if (!xe_snapshot_layout_build(layout->position, &expected_layout))
+    if (!xe_snapshot_layout_build(e->context, layout->position, &expected_layout))
         return XE_SNAPSHOT_FORMAT;
     for (int type = 0; type < XE_SNAPSHOT_REQUIRED_SECTIONS; type++) {
         int index = layout->known[type];
@@ -6276,7 +6292,7 @@ static xe_snapshot_status xe_snapshot_read_kv(
     if (!format_seek(in, section->offset)) return XE_SNAPSHOT_IO;
     int heads = global ? XE_GLOBAL_KV_HEADS : XE_SWA_KV_HEADS;
     int dimension = global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM;
-    int capacity = global ? XE_CTX : XE_SWA_WINDOW;
+    int capacity = global ? s->engine->context : XE_SWA_WINDOW;
     int logical_first = global ? 0 : (int)(position - rows);
     uint64_t crc = 0;
     for (int layer = 0; layer < XE_LAYERS; layer++) {
@@ -6315,7 +6331,7 @@ xe_snapshot_status xe_session_snapshot_load(xe_session *s, FILE *in,
                                             const xe_tokens *expected) {
     if (!s || !in || !expected) return XE_SNAPSHOT_INVALID_ARGUMENT;
     xe_require_owner(s->engine);
-    if (!xe_snapshot_expected_valid(expected))
+    if (!xe_snapshot_expected_valid(expected) || expected->len > s->engine->context)
         return expected->len == 0 ? XE_SNAPSHOT_EMPTY
                                   : XE_SNAPSHOT_INVALID_ARGUMENT;
     xe_snapshot_fingerprints_init(s->engine);
@@ -7006,7 +7022,8 @@ static void ref_forward(const xe_engine *e, const int32_t *tokens, int n_tokens,
 void xe_oracle(xe_engine *e, const int32_t *tokens, int n_tokens, const char *dump_path,
                const char *layers_dir, int q8_mode, FILE *out) {
     if (e->vocab_only) xe_fatal("oracle: engine opened vocab-only, no weights available");
-    if (n_tokens <= 0) xe_fatal("oracle: need at least one token");
+    if (n_tokens <= 0 || n_tokens > e->context)
+        xe_fatal("oracle: token count %d out of range [1, %d]", n_tokens, e->context);
     for (int i = 0; i < n_tokens; i++)
         if (tokens[i] < 0 || tokens[i] >= XE_VOCAB)
             xe_fatal("oracle: token id %d out of range [0, %d]", tokens[i], XE_VOCAB - 1);

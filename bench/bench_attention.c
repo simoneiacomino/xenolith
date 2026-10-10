@@ -35,7 +35,7 @@ static void attention_fill(xe_session *s, int max_n) {
     _Float16 *v = xe_kv_layer_ptr(s, layer, 1);
     for (int h = 0; h < XE_GLOBAL_KV_HEADS; h++) {
         for (int p = 0; p < max_n; p++) {
-            size_t base = ((size_t)h * XE_CTX + p) * XE_GLOBAL_HEAD_DIM;
+            size_t base = ((size_t)h * s->engine->context + p) * XE_GLOBAL_HEAD_DIM;
             for (int d = 0; d < XE_GLOBAL_HEAD_DIM; d++) {
                 k[base + d] = attention_value(((size_t)h * max_n + p) * XE_GLOBAL_HEAD_DIM + d, layer + 1);
                 v[base + d] = attention_value(((size_t)h * max_n + p) * XE_GLOBAL_HEAD_DIM + d, layer + 97);
@@ -62,6 +62,7 @@ static double attention_pass(xe_session *s, int n, int sharded) {
 int main(void) {
     xe_engine e;
     memset(&e, 0, sizeof e);
+    e.context = XE_CONTEXT_DEFAULT;
     xe_session *s = xe_session_new(&e);
     int contexts[] = { 1, 8, 16, 24, 32, 64, 128, 512, 1024, 4096, 8192, 32768, 262144 };
     int n_contexts = (int)(sizeof contexts / sizeof contexts[0]);

@@ -1,7 +1,9 @@
 CC=gcc
-CTX?=262144
+ifneq ($(origin CTX),undefined)
+$(error CTX is now a runtime option; use --ctx N when starting xenolith)
+endif
 BUILD_COMMIT=$(shell git rev-parse --short=9 HEAD 2>/dev/null || printf unknown)
-BASE_CFLAGS=-O3 -march=native -std=c11 -Wall -Wextra -pthread -DXE_CTX=$(CTX)
+BASE_CFLAGS=-O3 -march=native -std=c11 -Wall -Wextra -pthread
 NUMERIC_SOURCE_HASH=$(shell sha256sum xenolith.c xenolith.cl | sha256sum | cut -d' ' -f1)
 NUMERIC_CFLAGS_HASH=$(shell printf '%s' '$(BASE_CFLAGS)' | sha256sum | cut -d' ' -f1)
 CFLAGS=$(BASE_CFLAGS) -DXE_BUILD_COMMIT='"$(BUILD_COMMIT)"' \
@@ -36,12 +38,12 @@ clean:
 		tests/test_kvstore tests/test_conversation \
 		tests/test_conversation_model \
 		tests/test_json tests/test_profile tests/test_inference tests/test_runtime \
-		tests/test_runtime_model tests/test_serve tests/test_serve_model tests/test_gpu_alloc \
+		tests/test_runtime_model tests/test_serve tests/test_serve_model tests/test_gpu_alloc tests/test_cli_context \
 		bench/bench_attention bench/bench_tg bench/bench_b3b bench/bench_b3b_8e \
 		bench/bench_guard bench/compare_pp_tg_xe bench/compare_pp_tg_tokens \
 		bench/bench_b3b.spv bench/bench_b3b_adlp.spv \
 		bench/bench_prefill_gemm bench/bench_prefill_gemm_down \
-		bench/bench_prefill_gemm.spv $(GPU_SPV) $(TEST_TOOLS) .build-ctx .build-ctx.tmp
+		bench/bench_prefill_gemm.spv $(GPU_SPV) $(TEST_TOOLS)
 
 $(GPU_SPV): xenolith.cl
 	# Xe-LP is the SPIR-V feature baseline; native code is compiled at startup.
@@ -72,17 +74,9 @@ ENGINE_TESTS=tests/test_snapshot tests/test_snapshot_model tests/test_kvstore \
 	tests/test_prefill_session_safe tests/test_session_sync
 
 $(ENGINE_TESTS): xenolith_internal.h format.h
-# Track capacity changes for every target that compiles xenolith.c.
-xenolith.o $(ENGINE_TESTS) tests/test_gpu_alloc bench/bench_decode \
-	bench/bench_attention bench/bench_tg bench/bench_b3b bench/bench_b3b_8e: .build-ctx
-
-.build-ctx: FORCE
-	@printf '%s\n' '$(CTX)' > $@.tmp
-	@cmp -s $@.tmp $@ || mv $@.tmp $@
-	@rm -f $@.tmp
-
-FORCE:
-
+tests/test_prefill_session tests/test_prefill_session_drop tests/test_prefill_session_safe \
+    tests/test_snapshot_model tests/test_session_sync tests/test_runtime_model \
+    tests/test_conversation_model tests/test_serve_model: tests/test_context.h
 tests/test_runtime tests/test_runtime_model tests/test_serve: xenolith.h conversation.h kvstore.h profile.h json.h
 tests/test_serve: serve.h
 tests/test_profile: json.h
@@ -98,6 +92,12 @@ tests/certify: tests/certify.c xenolith.o format.o profile.o json.o xenolith.h p
 tests/test_gpu_alloc: tests/test_gpu_alloc.c xenolith.c xenolith.h xenolith_internal.h format.h
 	$(CC) $(CFLAGS) -ffunction-sections -fdata-sections -I. -o $@ $< \
 		-Wl,--gc-sections -lm
+
+tests/test_cli_context: tests/test_cli_context.c xenolith.h xenolith
+	$(CC) $(TEST_CFLAGS) -I. -o $@ $<
+
+check-context: tests/test_cli_context
+	./tests/test_cli_context
 
 tests/test_format: tests/test_format.c format.o format.h
 	$(CC) $(TEST_CFLAGS) -I. -o $@ tests/test_format.c format.o -pthread
@@ -168,7 +168,6 @@ tests/test_prefill_session: tests/test_prefill_session.c xenolith.c xenolith.h f
 tests/test_prefill_session_drop: tests/test_prefill_session.c xenolith.c xenolith.h format.o $(GPU_OBJ)
 	$(CC) $(CFLAGS) -DXE_REPACK_DROP_SOURCE -I. -o $@ tests/test_prefill_session.c format.o $(GPU_OBJ) $(LDLIBS)
 
-tests/test_prefill_session_safe: private override CTX=65536
 tests/test_prefill_session_safe: tests/test_prefill_session.c xenolith.c xenolith.h format.o $(GPU_OBJ)
 	$(CC) $(CFLAGS) -DXE_REPACK_DROP_SOURCE -I. -o $@ tests/test_prefill_session.c format.o $(GPU_OBJ) $(LDLIBS)
 
@@ -243,6 +242,7 @@ check-gpu: $(GPU_TESTS)
 
 check: require-model tests/certify tests/test_model_decode
 	$(MAKE) check-unit
+	$(MAKE) check-context
 	$(MAKE) check-gpu
 	./tests/test_model_decode "$(MODEL)"
 	XENOLITH_MODEL="$(MODEL)" ./tests/certify
@@ -313,6 +313,6 @@ test-tools-clean:
 require-model:
 	@test -f "$(MODEL)" || { printf '%s\n' 'Set MODEL to the path of the Gemma 4 GGUF file.' >&2; exit 2; }
 
-.PHONY: FORCE require-model clean check check-inference check-unit check-gpu check-persistence check-prefill check-all \
+.PHONY: require-model clean check check-inference check-unit check-gpu check-context check-persistence check-prefill check-all \
 	check-kv check-runtime check-serve golden test-tools test-tools-clean \
 	bench-b3b bench-b14 bench-prefill-gemm

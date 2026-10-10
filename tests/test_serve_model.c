@@ -2,6 +2,8 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include "test_context.h"
+#include "../json.h"
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -17,6 +19,7 @@
 #include <unistd.h>
 
 static int failures;
+static char context_arg[16];
 
 #define CHECK(condition) do { \
     if (!(condition)) { \
@@ -197,11 +200,11 @@ static pid_t spawn_server(const char *model, const char *state_dir,
         close(fd);
     }
     if (idle)
-        execl("./xenolith", "xenolith", "serve", model, "--state", state_dir,
+        execl("./xenolith", "xenolith", "serve", model, "--ctx", context_arg, "--state", state_dir,
               "--cache", cache_dir, "--socket", socket_path,
               "--idle-shutdown", idle, (char *)NULL);
     else
-        execl("./xenolith", "xenolith", "serve", model, "--state", state_dir,
+        execl("./xenolith", "xenolith", "serve", model, "--ctx", context_arg, "--state", state_dir,
               "--cache", cache_dir, "--socket", socket_path, (char *)NULL);
     _exit(127);
     return -1;
@@ -219,11 +222,13 @@ static int wait_exit(pid_t pid, int seconds) {
 }
 
 int main(int argc, char **argv) {
+    int context = test_context_capacity(&argc, argv);
     if (argc < 2 || !argv[1][0]) {
-        fprintf(stderr, "usage: %s <model.gguf>\n", argv[0]);
+        fprintf(stderr, "usage: %s <model.gguf> [--ctx N]\n", argv[0]);
         return 2;
     }
     const char *model = argv[1];
+    snprintf(context_arg, sizeof context_arg, "%d", context);
     char root[] = "/tmp/xenolith-test-sm-XXXXXX";
     CHECK(mkdtemp(root) != NULL);
     signal(SIGPIPE, SIG_IGN);
@@ -260,6 +265,9 @@ int main(int argc, char **argv) {
 
     CHECK(client_call(&a, "{\"op\":\"describe\"}\n", line, sizeof line));
     CHECK(strstr(line, "\"protocol\":1") != NULL);
+    char context_field[64];
+    snprintf(context_field, sizeof context_field, "\"context_window\":%d", context);
+    CHECK(strstr(line, context_field) != NULL);
 
     pid_t intruder = spawn_server(model, other_state, cache_dir, other_socket,
                                   NULL, log_path);
@@ -531,8 +539,14 @@ int main(int argc, char **argv) {
     CHECK(strstr(line, "\"event\":\"done\"") != NULL);
     CHECK(strstr(line, "\"stop\":\"aborted\"") != NULL);
     CHECK(strstr(line, "\"marker\":null") != NULL);
-    CHECK(strstr(line, "\"usage\":{\"input\":0,\"cache_read\":0,"
-                       "\"output\":0,\"total\":0}") != NULL);
+    json_value *done = json_parse(line, strlen(line));
+    const json_value *usage = json_member(done, "usage");
+    const char *zero_fields[] = { "input", "cache_read", "output", "total" };
+    for (size_t i = 0; i < sizeof zero_fields / sizeof zero_fields[0]; i++) {
+        const json_value *field = json_member(usage, zero_fields[i]);
+        CHECK(field && field->type == JSON_NUMBER && field->number == 0);
+    }
+    json_free(done);
     CHECK(client_call(&b, "{\"op\":\"history\"}\n", line, sizeof line));
     const char *tail_kind = last_field(line, "\"kind\":\"");
     CHECK(tail_kind != NULL && strncmp(tail_kind, "user", 4) == 0);

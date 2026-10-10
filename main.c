@@ -19,6 +19,7 @@
 static void usage(void) {
     fprintf(stderr,
 "Usage: xenolith <command> <model.gguf> [options]\n"
+"  --ctx N  context capacity for inference commands (64..262144; default 262144)\n"
 "  info     print model metadata\n"
 "  tokenize -p \"text\" | -f file [--pieces]\n"
 "  run      -p \"prompt\" [-n max] [--temp F] [--top-k N] [--top-p F] [--seed S]\n"
@@ -67,9 +68,37 @@ static void cli_unlock(void) {
     cli_lock_fd = -1;
 }
 
-static int cmd_info(const char *model) {
+/* Each command parses its own options so option values remain literal. */
+static int cli_context_option(int argc, char **argv, int *index,
+                               int *context, int *seen) {
+    if (strcmp(argv[*index], "--ctx")) return 0;
+    if (*seen || ++*index >= argc) {
+        fprintf(stderr, "xenolith: --ctx requires one capacity and may appear only once\n");
+        exit(1);
+    }
+    const char *value = argv[*index];
+    int digits = value[0] != '\0';
+    for (const char *p = value; *p; p++)
+        if (*p < '0' || *p > '9') digits = 0;
+    errno = 0;
+    char *end;
+    long n = strtol(value, &end, 10);
+    if (!digits || errno || *end || n < XE_CONTEXT_MIN || n > XE_CONTEXT_MAX) {
+        fprintf(stderr, "xenolith: --ctx must be an integer in [%d, %d]\n",
+                XE_CONTEXT_MIN, XE_CONTEXT_MAX);
+        exit(1);
+    }
+    *context = (int)n;
+    *seen = 1;
+    return 1;
+}
+
+static int cmd_info(const char *model, int argc, char **argv) {
+    int context = XE_CONTEXT_DEFAULT, context_seen = 0;
+    for (int i = 3; i < argc; i++)
+        if (!cli_context_option(argc, argv, &i, &context, &context_seen)) usage();
     cli_lock(NULL);
-    xe_engine *e = xe_engine_open(model);
+    xe_engine *e = xe_engine_open_with_context(model, context);
     xe_engine_info(e, stdout);
     xe_engine_close(e);
     cli_unlock();
@@ -206,6 +235,7 @@ static int cmd_tokenize(const char *model, int argc, char **argv) {
 }
 
 static int cmd_run(const char *model, int argc, char **argv) {
+    int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     const char *prompt = NULL;
     int max_n = 512;
     float temp = 1.0f;
@@ -214,6 +244,7 @@ static int cmd_run(const char *model, int argc, char **argv) {
     uint64_t seed = (uint64_t)time(NULL);
 
     for (int i = 3; i < argc; i++) {
+        if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
         if (!strcmp(argv[i], "-p")) {
             if (++i >= argc) usage();
             prompt = argv[i];
@@ -261,7 +292,7 @@ static int cmd_run(const char *model, int argc, char **argv) {
 
     cli_lock(NULL);
 
-    xe_engine *e = xe_engine_open(model);
+    xe_engine *e = xe_engine_open_with_context(model, context);
     int ctx = xe_context_size(e);
     if (top_k > ctx) {
         fprintf(stderr, "xenolith: run: top-k %d out of range [0, %d]\n", top_k, ctx);
@@ -350,6 +381,7 @@ static void chat_print_stats(int n_gen, double avg_tps) {
 }
 
 static int cmd_chat(const char *model, int argc, char **argv) {
+    int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     int max_n = 512;
     float temp = 1.0f;
     int top_k = 64;
@@ -357,6 +389,7 @@ static int cmd_chat(const char *model, int argc, char **argv) {
     uint64_t seed = (uint64_t)time(NULL);
 
     for (int i = 3; i < argc; i++) {
+        if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
         if (!strcmp(argv[i], "-n")) {
             if (++i >= argc) usage();
             errno = 0;
@@ -399,7 +432,7 @@ static int cmd_chat(const char *model, int argc, char **argv) {
 
     cli_lock(NULL);
 
-    xe_engine *e = xe_engine_open(model);
+    xe_engine *e = xe_engine_open_with_context(model, context);
     int ctx = xe_context_size(e);
     if (top_k > ctx) {
         fprintf(stderr, "xenolith: chat: top-k %d out of range [0, %d]\n", top_k, ctx);
@@ -525,12 +558,14 @@ static int cmd_chat(const char *model, int argc, char **argv) {
 }
 
 static int cmd_oracle(const char *model, int argc, char **argv) {
+    int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     const char *ids = NULL;
     const char *dump_path = NULL;
     const char *layers_dir = NULL;
     int q8_mode = 0;
 
     for (int i = 3; i < argc; i++) {
+        if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
         if (!strcmp(argv[i], "-t")) {
             if (++i >= argc) usage();
             ids = argv[i];
@@ -580,7 +615,7 @@ static int cmd_oracle(const char *model, int argc, char **argv) {
 
     cli_lock(NULL);
 
-    xe_engine *e = xe_engine_open(model);
+    xe_engine *e = xe_engine_open_with_context(model, context);
     xe_oracle(e, toks, n, dump_path, layers_dir, q8_mode, stdout);
     xe_engine_close(e);
     cli_unlock();
@@ -820,8 +855,10 @@ static void bench_print_md(const char *model, const xe_engine *e,
 }
 
 static int cmd_bench(const char *model, int argc, char **argv) {
+    int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     bench_params params = { 512, 128, 0, 5, 0, 1, 0, 0 };
     for (int i = 3; i < argc; i++) {
+        if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
         if (!strcmp(argv[i], "-p") || !strcmp(argv[i], "--n-prompt")) {
             if (++i >= argc) usage();
             params.n_prompt = bench_int(argv[i], 0, INT_MAX);
@@ -857,7 +894,7 @@ static int cmd_bench(const char *model, int argc, char **argv) {
 
     cli_lock(NULL);
 
-    xe_engine *e = xe_engine_open(model);
+    xe_engine *e = xe_engine_open_with_context(model, context);
     int ctx = xe_context_size(e);
     if (params.n_depth > ctx || params.n_prompt > ctx - params.n_depth ||
         params.n_gen > ctx - params.n_depth) {
@@ -897,9 +934,11 @@ static int cmd_bench(const char *model, int argc, char **argv) {
 }
 
 static int cmd_wire(const char *model, int argc, char **argv) {
+    int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     const char *state_option = NULL;
     const char *cache_dir = NULL;
     for (int i = 3; i < argc; i++) {
+        if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
         if (!strcmp(argv[i], "--state")) {
             if (++i >= argc) usage();
             state_option = argv[i];
@@ -914,7 +953,7 @@ static int cmd_wire(const char *model, int argc, char **argv) {
     cli_state_dir(state_option, state_dir, sizeof state_dir);
     cli_lock(NULL);
 
-    xe_engine *e = xe_engine_open(model);
+    xe_engine *e = xe_engine_open_with_context(model, context);
     int status = serve_stdio(e, state_dir, cache_dir);
     xe_engine_close(e);
     cli_unlock();
@@ -922,11 +961,13 @@ static int cmd_wire(const char *model, int argc, char **argv) {
 }
 
 static int cmd_serve(const char *model, int argc, char **argv) {
+    int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     const char *state_option = NULL;
     const char *cache_dir = NULL;
     const char *socket_option = NULL;
     double idle_minutes = 0.0;
     for (int i = 3; i < argc; i++) {
+        if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
         if (!strcmp(argv[i], "--state")) {
             if (++i >= argc) usage();
             state_option = argv[i];
@@ -957,7 +998,7 @@ static int cmd_serve(const char *model, int argc, char **argv) {
     }
     cli_lock(socket_path);
 
-    xe_engine *e = xe_engine_open(model);
+    xe_engine *e = xe_engine_open_with_context(model, context);
     int status = serve_run(e, state_dir, cache_dir, socket_path,
                            idle_minutes);
     xe_engine_close(e);
@@ -971,7 +1012,7 @@ int main(int argc, char **argv) {
     if (argc < 3) usage();
     const char *model = argv[2];
 
-    if (!strcmp(cmd, "info")) return cmd_info(model);
+    if (!strcmp(cmd, "info")) return cmd_info(model, argc, argv);
     if (!strcmp(cmd, "tokenize")) return cmd_tokenize(model, argc, argv);
     if (!strcmp(cmd, "run")) return cmd_run(model, argc, argv);
     if (!strcmp(cmd, "chat")) return cmd_chat(model, argc, argv);
