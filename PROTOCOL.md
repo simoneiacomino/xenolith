@@ -381,6 +381,17 @@ the terminal output. With a regular file as stdin, requests are processed
 sequentially and EOF is not read during generation. Do not use EOF as a substitute
 for the explicit cancel/terminal exchange.
 
+`open` rejects a conversation whose current token projection exceeds the engine
+capacity with `context_length_exceeded`, `tokens` and `context`. The stored record
+and the connection's previous session binding are unchanged. No inference or
+snapshot restoration is attempted. Clients should show the token count and limit
+and suggest restarting the service with a sufficient context capacity. This is
+not a missing session: clients must not silently recreate or truncate it.
+
+A record exactly at capacity can be opened, but another turn may not fit:
+`append` and `generate` also account for framing and output space and reject
+overflowing prompts with the same structured error.
+
 ## Errors and compatibility
 
 Before streaming, errors are replies such as:

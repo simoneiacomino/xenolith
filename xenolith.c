@@ -4135,7 +4135,7 @@ static uint32_t xe_escape(const char *text, size_t n, char *dst) {
     return o;
 }
 
-int xe_encode_text(const xe_engine *e, const char *text, int32_t *out, int cap) {
+int xe_encode_text_bounded(const xe_engine *e, const char *text, int32_t *out, int cap) {
     if (!e || !text || !out) xe_fatal("encode_text: missing input");
     if (cap < 0) xe_fatal("encode_text: negative output capacity %d", cap);
     size_t n = strlen(text);
@@ -4162,10 +4162,15 @@ int xe_encode_text(const xe_engine *e, const char *text, int32_t *out, int cap) 
     }
 
     xe_free(e, buf, XE_MEM_HOST);
-    if (nout > cap) xe_fatal("encode_text: output capacity %d too small (need %d)", cap, nout);
-    memcpy(out, tmp, (size_t)nout * sizeof(*out));
+    if (nout <= cap) memcpy(out, tmp, (size_t)nout * sizeof(*out));
     xe_free(e, tmp, XE_MEM_HOST);
     return nout;
+}
+
+int xe_encode_text(const xe_engine *e, const char *text, int32_t *out, int cap) {
+    int n = xe_encode_text_bounded(e, text, out, cap);
+    if (n > cap) xe_fatal("encode_text: output capacity %d too small (need %d)", cap, n);
+    return n;
 }
 
 static int32_t xe_token_type(const xe_engine *e, int32_t tok) {
@@ -4226,6 +4231,11 @@ int32_t xe_eot_id(const xe_engine *e) {
 int xe_context_size(const xe_engine *e) {
     if (!e) xe_fatal("context_size: missing engine");
     return e->context;
+}
+
+int xe_vocab_size(const xe_engine *e) {
+    if (!e) xe_fatal("vocab_size: missing engine");
+    return (int)e->tok_tokens_count;
 }
 
 uint64_t xe_engine_model_size(const xe_engine *e) {
@@ -5325,6 +5335,11 @@ int xe_session_position(xe_session *s) {
     if (!s) xe_fatal("session_position: missing session");
     xe_require_owner(s->engine);
     return s->n_tokens;
+}
+
+int xe_session_context_size(const xe_session *s) {
+    if (!s) xe_fatal("session_context_size: missing session");
+    return xe_context_size(s->engine);
 }
 
 static int xe_session_swa_can_resume(int current, int resume) {

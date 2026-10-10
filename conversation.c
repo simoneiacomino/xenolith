@@ -2157,7 +2157,7 @@ conversation_status conversation_resume(conversation *c, kvstore *store,
                                         conversation_resume_report *report) {
     if (!c || !session) return CONVERSATION_INVALID_ARGUMENT;
     if (report) memset(report, 0, sizeof *report);
-    if (c->token_count > CONVERSATION_CONTEXT_CAPACITY)
+    if (c->token_count > (uint64_t)xe_session_context_size(session))
         return CONVERSATION_LIMIT;
     if (c->token_count == 0) {
         xe_session_reset(session);

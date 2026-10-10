@@ -292,6 +292,8 @@ typedef struct {
     uint64_t boundary;
 } conversation_resume_report;
 
+/* Returns CONVERSATION_LIMIT without changing session state if the record
+ * exceeds the session's engine capacity. */
 conversation_status conversation_resume(conversation *c, kvstore *store,
                                         xe_session *session,
                                         conversation_resume_report *report);

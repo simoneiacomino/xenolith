@@ -586,13 +586,17 @@ static runtime_status runtime_tools_json(runtime *w, const profile_tool *tools,
     return RUNTIME_OK;
 }
 
-static runtime_status runtime_budget_check(runtime *w, uint64_t total) {
-    if (total + 1 < (uint64_t)w->context) return RUNTIME_OK;
+static runtime_status runtime_context_error(runtime *w, uint64_t total) {
     runtime_status status = runtime_fail(w, RUNTIME_CONTEXT_LENGTH_EXCEEDED,
                                    "prompt does not fit the context window");
     w->error_tokens = total;
     w->error_context = (uint64_t)w->context;
     return status;
+}
+
+static runtime_status runtime_budget_check(runtime *w, uint64_t total) {
+    if (total < (uint64_t)w->context - 1) return RUNTIME_OK;
+    return runtime_context_error(w, total);
 }
 
 static runtime_status runtime_append_system_event(runtime *w, conversation *c,
@@ -672,6 +676,11 @@ static void runtime_checkpoint_now(runtime *w, runtime_checkpoint_report *out) {
     const int32_t *tokens = conversation_tokens(c, &total);
     out->tokens = total;
     if (!total) { out->reason = RUNTIME_CKPT_EMPTY; return; }
+    /* Checkpointing must never sync a projection beyond the engine capacity. */
+    if (total > (uint64_t)w->context) {
+        out->reason = RUNTIME_CKPT_REJECTED;
+        return;
+    }
     int position = xe_session_position(w->session);
     if (position <= 0) { out->reason = RUNTIME_CKPT_EMPTY; return; }
     if ((uint64_t)position > total) { out->reason = RUNTIME_CKPT_KV_DIVERGED; return; }
@@ -801,6 +810,10 @@ runtime_status runtime_session_open(runtime *w, const conversation_id *id,
         return runtime_fail(w, RUNTIME_BUSY, "generation in progress");
     if (w->has_current &&
         memcmp(w->current_id.bytes, id->bytes, 16) == 0) {
+        uint64_t tokens;
+        conversation_tokens(w->current, &tokens);
+        if (tokens > (uint64_t)w->context)
+            return runtime_context_error(w, tokens);
         if (out) runtime_open_report_fill(w, out);
         return RUNTIME_OK;
     }
@@ -818,6 +831,12 @@ runtime_status runtime_session_open(runtime *w, const conversation_id *id,
     if (status != RUNTIME_OK) {
         conversation_close(c);
         return status;
+    }
+    uint64_t tokens;
+    conversation_tokens(c, &tokens);
+    if (tokens > (uint64_t)w->context) {
+        conversation_close(c);
+        return runtime_context_error(w, tokens);
     }
     runtime_park(w, NULL);
     w->current = c;

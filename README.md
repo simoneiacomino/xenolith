@@ -95,19 +95,19 @@ make
 ./xenolith run /path/to/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf -p "Hello" -n 64
 ```
 
-Use `--ctx N` to set the context capacity without rebuilding (default: 262144).
-Any integer from 64 through 262144 is supported, including non-powers of two.
-The capacity includes both prompt and generated tokens:
+Run `./xenolith --help` for commands and options. For client integration, see
+the [protocol](PROTOCOL.md) and the [C API](xenolith.h).
 
-```sh
-./xenolith run /path/to/model.gguf --ctx 50000 -p "Hello" -n 64
-```
+## Testing
 
-The capacity is fixed when the engine opens and shared by its sessions.
-C callers can use `xe_engine_open_with_context(path, capacity)`;
-`xe_engine_open(path)` retains the default. Snapshots require matching context
-capacities. Global KV caches use linear positions, while sliding-window layers
-retain their fixed 1024-token circular caches.
+- `make check-unit check-context`: host and CLI checks, without a GPU or model.
+  Requires Python 3 and a C compiler with AddressSanitizer support.
+- `make check-gpu`: numerical GPU regressions, requiring a supported GPU but no model.
+- `make check-all MODEL=/path/to/model.gguf`: the full suite, including model,
+  persistence, prefill, runtime and server checks; requires a supported GPU and model.
+
+<details>
+<summary>KV regression checks and kernel optimization guidance</summary>
 
 To check KV indexing with a non-power-of-two capacity on a supported GPU:
 
@@ -179,3 +179,5 @@ steps. Depths are 512 and 2048, plus capacity-8 for capacities up to 4104. Selec
 capacity of at least 2056. Dumps can be compared across binaries with identical inputs and
 capacity; successful execution alone does not establish cross-build equality.
 These targeted checks do not run the full snapshot suite or measure throughput.
+
+</details>

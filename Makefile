@@ -28,7 +28,7 @@ runtime.o: runtime.c runtime.h xenolith.h xenolith_internal.h kvstore.h conversa
 serve.o: serve.c serve.h runtime.h xenolith.h kvstore.h conversation.h profile.h json.h
 
 clean:
-	rm -f *.o xenolith tests/certify tests/test_kv tests/test_kv_model tests/test_decode \
+	rm -f *.o xenolith tests/certify tests/test_kv tests/test_kv_model tests/test_decode tests/test_context_limits \
 		tests/test_model_decode tests/test_fixture_decode bench/bench_decode \
 		tests/test_prefill_projection tests/test_prefill_qkv tests/test_prefill_swa \
 		tests/test_prefill_dense tests/test_prefill_layer tests/test_prefill_session \
@@ -63,7 +63,7 @@ LLAMA_LDLIBS=-lllama -lggml -lggml-base
 
 TEST_CFLAGS=-O2 -std=c11 -Wall -Wextra -pthread
 
-UNIT_TESTS=tests/test_inference tests/test_format tests/test_json tests/test_decode tests/test_conversation tests/test_gpu_alloc
+UNIT_TESTS=tests/test_inference tests/test_format tests/test_json tests/test_decode tests/test_conversation tests/test_gpu_alloc tests/test_context_limits
 GPU_TESTS=tests/test_kv tests/test_snapshot tests/test_kvstore tests/test_prefill_session
 PERSISTENCE_TESTS=tests/test_snapshot_model tests/test_conversation_model tests/test_session_sync
 PREFILL_TESTS=tests/test_prefill_projection tests/test_prefill_qkv tests/test_prefill_swa \
@@ -95,6 +95,9 @@ tests/test_gpu_alloc: tests/test_gpu_alloc.c xenolith.c xenolith.h xenolith_inte
 
 tests/test_cli_context: tests/test_cli_context.c xenolith.h xenolith
 	$(CC) $(TEST_CFLAGS) -I. -o $@ $<
+
+tests/test_context_limits: tests/test_context_limits.c main.c xenolith.c xenolith.h xenolith_internal.h runtime.c runtime.h serve.c serve.h profile.o json.o conversation.o kvstore.o format.o $(GPU_OBJ)
+	$(CC) $(CFLAGS) -I. -o $@ $< profile.o json.o conversation.o kvstore.o format.o $(GPU_OBJ) $(LDLIBS)
 
 check-context: tests/test_cli_context
 	./tests/test_cli_context

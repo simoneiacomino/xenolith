@@ -38,6 +38,7 @@
 /tests/dump_layers
 /tests/dump_logits
 /tests/test_cli_context
+/tests/test_context_limits
 /tests/test_conversation
 /tests/test_conversation_model
 /tests/test_decode

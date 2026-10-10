@@ -57,6 +57,8 @@ void xe_engine_close(xe_engine *e);
 void xe_engine_info(const xe_engine *e, FILE *out);
 
 int xe_encode_text(const xe_engine *e, const char *text, int32_t *out, int cap);
+/* Returns the token count; leaves out unchanged when the count exceeds cap. */
+int xe_encode_text_bounded(const xe_engine *e, const char *text, int32_t *out, int cap);
 int xe_detokenize(const xe_engine *e, int32_t tok, char *buf, int cap);
 int32_t xe_token_id(const xe_engine *e, const char *piece);
 const char *xe_token_piece(const xe_engine *e, int32_t tok, int *len);
@@ -64,6 +66,7 @@ int32_t xe_bos_id(const xe_engine *e);
 int32_t xe_eos_id(const xe_engine *e);
 int32_t xe_eot_id(const xe_engine *e);
 int xe_context_size(const xe_engine *e);
+int xe_vocab_size(const xe_engine *e);
 uint64_t xe_engine_model_size(const xe_engine *e);
 int xe_engine_worker_count(const xe_engine *e);
 int xe_engine_worker_cpu(const xe_engine *e, int worker);
@@ -80,6 +83,7 @@ void xe_session_free(xe_session *s);
 void xe_session_reset(xe_session *s);
 void xe_session_rewind(xe_session *s, int position);
 int xe_session_position(xe_session *s);
+int xe_session_context_size(const xe_session *s);
 
 typedef struct {
     int reused;

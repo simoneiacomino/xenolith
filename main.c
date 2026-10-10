@@ -294,12 +294,9 @@ static int cmd_run(const char *model, int argc, char **argv) {
 
     xe_engine *e = xe_engine_open_with_context(model, context);
     int ctx = xe_context_size(e);
-    if (top_k > ctx) {
-        fprintf(stderr, "xenolith: run: top-k %d out of range [0, %d]\n", top_k, ctx);
-        exit(1);
-    }
-    if (strlen(prompt) + 1 > (size_t)ctx) {
-        fprintf(stderr, "xenolith: run: prompt exceeds context capacity\n");
+    int vocab = xe_vocab_size(e);
+    if (top_k > vocab) {
+        fprintf(stderr, "xenolith: run: top-k %d out of range [0, %d]\n", top_k, vocab);
         exit(1);
     }
     int32_t *toks = malloc((size_t)ctx * sizeof(*toks));
@@ -308,7 +305,16 @@ static int cmd_run(const char *model, int argc, char **argv) {
         exit(1);
     }
     toks[0] = xe_bos_id(e);
-    int n = 1 + xe_encode_text(e, prompt, toks + 1, ctx - 1);
+    int encoded = xe_encode_text_bounded(e, prompt, toks + 1, ctx - 1);
+    if (encoded > ctx - 1) {
+        fprintf(stderr, "xenolith: run: prompt has %lld tokens including BOS; context capacity is %d\n",
+                (long long)encoded + 1, ctx);
+        free(toks);
+        xe_engine_close(e);
+        cli_unlock();
+        return 1;
+    }
+    int n = 1 + encoded;
     if (max_n > 0 && n >= ctx) {
         fprintf(stderr, "xenolith: run: prompt leaves no room for generation\n");
         exit(1);
@@ -434,8 +440,9 @@ static int cmd_chat(const char *model, int argc, char **argv) {
 
     xe_engine *e = xe_engine_open_with_context(model, context);
     int ctx = xe_context_size(e);
-    if (top_k > ctx) {
-        fprintf(stderr, "xenolith: chat: top-k %d out of range [0, %d]\n", top_k, ctx);
+    int vocab = xe_vocab_size(e);
+    if (top_k > vocab) {
+        fprintf(stderr, "xenolith: chat: top-k %d out of range [0, %d]\n", top_k, vocab);
         exit(1);
     }
 
