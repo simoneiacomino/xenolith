@@ -26,7 +26,7 @@ runtime.o: runtime.c runtime.h xenolith.h xenolith_internal.h kvstore.h conversa
 serve.o: serve.c serve.h runtime.h xenolith.h kvstore.h conversation.h profile.h json.h
 
 clean:
-	rm -f *.o xenolith tests/certify tests/test_kv tests/test_decode \
+	rm -f *.o xenolith tests/certify tests/test_kv tests/test_kv_model tests/test_decode \
 		tests/test_model_decode tests/test_fixture_decode bench/bench_decode \
 		tests/test_prefill_projection tests/test_prefill_qkv tests/test_prefill_swa \
 		tests/test_prefill_dense tests/test_prefill_layer tests/test_prefill_session \
@@ -67,7 +67,7 @@ PERSISTENCE_TESTS=tests/test_snapshot_model tests/test_conversation_model tests/
 PREFILL_TESTS=tests/test_prefill_projection tests/test_prefill_qkv tests/test_prefill_swa \
 	tests/test_prefill_dense tests/test_prefill_layer tests/test_prefill_session
 ENGINE_TESTS=tests/test_snapshot tests/test_snapshot_model tests/test_kvstore \
-	tests/test_conversation_model tests/test_kv tests/test_decode tests/test_model_decode \
+	tests/test_conversation_model tests/test_kv tests/test_kv_model tests/test_decode tests/test_model_decode \
 	tests/test_fixture_decode $(PREFILL_TESTS) tests/test_prefill_session_drop \
 	tests/test_prefill_session_safe tests/test_session_sync
 
@@ -146,6 +146,9 @@ tests/test_decode: tests/test_decode.c xenolith.c xenolith.h format.o $(GPU_OBJ)
 
 tests/test_model_decode: tests/test_model_decode.c xenolith.c xenolith.h format.o $(GPU_OBJ)
 	$(CC) $(CFLAGS) -I. -o $@ tests/test_model_decode.c format.o $(GPU_OBJ) $(LDLIBS)
+
+tests/test_kv_model: tests/test_kv_model.c xenolith.c xenolith.h format.o $(GPU_OBJ)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_kv_model.c format.o $(GPU_OBJ) $(LDLIBS)
 
 tests/test_prefill_projection: tests/test_prefill_projection.c xenolith.c xenolith.h format.o $(GPU_OBJ)
 	$(CC) $(CFLAGS) -I. -o $@ tests/test_prefill_projection.c format.o $(GPU_OBJ) $(LDLIBS)
@@ -229,10 +232,18 @@ tests/test_fixture_decode: tests/test_fixture_decode.c xenolith.c xenolith.h for
 check-kv: tests/test_kv
 	./tests/test_kv
 
+check-kv-edges: tests/test_kv
+	./tests/test_kv edges
+
+check-kv-load-bounds:
+	CC='$(CC)' python3 tests/check_kv_load_bounds.py
+
+check-kv check-kv-edges check-gpu: check-kv-load-bounds
+
 check-inference: tests/test_inference
 	./tests/test_inference
 
-check-unit: $(UNIT_TESTS)
+check-unit: $(UNIT_TESTS) check-kv-load-bounds
 	@set -e; for test in $(UNIT_TESTS); do ./$$test; done
 
 check-gpu: $(GPU_TESTS)
@@ -314,5 +325,5 @@ require-model:
 	@test -f "$(MODEL)" || { printf '%s\n' 'Set MODEL to the path of the Gemma 4 GGUF file.' >&2; exit 2; }
 
 .PHONY: FORCE require-model clean check check-inference check-unit check-gpu check-persistence check-prefill check-all \
-	check-kv check-runtime check-serve golden test-tools test-tools-clean \
+	check-kv check-kv-edges check-kv-load-bounds check-runtime check-serve golden test-tools test-tools-clean \
 	bench-b3b bench-b14 bench-prefill-gemm

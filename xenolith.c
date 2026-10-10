@@ -66,10 +66,8 @@ size_t xe_test_output_calls;
 #ifndef XE_CTX
 #define XE_CTX XE_MODEL_CTX
 #endif
-/* Global KV commit currently reuses the circular kernel's bit mask.
- * A follow-up must use linear indexing before arbitrary capacities are safe. */
-#if XE_CTX < 64 || XE_CTX > XE_MODEL_CTX || (XE_CTX & (XE_CTX - 1)) != 0
-#error "XE_CTX must be a power of two between 64 and XE_MODEL_CTX"
+#if XE_CTX < 64 || XE_CTX > XE_MODEL_CTX
+#error "XE_CTX must be between 64 and XE_MODEL_CTX"
 #endif
 #define XE_Q_HEADS 16
 #define XE_DENSE_FFN 2112
@@ -1041,7 +1039,7 @@ static void xe_prefill_attention_cow_append(
         xe_engine *e, const float *q, const _Float16 *prefix_k,
         const _Float16 *prefix_v, const _Float16 *tail_k,
         const _Float16 *tail_v, float *output, int rows,
-        int tail_capacity, int query_offset, int split) {
+        int prefix_capacity, int tail_capacity, int query_offset, int split) {
     ze_kernel_handle_t kernel = e->gpu.prefill_attn_online_b8_global_cow;
     xe_gpu_pointer_arg(kernel, 0, q);
     xe_gpu_pointer_arg(kernel, 1, prefix_k);
@@ -1050,7 +1048,7 @@ static void xe_prefill_attention_cow_append(
     xe_gpu_pointer_arg(kernel, 4, tail_v);
     xe_gpu_pointer_arg(kernel, 5, output);
     xe_gpu_int_arg(kernel, 6, rows);
-    xe_gpu_int_arg(kernel, 7, XE_CTX);
+    xe_gpu_int_arg(kernel, 7, prefix_capacity);
     xe_gpu_int_arg(kernel, 8, tail_capacity);
     xe_gpu_int_arg(kernel, 10, XE_Q_HEADS);
     xe_gpu_int_arg(kernel, 11, XE_GLOBAL_KV_HEADS);
@@ -1167,6 +1165,9 @@ static void xe_prefill_linear_commit_append(
         const _Float16 *batch_k, const _Float16 *batch_v,
         int rows, int batch_start, int dimension, int kv_heads,
         int capacity) {
+    if (rows < 1 || batch_start < 0 || batch_start > capacity ||
+        rows > capacity - batch_start)
+        xe_fatal("prefill linear KV commit: batch exceeds capacity %d", capacity);
     size_t bytes = (size_t)rows * dimension * sizeof(*cache_k);
     for (int head = 0; head < kv_heads; head++) {
         _Float16 *target_k = cache_k +
@@ -1993,22 +1994,27 @@ static void xe_prefill_attention_batch_append(
             local_start, dimension, kv_heads, s->cow_capacity);
         xe_prefill_attention_cow_append(
             e, w->q_heads, prefix_k, prefix_v, cache_k, cache_v,
-            w->attention_heads, rows, s->cow_capacity, batch_start,
+            w->attention_heads, rows, capacity, s->cow_capacity, batch_start,
             s->cow_split);
         xe_prefill_attention_project_append(e, layer_index, w, rows);
     } else if (batch_start == 0) {
         xe_prefill_attention_output_append(
             e, layer_index, w, rows, w->k_batch, w->v_batch, rows, 0,
             global ? 0 : XE_SWA_WINDOW);
-        xe_prefill_swa_commit_append(e, cache_k, cache_v, w->k_batch,
-                                     w->v_batch, rows, batch_start,
-                                     dimension, kv_heads, capacity);
+        if (global)
+            xe_prefill_linear_commit_append(e, cache_k, cache_v, w->k_batch,
+                                            w->v_batch, rows, batch_start,
+                                            dimension, kv_heads, capacity);
+        else
+            xe_prefill_swa_commit_append(e, cache_k, cache_v, w->k_batch,
+                                         w->v_batch, rows, batch_start,
+                                         dimension, kv_heads, capacity);
     } else if (global) {
-        xe_prefill_swa_commit_append(e, cache_k, cache_v, w->k_batch,
-                                     w->v_batch, rows, batch_start,
-                                     dimension, kv_heads, capacity);
+        xe_prefill_linear_commit_append(e, cache_k, cache_v, w->k_batch,
+                                        w->v_batch, rows, batch_start,
+                                        dimension, kv_heads, capacity);
         xe_prefill_attention_output_append(
-            e, layer_index, w, rows, cache_k, cache_v, XE_CTX,
+            e, layer_index, w, rows, cache_k, cache_v, capacity,
             batch_start, 0);
     } else {
         int stage_base = batch_start >= XE_SWA_WINDOW - 1

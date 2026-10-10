@@ -732,9 +732,18 @@ __kernel void xe_prefill_attn_online_b8_global_shared(
         __global const uint4 *source = (__global const uint4 *)(
             k + ((size_t)kv_head * n_count + key0) * 512);
         __local uint4 *target = (__local uint4 *)lk;
-        for (int x = lid; x < 512; x += 128) target[x] = source[x];
+        /* Read bounds are required even for rows excluded from the scores.
+         * Global KV allocations do not promise an extra tile of padding. */
+        if (key0 + 8 <= n_count) {
+            for (int x = lid; x < 512; x += 128) target[x] = source[x];
+        } else {
+            /* The final tile may extend past an arbitrary cache capacity. */
+            for (int x = lid; x < 512; x += 128)
+                target[x] = key0 + x / 64 < n_count
+                            ? source[x] : (uint4)(0);
+        }
         barrier(CLK_LOCAL_MEM_FENCE);
-        int keys = clamp(position - key0 + 1, 0, 8);
+        int keys = clamp(maximum_position - key0 + 1, 0, 8);
         float score[8];
         float block_maximum = -INFINITY;
         for (int local_key = 0; local_key < keys; local_key++) {
@@ -869,9 +878,12 @@ __kernel void xe_prefill_attn_online_b8_global_cow(
     float8 acc3 = (float8)(0.0f);
     for (int key0 = 0; key0 <= position; key0 += 8) {
         __local uint4 *target = (__local uint4 *)lk;
-        if (key0 + 7 < split || key0 >= split) {
-            int capacity = key0 < split ? prefix_capacity : tail_capacity;
-            int source_key = key0 < split ? key0 : key0 - split;
+        int capacity = key0 < split ? prefix_capacity : tail_capacity;
+        int source_key = key0 < split ? key0 : key0 - split;
+        /* A tail can end in the middle of a globally aligned tile, even at
+         * power-of-two CTX. Masking scores does not make extra reads safe. */
+        if ((key0 + 7 < split || key0 >= split) &&
+            source_key + 8 <= capacity) {
             __global const half *base = key0 < split ? prefix_k : tail_k;
             __global const uint4 *source = (__global const uint4 *)(
                 base + ((size_t)kv_head * capacity + source_key) * 512);
@@ -879,13 +891,18 @@ __kernel void xe_prefill_attn_online_b8_global_cow(
         } else {
             for (int local_key = 0; local_key < 8; local_key++) {
                 int key = key0 + local_key;
-                int capacity = key < split ? prefix_capacity : tail_capacity;
-                int source_key = key < split ? key : key - split;
-                __global const half *base = key < split ? prefix_k : tail_k;
-                __global const uint4 *source = (__global const uint4 *)(
-                    base + ((size_t)kv_head * capacity + source_key) * 512);
-                for (int x = lid; x < 64; x += 128)
-                    target[local_key * 64 + x] = source[x];
+                if (key <= position) {
+                    int capacity = key < split ? prefix_capacity : tail_capacity;
+                    int source_key = key < split ? key : key - split;
+                    __global const half *base = key < split ? prefix_k : tail_k;
+                    __global const uint4 *source = (__global const uint4 *)(
+                        base + ((size_t)kv_head * capacity + source_key) * 512);
+                    for (int x = lid; x < 64; x += 128)
+                        target[local_key * 64 + x] = source[x];
+                } else {
+                    for (int x = lid; x < 64; x += 128)
+                        target[local_key * 64 + x] = (uint4)(0);
+                }
             }
         }
         barrier(CLK_LOCAL_MEM_FENCE);
