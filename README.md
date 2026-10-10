@@ -63,7 +63,7 @@ Tested configurations:
 |---|---|---|
 | `8086:a7a0` | Core i7-13700H / Iris Xe, 32 GB RAM | Maintainer's HP Envy 17; [benchmark results](bench/compare_pp_tg.md) |
 | `8086:7d51` | Core Ultra 7 255H / Arc 140T | [aziis98's report in PR #2](https://github.com/simoneiacomino/xenolith/pull/2) |
-| `8086:64a0` | Core Ultra 7 268V / Arc 140V, 32 GB RAM | Local inference test on an Intel-provided Lunar Lake Client Platform; Windows 11, Ubuntu 24.04 under WSL2; short generation with relaxed allocation limits and a 65,536-token context |
+| `8086:64a0` | Core Ultra 7 268V / Arc 140V, 32 GB RAM | [raffaeleedidonna's report in PR #6](https://github.com/simoneiacomino/xenolith/pull/6); Windows 11, Ubuntu 24.04 under WSL2 |
 
 If inference works on an untested device, please [open an issue](https://github.com/simoneiacomino/xenolith/issues) or submit a PR with your results so its ID can be marked tested in both the code and this table. If it fails, please open an issue describing the problem. Include the GPU device ID, processor, RAM, OS (including WSL if applicable), driver/runtime versions, Xenolith commit, model, command and relevant output. Device detection alone is not an inference test.
 

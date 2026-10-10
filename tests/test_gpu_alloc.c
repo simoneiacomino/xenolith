@@ -40,10 +40,20 @@ ze_result_t ZE_APICALL test_zeMemAllocShared(
     allocated_size = size;
     allocated_stype = 0;
     if (dd->pNext) {
-        const ze_relaxed_allocation_limits_exp_desc_t *relaxed = dd->pNext;
-        allocated_stype = relaxed->stype;
-        assert(relaxed->pNext == NULL);
-        assert(relaxed->flags == ZE_RELAXED_ALLOCATION_LIMITS_EXP_FLAG_MAX_SIZE);
+        memcpy(&allocated_stype, dd->pNext, sizeof allocated_stype);
+        if (allocated_stype == ZE_STRUCTURE_TYPE_RELAXED_ALLOCATION_LIMITS_EXP_DESC) {
+            const ze_relaxed_allocation_limits_exp_desc_t *relaxed = dd->pNext;
+            assert(relaxed->pNext == NULL);
+            assert(relaxed->flags == ZE_RELAXED_ALLOCATION_LIMITS_EXP_FLAG_MAX_SIZE);
+#ifdef ZE_RELAXED_ALLOCATION_LIMITS_EXT_NAME
+        } else if (allocated_stype == ZE_STRUCTURE_TYPE_RELAXED_ALLOCATION_LIMITS_EXT_DESC) {
+            const ze_relaxed_allocation_limits_ext_desc_t *relaxed = dd->pNext;
+            assert(relaxed->pNext == NULL);
+            assert(relaxed->flags == ZE_RELAXED_ALLOCATION_LIMITS_EXT_FLAG_MAX_SIZE);
+#endif
+        } else {
+            assert(0 && "unexpected allocation extension");
+        }
     }
     if (size > limit && !dd->pNext) return ZE_RESULT_ERROR_UNSUPPORTED_SIZE;
     if (allocation_result != ZE_RESULT_SUCCESS) return allocation_result;
@@ -109,6 +119,8 @@ int main(void) {
     extensions[0].version = 0;
     assert(xe_gpu_get_relaxed_limits(driver) == XE_RELAXED_NONE);
 #ifdef ZE_RELAXED_ALLOCATION_LIMITS_EXT_NAME
+    extension(0, ZE_RELAXED_ALLOCATION_LIMITS_EXT_NAME);
+    assert(xe_gpu_get_relaxed_limits(driver) == XE_RELAXED_EXT);
     extension_count = 2;
     extension(0, ZE_RELAXED_ALLOCATION_LIMITS_EXP_NAME);
     extension(1, ZE_RELAXED_ALLOCATION_LIMITS_EXT_NAME);
@@ -116,6 +128,8 @@ int main(void) {
     extension(0, ZE_RELAXED_ALLOCATION_LIMITS_EXT_NAME);
     extension(1, ZE_RELAXED_ALLOCATION_LIMITS_EXP_NAME);
     assert(xe_gpu_get_relaxed_limits(driver) == XE_RELAXED_EXT);
+    extensions[0].version = 0;
+    assert(xe_gpu_get_relaxed_limits(driver) == XE_RELAXED_EXP);
 #endif
     xe_engine e = {0};
     e.gpu.context = (ze_context_handle_t)(uintptr_t)1;
@@ -138,7 +152,10 @@ int main(void) {
     failure(&e, cache, "driver does not support relaxed allocation limits");
     e.gpu.relaxed_limits = XE_RELAXED_EXP;
     allocation_result = ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY;
-    failure(&e, cache, "0x70000003 allocating 2684354560 bytes");
+    failure(&e, cache, "0x70000003 allocating 2684354560 bytes "
+            "(device limit 1073741824, relaxed limits enabled)");
+    failure(&e, 100 * 1024 * 1024, "0x70000003 allocating 104857600 bytes "
+            "(device limit 1073741824, relaxed limits disabled)");
     puts("GPU allocation limits: PASS");
     return 0;
 }

@@ -14,6 +14,8 @@
 
 *.o
 *.spv
+/.build-ctx
+/.build-ctx.tmp
 /tests/.golden.*/
 /bench/bench_attention
 /bench/bench_b3b

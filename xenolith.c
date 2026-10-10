@@ -66,8 +66,10 @@ size_t xe_test_output_calls;
 #ifndef XE_CTX
 #define XE_CTX XE_MODEL_CTX
 #endif
-#if XE_CTX <= 0 || XE_CTX > XE_MODEL_CTX
-#error "XE_CTX must be between 1 and XE_MODEL_CTX"
+/* Global KV commit currently reuses the circular kernel's bit mask.
+ * A follow-up must use linear indexing before arbitrary capacities are safe. */
+#if XE_CTX < 64 || XE_CTX > XE_MODEL_CTX || (XE_CTX & (XE_CTX - 1)) != 0
+#error "XE_CTX must be a power of two between 64 and XE_MODEL_CTX"
 #endif
 #define XE_Q_HEADS 16
 #define XE_DENSE_FFN 2112
@@ -450,7 +452,7 @@ static xe_gpu_status xe_gpu_classify(uint32_t id) {
     switch (id) {
         case 0xa7a0: /* Maintainer's Core i7-13700H. */
         case 0x7d51: /* Core Ultra 7 255H, reported by aziis98 in PR #2. */
-        case 0x64a0: /* Core Ultra 7 268V; WSL, relaxed limits, 64k context. */
+        case 0x64a0: /* Core Ultra 7 268V; Raffaele's WSL report in PR #6, 64k capacity. */
             return XE_GPU_TESTED;
         /* Tiger Lake. */
         case 0x9a40: case 0x9a49: case 0x9a59: case 0x9a60:
