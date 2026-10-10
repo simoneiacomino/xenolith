@@ -94,3 +94,16 @@ Get Unsloth's [Gemma 4 26B-A4B IT QAT UD-Q4_K_XL GGUF](https://huggingface.co/un
 make
 ./xenolith run /path/to/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf -p "Hello" -n 64
 ```
+
+The context capacity is selected at build time with `make CTX=50000` (default:
+262144). Any integer from 64 through 262144 is supported; it need not be a power
+of two. Global KV caches use linear token positions, while sliding-window layers
+retain their fixed 1024-token circular caches. Capacity changes rebuild the
+affected targets.
+
+To check KV indexing with a non-power-of-two capacity on a supported GPU:
+
+```sh
+make CTX=4097 check-kv tests/test_prefill_session
+./tests/test_prefill_session /path/to/model.gguf kv-indexing
+```

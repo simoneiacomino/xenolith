@@ -218,6 +218,8 @@ static int test_shared_allocation(xe_engine *e, const void *p) {
            properties.type == ZE_MEMORY_TYPE_SHARED && device == e->gpu.device;
 }
 
+static int test_prefill_global_kv(xe_engine *e);
+
 static int test_session_slabs(void) {
     xe_engine e;
     memset(&e, 0, sizeof e);
@@ -300,6 +302,7 @@ static int test_session_slabs(void) {
     xe_free(NULL, swa_k, XE_MEM_HOST);
     ok = ok && test_scheduler(s);
     ok = ok && test_workspace_regions(s);
+    ok &= test_prefill_global_kv(&e);
     xe_session_free(s);
     xe_worker_pool_destroy(&e);
     cpu_set_t restored_affinity;
@@ -364,12 +367,131 @@ static int test_attention_case(const char *name, int n_kv_heads, int head_dim,
     return ok;
 }
 
+/* Exercise runtime capacity arguments, including a partial final GPU tile. */
+static int test_prefill_global_case(xe_engine *e, int capacity, int split) {
+    const int heads = XE_GLOBAL_KV_HEADS, dimension = XE_GLOBAL_HEAD_DIM;
+    const int batch_rows = 32, queries = 3;
+    const size_t guard = 64;
+    size_t elements = (size_t)heads * capacity * dimension;
+    size_t q_elements = (size_t)XE_Q_HEADS * queries * dimension;
+    _Float16 *cache[2], *batch[2], *tail[2];
+    float *reference_cache[2];
+    int tail_capacity = capacity - split;
+    for (int value = 0; value < 2; value++) {
+        cache[value] = xe_alloc(e, (elements + guard) * sizeof(_Float16), XE_MEM_SHARED);
+        batch[value] = xe_alloc(e, (size_t)heads * batch_rows * dimension * sizeof(_Float16), XE_MEM_SHARED);
+        tail[value] = xe_alloc(e, (size_t)heads * tail_capacity * dimension * sizeof(_Float16), XE_MEM_SHARED);
+        reference_cache[value] = xe_alloc(NULL, elements * sizeof(float), XE_MEM_HOST);
+        for (size_t i = 0; i < elements + guard; i++) cache[value][i] = (_Float16)7.0f;
+        for (int p = 0; p < capacity; p++)
+            for (int h = 0; h < heads; h++)
+                for (int d = 0; d < dimension; d++)
+                    reference_cache[value][((size_t)p * heads + h) * dimension + d] =
+                        (float)(_Float16)(value ? test_v(p, h, d) : test_k(p, h, d));
+    }
+    int ok = 1;
+    for (int start = 0; start < capacity; start += batch_rows) {
+        int rows = capacity - start;
+        if (rows > batch_rows) rows = batch_rows;
+        for (int value = 0; value < 2; value++)
+            for (int h = 0; h < heads; h++)
+                for (int row = 0; row < rows; row++)
+                    for (int d = 0; d < dimension; d++)
+                        batch[value][((size_t)h * rows + row) * dimension + d] =
+                            (_Float16)(value ? test_v(start + row, h, d) : test_k(start + row, h, d));
+        xe_prefill_linear_commit_append(e, cache[0], cache[1], batch[0], batch[1],
+                                        rows, start, dimension, heads, capacity);
+        xe_ze_check("prefill KV commit test synchronize",
+                    zeCommandListHostSynchronize(e->gpu.commands, UINT64_MAX));
+        /* Check the prefix, the untouched suffix and every head's stride. */
+        for (int value = 0; value < 2; value++)
+            for (int h = 0; h < heads; h++)
+                for (int p = 0; p < capacity; p++)
+                    for (int d = 0; d < dimension; d++) {
+                        _Float16 want = p < start + rows
+                            ? (_Float16)reference_cache[value][((size_t)p * heads + h) * dimension + d]
+                            : (_Float16)7.0f;
+                        if (cache[value][((size_t)h * capacity + p) * dimension + d] != want) ok = 0;
+                    }
+    }
+    for (int value = 0; value < 2; value++) {
+        for (size_t i = elements; i < elements + guard; i++)
+            if (cache[value][i] != (_Float16)7.0f) ok = 0;
+        for (int h = 0; h < heads; h++)
+            memcpy(tail[value] + (size_t)h * tail_capacity * dimension,
+                   cache[value] + ((size_t)h * capacity + split) * dimension,
+                   (size_t)tail_capacity * dimension * sizeof(_Float16));
+    }
+    float *q = xe_alloc(e, q_elements * sizeof(float), XE_MEM_SHARED);
+    float *out = xe_alloc(e, q_elements * sizeof(float), XE_MEM_SHARED);
+    float *reference_q = xe_alloc(NULL, (size_t)XE_Q_HEADS * dimension * sizeof(float), XE_MEM_HOST);
+    float *reference_out = xe_alloc(NULL, (size_t)XE_Q_HEADS * dimension * sizeof(float), XE_MEM_HOST);
+    float *row_out = xe_alloc(NULL, (size_t)XE_Q_HEADS * dimension * sizeof(float), XE_MEM_HOST);
+    float *scores = xe_alloc(NULL, (size_t)capacity * sizeof(float), XE_MEM_HOST);
+    for (int h = 0; h < XE_Q_HEADS; h++)
+        for (int d = 0; d < dimension; d++) {
+            reference_q[(size_t)h * dimension + d] = test_q(h, d);
+            for (int row = 0; row < queries; row++)
+                q[((size_t)h * queries + row) * dimension + d] = test_q(h, d);
+        }
+    double maximum_error = 0.0;
+    for (int cow = 0; cow < 2; cow++) {
+        if (cow)
+            xe_prefill_attention_cow_append(e, q, cache[0], cache[1], tail[0], tail[1],
+                                           out, queries, capacity, tail_capacity,
+                                           capacity - queries, split);
+        else
+            xe_prefill_attention_online_append(e, q, cache[0], cache[1], out,
+                                              queries, capacity, dimension, heads,
+                                              capacity - queries, 0);
+        xe_ze_check("prefill KV attention test synchronize",
+                    zeCommandListHostSynchronize(e->gpu.commands, UINT64_MAX));
+        for (int row = 0; row < queries; row++) {
+            ref_attention(reference_q, reference_cache[0], reference_cache[1],
+                          capacity - queries + row, heads, dimension, 0, scores, reference_out);
+            for (int h = 0; h < XE_Q_HEADS; h++)
+                memcpy(row_out + (size_t)h * dimension,
+                       out + ((size_t)h * queries + row) * dimension,
+                       (size_t)dimension * sizeof(float));
+            double error = test_rel_rms(row_out, reference_out, (size_t)XE_Q_HEADS * dimension);
+            if (!(error < 2e-5)) ok = 0;
+            if (error > maximum_error) maximum_error = error;
+        }
+    }
+    xe_free(NULL, scores, XE_MEM_HOST);
+    xe_free(NULL, row_out, XE_MEM_HOST);
+    xe_free(NULL, reference_out, XE_MEM_HOST);
+    xe_free(NULL, reference_q, XE_MEM_HOST);
+    xe_free(e, out, XE_MEM_SHARED);
+    xe_free(e, q, XE_MEM_SHARED);
+    for (int value = 0; value < 2; value++) {
+        xe_free(NULL, reference_cache[value], XE_MEM_HOST);
+        xe_free(e, tail[value], XE_MEM_SHARED);
+        xe_free(e, batch[value], XE_MEM_SHARED);
+        xe_free(e, cache[value], XE_MEM_SHARED);
+    }
+    printf("kv: prefill capacity %d split %d rel_rms=%.3e %s\n",
+           capacity, split, maximum_error, ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+static int test_prefill_global_kv(xe_engine *e) {
+    int ok = 1;
+    ok &= test_prefill_global_case(e, 64, 8);
+    ok &= test_prefill_global_case(e, 65, 7);
+    ok &= test_prefill_global_case(e, 95, 61);
+    ok &= test_prefill_global_case(e, 129, 8);
+    ok &= test_prefill_global_case(e, 1025, 1000);
+    return ok;
+}
+
 int main(void) {
     int ok = 1;
     ok &= test_raw_append();
     ok &= test_session_slabs();
     ok &= test_owner_enforcement();
     ok &= test_attention_case("global", XE_GLOBAL_KV_HEADS, XE_GLOBAL_HEAD_DIM, 128, 127, 0);
+    ok &= test_attention_case("global-odd", XE_GLOBAL_KV_HEADS, XE_GLOBAL_HEAD_DIM, 129, 128, 0);
     ok &= test_attention_case("swa-1023", XE_SWA_KV_HEADS, XE_SWA_HEAD_DIM, XE_SWA_WINDOW, 1023, XE_SWA_WINDOW);
     ok &= test_attention_case("swa-1024", XE_SWA_KV_HEADS, XE_SWA_HEAD_DIM, XE_SWA_WINDOW, 1024, XE_SWA_WINDOW);
     ok &= test_attention_case("swa-1025", XE_SWA_KV_HEADS, XE_SWA_HEAD_DIM, XE_SWA_WINDOW, 1025, XE_SWA_WINDOW);
