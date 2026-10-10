@@ -46,6 +46,7 @@
 /tests/test_gpu_alloc
 /tests/test_json
 /tests/test_kv
+/tests/test_kv_model
 /tests/test_kvstore
 /tests/test_model_decode
 /tests/test_prefill_dense

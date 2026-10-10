@@ -219,6 +219,7 @@ static int test_shared_allocation(xe_engine *e, const void *p) {
 }
 
 static int test_prefill_global_kv(xe_engine *e);
+static int test_prefill_global_edges(xe_engine *e);
 
 static int test_context_bounds(void) {
     int ok = 1;
@@ -310,6 +311,8 @@ static int test_session_slabs(int context) {
 
     float *swa_k = xe_alloc(NULL, XE_SWA_KV_HEADS * XE_SWA_HEAD_DIM * sizeof(*swa_k), XE_MEM_HOST);
     float *swa_v = xe_alloc(NULL, XE_SWA_KV_HEADS * XE_SWA_HEAD_DIM * sizeof(*swa_v), XE_MEM_HOST);
+    /* The last token also exercises SWA wraparound for contexts above 1024. */
+    const int swa_slot = position & (XE_SWA_WINDOW - 1);
     for (int h = 0; h < XE_SWA_KV_HEADS; h++) {
         for (int d = 0; d < XE_SWA_HEAD_DIM; d++) {
             swa_k[(size_t)h * XE_SWA_HEAD_DIM + d] = test_k(position, h, d);
@@ -321,7 +324,7 @@ static int test_session_slabs(int context) {
     _Float16 *swa_v_layer = xe_kv_layer_ptr(s, 6, 1);
     for (int h = 0; h < XE_SWA_KV_HEADS; h++) {
         for (int d = 0; d < XE_SWA_HEAD_DIM; d++) {
-            size_t i = ((size_t)h * XE_SWA_WINDOW + (position & (XE_SWA_WINDOW - 1))) * XE_SWA_HEAD_DIM + d;
+            size_t i = ((size_t)h * XE_SWA_WINDOW + swa_slot) * XE_SWA_HEAD_DIM + d;
             if (swa_k_layer[i] != (_Float16)test_k(position, h, d)) ok = 0;
             if (swa_v_layer[i] != (_Float16)test_v(position, h, d)) ok = 0;
         }
@@ -361,7 +364,10 @@ static int test_session_slabs(int context) {
     ok &= report.reused == context && report.prefilled == 0 &&
           xe_context_size(&e) == context;
     xe_tokens_free(&prefix);
-    if (context == 4097) ok &= test_prefill_global_kv(&e);
+    if (context == 4097) {
+        ok &= test_prefill_global_kv(&e);
+        ok &= test_prefill_global_edges(&e);
+    }
     xe_session_free(s);
     xe_worker_pool_destroy(&e);
     cpu_set_t restored_affinity;
@@ -534,6 +540,25 @@ static int test_prefill_global_case(xe_engine *e, int capacity, int split) {
     return ok;
 }
 
+/* Small synthetic buffers exercise every capacity/split residue modulo eight.
+ * These numerical checks are not a GPU read-bounds detector: an unused
+ * out-of-range read may leave both the result and write canaries unchanged. */
+static int test_prefill_global_edges(xe_engine *e) {
+    int ok = 1, cases = 0;
+    for (int capacity = 64; capacity < 72; capacity++)
+        for (int split = 8; split < 16; split++) {
+            ok &= test_prefill_global_case(e, capacity, split);
+            cases++;
+        }
+    for (int split = 8; split < 16; split++)
+        for (int tail = 511; tail <= 513; tail++) {
+            ok &= test_prefill_global_case(e, split + tail, split);
+            cases++;
+        }
+    printf("kv: GPU edge matrix %d cases %s\n", cases, ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 static int test_prefill_global_kv(xe_engine *e) {
     int ok = 1;
     ok &= test_prefill_global_case(e, 64, 8);
@@ -544,7 +569,18 @@ static int test_prefill_global_kv(xe_engine *e) {
     return ok;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "edges")) {
+        xe_engine e = {0};
+        xe_gpu_init(&e);
+        int ok = test_prefill_global_edges(&e);
+        xe_gpu_destroy(&e);
+        return ok ? 0 : 1;
+    }
+    if (argc != 1) {
+        fprintf(stderr, "usage: %s [edges]\n", argv[0]);
+        return 2;
+    }
     int ok = 1;
     ok &= test_context_bounds();
     ok &= test_raw_append();

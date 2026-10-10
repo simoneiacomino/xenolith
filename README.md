@@ -102,3 +102,80 @@ The capacity includes both prompt and generated tokens:
 ```sh
 ./xenolith run /path/to/model.gguf --ctx 50000 -p "Hello" -n 64
 ```
+
+The capacity is fixed when the engine opens and shared by its sessions.
+C callers can use `xe_engine_open_with_context(path, capacity)`;
+`xe_engine_open(path)` retains the default. Snapshots require matching context
+capacities. Global KV caches use linear positions, while sliding-window layers
+retain their fixed 1024-token circular caches.
+
+To check KV indexing with a non-power-of-two capacity on a supported GPU:
+
+```sh
+make check-kv tests/test_prefill_session
+./tests/test_prefill_session /path/to/model.gguf kv-indexing --ctx 4097
+```
+
+`make check-kv-edges` runs only the synthetic GPU edge matrix, without
+loading a model or allocating a full model session. It tests all 64 pairs of
+capacity 64–71 and COW split 8–15, plus 24 split/tail combinations around
+511/512/513 tail rows. Each case checks KV commits and ordinary/COW attention
+against a CPU reference. `check-kv` and `check-gpu` also include this matrix.
+The tail sizes here are synthetic kernel inputs; session tail growth and
+promotion need separate integration tests.
+
+When optimizing global attention kernels, preserve the bounds of the K loads
+as well as the causal mask. Unused rows must not be read outside the buffers.
+Run the edge matrix and `check-kv` for each candidate. The latter checks
+session capacities 64, 65, 129, 4097, 50000, 65536 and 262144 in one build,
+covering session indexing and circular wraparound. Retain the CPU
+reference and the edge inputs when comparing optimization candidates.
+
+The GPU matrix is a numerical regression test, not a memory sanitizer: discarded
+out-of-range reads can leave logits and write canaries unchanged. Host ASan
+does not instrument GPU execution.
+
+`make check-kv-load-bounds` adds a separate host check (Python 3 and a C compiler
+with AddressSanitizer required), also included in `check-unit`. It extracts the
+K-load blocks from the current OpenCL source, translates the address-space and
+zero-vector syntax to C, and executes the actual load loops on exact-size host
+buffers. Volatile destinations keep even unused loads observable. Its 152 cases
+cover the GPU matrix plus short tails of 1–8 rows. It also requires ASan to
+detect out-of-bounds reads in three temporary mutations: removed ordinary
+tile bound, removed COW tile bound, and removed COW fallback row bound.
+Production sources are never mutated by the check.
+
+This checks the extracted load footprint; it does not emulate GPU scheduling,
+barriers, subgroup operations or compiler transformations. Unsupported refactors
+(including K-pointer uses outside the extracted block) fail and require review
+of the harness. Continue to run the numerical GPU matrix on the target device.
+
+For automated optimization, keep the reference tests and acceptance criteria
+outside the candidate's editable scope. A trusted copy of this script accepts
+`--kernel /path/to/candidate/xenolith.cl` and prints the tested source hash.
+Require these host checks and the target GPU checks before accepting a faster
+candidate. Changes to the tests or their tolerances need a separate review;
+test failure must not be converted into an accepted benchmark-only result.
+
+For a targeted model integration check of actual COW tail growth:
+
+```sh
+make tests/test_kv_model
+./tests/test_kv_model /path/to/model.gguf cow-growth 512 --ctx 4097
+./tests/test_kv_model /path/to/model.gguf cow-growth 513 --ctx 4097
+```
+
+These cases grow a live shadow through tail sizes 511/512/513 and
+1023/1024/1025, verify exact preservation of existing global KV rows across
+reallocations, compare logits to an ordinary session using the same GPU chunks,
+promote the shadow and compare eight subsequent CPU decode steps. They also
+exercise a source that diverged after opening the shadow and SWA wraparound.
+Logits must have relative RMS error below `1e-5`, matching the existing COW
+test, and the same top token. No nonfinite values are accepted.
+
+`./tests/test_kv_model /path/to/model.gguf decode-dump /existing/directory --ctx 4097`
+writes full float32 logits after prefill and each of eight fixed-token decode
+steps. Depths are 512 and 2048, plus capacity-8 for capacities up to 4104. Select a
+capacity of at least 2056. Dumps can be compared across binaries with identical inputs and
+capacity; successful execution alone does not establish cross-build equality.
+These targeted checks do not run the full snapshot suite or measure throughput.
