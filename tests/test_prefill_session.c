@@ -3,6 +3,7 @@
 #define XE_TEST_PREFILL_TILE
 static int xe_test_prefill_tile_rows;
 #include "../xenolith.c"
+#include "test_context.h"
 
 static double session_now(void) {
     struct timespec time;
@@ -154,7 +155,7 @@ static void session_kv_copy(xe_session *s, int rows, _Float16 *k,
         int global = XE_IS_GLOBAL(layer);
         int dimension = global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM;
         int heads = global ? XE_GLOBAL_KV_HEADS : XE_SWA_KV_HEADS;
-        int capacity = global ? XE_CTX : XE_SWA_WINDOW;
+        int capacity = global ? s->engine->context : XE_SWA_WINDOW;
         const _Float16 *source_k = xe_kv_layer_ptr(s, layer, 0);
         const _Float16 *source_v = xe_kv_layer_ptr(s, layer, 1);
         for (int head = 0; head < heads; head++) {
@@ -500,14 +501,14 @@ static int session_route_reset_test(void) {
 }
 
 /* Check the actual batch routing without depending on CPU/GPU numeric drift. */
-static int session_kv_indexing_test(const char *model) {
-    xe_engine *e = xe_engine_open(model);
+static int session_kv_indexing_test(const char *model, int context) {
+    xe_engine *e = xe_engine_open_with_context(model, context);
     xe_session *s = xe_session_new(e);
     xe_prefill_workspace w;
     xe_prefill_workspace_layout(&w, s->prefill_workspace);
     const int layer = 5;
     const int heads = XE_GLOBAL_KV_HEADS, dimension = XE_GLOBAL_HEAD_DIM;
-    const size_t elements = (size_t)heads * XE_CTX * dimension;
+    const size_t elements = (size_t)heads * e->context * dimension;
     _Float16 *cache[2] = { xe_kv_layer_ptr(s, layer, 0), xe_kv_layer_ptr(s, layer, 1) };
     _Float16 *expected[2];
     for (int value = 0; value < 2; value++) {
@@ -515,7 +516,7 @@ static int session_kv_indexing_test(const char *model) {
         for (size_t i = 0; i < elements; i++)
             cache[value][i] = expected[value][i] = (_Float16)7.0f;
     }
-    const int starts[] = { 0, 32, XE_CTX - 31 };
+    const int starts[] = { 0, 32, e->context - 31 };
     const int counts[] = { 32, 32, 31 };
     int ok = 1;
     for (int batch = 0; batch < 3; batch++) {
@@ -532,14 +533,14 @@ static int session_kv_indexing_test(const char *model) {
         const _Float16 *source[2] = { w.k_batch, w.v_batch };
         for (int value = 0; value < 2; value++) {
             for (int head = 0; head < heads; head++)
-                memcpy(expected[value] + ((size_t)head * XE_CTX + start) * dimension,
+                memcpy(expected[value] + ((size_t)head * e->context + start) * dimension,
                        source[value] + (size_t)head * rows * dimension,
                        (size_t)rows * dimension * sizeof(_Float16));
             batch_ok &= memcmp(cache[value], expected[value], elements * sizeof(_Float16)) == 0;
         }
         ok &= batch_ok;
         printf("prefill-kv-indexing: capacity %d start %d M%d %s\n",
-               XE_CTX, start, rows, batch_ok ? "PASS" : "FAIL");
+               e->context, start, rows, batch_ok ? "PASS" : "FAIL");
     }
     for (int value = 0; value < 2; value++) xe_free(NULL, expected[value], XE_MEM_HOST);
     xe_session_free(s);
@@ -548,17 +549,18 @@ static int session_kv_indexing_test(const char *model) {
 }
 
 int main(int argc, char **argv) {
+    int context = test_context_capacity(&argc, argv);
     if (argc == 2 && !strcmp(argv[1], "route-reset"))
         return session_route_reset_test();
     if (argc < 2 || !argv[1][0]) {
         fprintf(stderr, "usage: %s <model.gguf> [rows [batch_start [mode-or-ids [args...]]]]\n", argv[0]);
         fprintf(stderr, "       %s route-reset\n", argv[0]);
-        fprintf(stderr, "       %s <model.gguf> kv-indexing\n", argv[0]);
+        fprintf(stderr, "       %s <model.gguf> kv-indexing [--ctx N]\n", argv[0]);
         return 2;
     }
     const char *model = argv[1];
     if (argc == 3 && !strcmp(argv[2], "kv-indexing"))
-        return session_kv_indexing_test(model);
+        return session_kv_indexing_test(model, context);
     int rows = argc > 2 ? (int)strtol(argv[2], NULL, 10) : 32;
     int batch_start = argc > 3 ? (int)strtol(argv[3], NULL, 10) : 0;
     int split_mode = argc > 4
@@ -570,10 +572,11 @@ int main(int argc, char **argv) {
     int hybrid_mode = argc > 4 && !strcmp(argv[4], "hybrid");
     int cpu_tail = argc > 5 && !split_mode && !cow_mode
                    ? (int)strtol(argv[5], NULL, 10) : 0;
-    if (rows < 1 || rows > (cow_mode ? XE_CTX : 512))
+    if (rows < 1 || rows > (cow_mode ? context : 512))
         xe_fatal("prefill session test row count out of range");
+    int limit = cow_mode || context < 1024 ? context : 1024;
     if (batch_start < 0 || cpu_tail < 0
-        || batch_start + rows + cpu_tail > (cow_mode ? XE_CTX : 1024))
+        || batch_start + rows + cpu_tail > limit)
         xe_fatal("prefill session batch start out of range");
     int total = batch_start + rows + cpu_tail;
     int32_t *tokens = xe_alloc(
@@ -584,7 +587,7 @@ int main(int argc, char **argv) {
              && strcmp(argv[4], "crossover") && !split_mode && !cow_mode)
         session_tokens_read(argv[4], tokens, total);
     else for (int row = 0; row < total; row++) tokens[row] = 2 + row;
-    xe_engine *e = xe_engine_open(model);
+    xe_engine *e = xe_engine_open_with_context(model, context);
     if (argc > 4 && !strcmp(argv[4], "bench")) {
         int rounds = argc > 5 ? (int)strtol(argv[5], NULL, 10) : 5;
         int result = session_tile_bench(e, tokens, rows, rounds);

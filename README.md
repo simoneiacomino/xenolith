@@ -95,20 +95,28 @@ make
 ./xenolith run /path/to/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf -p "Hello" -n 64
 ```
 
-The context capacity is selected at build time with `make CTX=50000` (default:
-262144). Any integer from 64 through 262144 is supported; it need not be a power
-of two. Global KV caches use linear token positions, while sliding-window layers
-retain their fixed 1024-token circular caches. Capacity changes rebuild the
-affected targets.
+Use `--ctx N` to set the context capacity without rebuilding (default: 262144).
+Any integer from 64 through 262144 is supported, including non-powers of two.
+The capacity includes both prompt and generated tokens:
+
+```sh
+./xenolith run /path/to/model.gguf --ctx 50000 -p "Hello" -n 64
+```
+
+The capacity is fixed when the engine opens and shared by its sessions.
+C callers can use `xe_engine_open_with_context(path, capacity)`;
+`xe_engine_open(path)` retains the default. Snapshots require matching context
+capacities. Global KV caches use linear positions, while sliding-window layers
+retain their fixed 1024-token circular caches.
 
 To check KV indexing with a non-power-of-two capacity on a supported GPU:
 
 ```sh
-make CTX=4097 check-kv tests/test_prefill_session
-./tests/test_prefill_session /path/to/model.gguf kv-indexing
+make check-kv tests/test_prefill_session
+./tests/test_prefill_session /path/to/model.gguf kv-indexing --ctx 4097
 ```
 
-`make CTX=64 check-kv-edges` runs only the synthetic GPU edge matrix, without
+`make check-kv-edges` runs only the synthetic GPU edge matrix, without
 loading a model or allocating a full model session. It tests all 64 pairs of
 capacity 64–71 and COW split 8–15, plus 24 split/tail combinations around
 511/512/513 tail rows. Each case checks KV commits and ordinary/COW attention
@@ -118,9 +126,9 @@ promotion need separate integration tests.
 
 When optimizing global attention kernels, preserve the bounds of the K loads
 as well as the causal mask. Unused rows must not be read outside the buffers.
-Run the edge matrix for each candidate and run `check-kv` with both a small
-capacity (64 or 65) and a capacity above the SWA window (such as 4097), so that
-session indexing and circular wraparound remain covered. Retain the CPU
+Run the edge matrix and `check-kv` for each candidate. The latter checks
+session capacities 64, 65, 129, 4097, 50000, 65536 and 262144 in one build,
+covering session indexing and circular wraparound. Retain the CPU
 reference and the edge inputs when comparing optimization candidates.
 
 The GPU matrix is a numerical regression test, not a memory sanitizer: discarded
@@ -152,9 +160,9 @@ test failure must not be converted into an accepted benchmark-only result.
 For a targeted model integration check of actual COW tail growth:
 
 ```sh
-make CTX=4097 tests/test_kv_model
-./tests/test_kv_model /path/to/model.gguf cow-growth 512
-./tests/test_kv_model /path/to/model.gguf cow-growth 513
+make tests/test_kv_model
+./tests/test_kv_model /path/to/model.gguf cow-growth 512 --ctx 4097
+./tests/test_kv_model /path/to/model.gguf cow-growth 513 --ctx 4097
 ```
 
 These cases grow a live shadow through tail sizes 511/512/513 and
@@ -165,9 +173,9 @@ exercise a source that diverged after opening the shadow and SWA wraparound.
 Logits must have relative RMS error below `1e-5`, matching the existing COW
 test, and the same top token. No nonfinite values are accepted.
 
-`./tests/test_kv_model /path/to/model.gguf decode-dump /existing/directory`
+`./tests/test_kv_model /path/to/model.gguf decode-dump /existing/directory --ctx 4097`
 writes full float32 logits after prefill and each of eight fixed-token decode
-steps. Depths are 512 and 2048, plus CTX-8 for capacities up to 4104. Build with
-CTX>=2056. Dumps can be compared across binaries with identical inputs and
+steps. Depths are 512 and 2048, plus capacity-8 for capacities up to 4104. Select a
+capacity of at least 2056. Dumps can be compared across binaries with identical inputs and
 capacity; successful execution alone does not establish cross-build equality.
 These targeted checks do not run the full snapshot suite or measure throughput.

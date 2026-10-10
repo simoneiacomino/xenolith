@@ -2,6 +2,7 @@
 #define XE_TEST_OUTPUT_COUNT
 #define XE_TEST_SESSION
 #include "../xenolith.c"
+#include "test_context.h"
 
 size_t xe_test_prefill_batches;
 size_t xe_test_decode_tokens;
@@ -41,15 +42,16 @@ static double sync_logits_rel_rms(const float *a, const float *b) {
 }
 
 int main(int argc, char **argv) {
+    int context = test_context_capacity(&argc, argv);
     if (argc < 2 || !argv[1][0]) {
-        fprintf(stderr, "usage: %s <model.gguf>\n", argv[0]);
+        fprintf(stderr, "usage: %s <model.gguf> [--ctx N]\n", argv[0]);
         return 2;
     }
     const char *model = argv[1];
     int32_t original[1568];
     int32_t branch[1568];
     for (int i = 0; i < 1568; i++) original[i] = 2 + i;
-    xe_engine *e = xe_engine_open(model);
+    xe_engine *e = xe_engine_open_with_context(model, context);
     xe_session *s = xe_session_new(e);
     float *extension_logits = malloc(XE_VOCAB * sizeof(float));
     float *decode_logits = malloc(XE_VOCAB * sizeof(float));

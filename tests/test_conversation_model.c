@@ -1,6 +1,7 @@
 #define XE_TEST_SESSION
 #define XE_TEST_OUTPUT_COUNT
 #include "../xenolith.c"
+#include "test_context.h"
 
 #include "../conversation.h"
 #include "../kvstore.h"
@@ -40,12 +41,13 @@ static void remove_tree(const char *path) {
 }
 
 int main(int argc, char **argv) {
+    int context = test_context_capacity(&argc, argv);
     if (argc < 2 || !argv[1][0]) {
-        fprintf(stderr, "usage: %s <model.gguf>\n", argv[0]);
+        fprintf(stderr, "usage: %s <model.gguf> [--ctx N]\n", argv[0]);
         return 2;
     }
     const char *model = argv[1];
-    xe_engine *engine = xe_engine_open(model);
+    xe_engine *engine = xe_engine_open_with_context(model, context);
     xe_session *session = xe_session_new(engine);
 
     char root[] = "/tmp/xenolith-conv-model-XXXXXX";

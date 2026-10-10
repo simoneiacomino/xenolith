@@ -1,6 +1,6 @@
-/* Targeted model integration checks; same harness can be built against PR7's
- * baseline and both fixes. No timing or sampling decisions are involved. */
+/* Targeted model integration checks. No timing or sampling decisions are involved. */
 #include "../xenolith.c"
+#include "test_context.h"
 
 static void require(int ok, const char *what) {
     if (!ok) xe_fatal("kv-model: FAIL %s", what);
@@ -36,18 +36,18 @@ static void dump(FILE *f, xe_session *s) {
 }
 
 static void decode_dump(xe_engine *e, int32_t *tokens, const char *directory) {
-    int depths[] = {512, 2048, XE_CTX - 8};
-    int count = XE_CTX <= 4104 ? 3 : 2;
+    int depths[] = {512, 2048, e->context - 8};
+    int count = e->context <= 4104 ? 3 : 2;
     for (int i = 0; i < count; i++) {
         int depth = depths[i];
-        require(depth > 0 && depth + 8 <= XE_CTX, "decode shape");
+        require(depth > 0 && depth + 8 <= e->context, "decode shape");
         char path[4096];
         int n = snprintf(path, sizeof path, "%s/depth%d.f32", directory, depth);
         require(n > 0 && (size_t)n < sizeof path, "dump path");
         FILE *f = fopen(path, "wb");
         require(f != NULL, "open logits dump");
         xe_session *s = xe_session_new(e);
-        xe_tokens prefix = {tokens, depth, XE_CTX};
+        xe_tokens prefix = {tokens, depth, e->context};
         xe_session_sync(s, &prefix);
         dump(f, s);
         for (int step = 0; step < 8; step++) {
@@ -88,27 +88,27 @@ static void promoted_kv(xe_session *s, xe_session *shadow, int rows) {
                     : shadow->cow_global_k[layer])
                     + (size_t)head * shadow->cow_capacity * XE_GLOBAL_HEAD_DIM;
                 const _Float16 *target = (value ? s->global_v : s->global_k)
-                    + (size_t)layer * XE_GLOBAL_LAYER_ELEMS
-                    + ((size_t)head * XE_CTX + shadow->cow_split) * XE_GLOBAL_HEAD_DIM;
+                    + (size_t)layer * xe_global_layer_elems(s->engine)
+                    + ((size_t)head * s->engine->context + shadow->cow_split) * XE_GLOBAL_HEAD_DIM;
                 require(memcmp(source, target, bytes) == 0, "promoted global KV");
             }
 }
 
 static void cow_growth(xe_engine *e, int32_t *tokens, int split) {
     const int tails[] = {511, 512, 513, 1023, 1024, 1025};
-    require(split > 0 && split + 1025 + 8 <= XE_CTX, "growth shape");
-    xe_tokens prefix = {tokens, split, XE_CTX};
+    require(split > 0 && split + 1025 + 8 <= e->context, "growth shape");
+    xe_tokens prefix = {tokens, split, e->context};
     xe_session *reference = xe_session_new(e);
     xe_session *source = xe_session_new(e);
     xe_session_sync(reference, &prefix);
     xe_session_sync(source, &prefix);
     xe_session *shadow = xe_session_shadow_new(source);
     require(shadow != NULL, "open shadow");
-    int32_t *raw = malloc((size_t)XE_CTX * sizeof(*raw));
+    int32_t *raw = malloc((size_t)e->context * sizeof(*raw));
     require(raw != NULL, "allocate divergent tokens");
-    memcpy(raw, tokens, (size_t)XE_CTX * sizeof(*raw));
+    memcpy(raw, tokens, (size_t)e->context * sizeof(*raw));
     for (int i = split; i < split + 64; i++) raw[i] += 1024;
-    xe_tokens divergent = {raw, split + 64, XE_CTX};
+    xe_tokens divergent = {raw, split + 64, e->context};
     xe_session_sync(source, &divergent);
     free(raw);
 
@@ -159,15 +159,16 @@ static void cow_growth(xe_engine *e, int32_t *tokens, int split) {
 }
 
 int main(int argc, char **argv) {
+    int context = test_context_capacity(&argc, argv);
     if (argc != 4 || (strcmp(argv[2], "decode-dump") && strcmp(argv[2], "cow-growth"))) {
-        fprintf(stderr, "usage: %s model.gguf decode-dump DIRECTORY | cow-growth SPLIT\n", argv[0]);
+        fprintf(stderr, "usage: %s model.gguf decode-dump DIRECTORY | cow-growth SPLIT [--ctx N]\n", argv[0]);
         return 2;
     }
-    require(XE_CTX >= 2056, "build CTX >= 2056");
-    int32_t *tokens = malloc((size_t)XE_CTX * sizeof(*tokens));
+    require(context >= 2056, "context >= 2056");
+    int32_t *tokens = malloc((size_t)context * sizeof(*tokens));
     require(tokens != NULL, "allocate tokens");
-    for (int i = 0; i < XE_CTX; i++) tokens[i] = 2 + (i * 17 + 11) % 8192;
-    xe_engine *e = xe_engine_open(argv[1]);
+    for (int i = 0; i < context; i++) tokens[i] = 2 + (i * 17 + 11) % 8192;
+    xe_engine *e = xe_engine_open_with_context(argv[1], context);
     if (!strcmp(argv[2], "decode-dump")) decode_dump(e, tokens, argv[3]);
     else cow_growth(e, tokens, atoi(argv[3]));
     xe_engine_close(e);

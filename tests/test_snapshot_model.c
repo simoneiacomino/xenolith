@@ -1,18 +1,20 @@
 #define XE_TEST_SESSION
 #define XE_TEST_OUTPUT_COUNT
 #include "../xenolith.c"
+#include "test_context.h"
 
 size_t xe_test_prefill_batches;
 size_t xe_test_decode_tokens;
 size_t xe_test_output_calls;
 
 int main(int argc, char **argv) {
+    int context = test_context_capacity(&argc, argv);
     if (argc < 2 || !argv[1][0]) {
-        fprintf(stderr, "usage: %s <model.gguf>\n", argv[0]);
+        fprintf(stderr, "usage: %s <model.gguf> [--ctx N]\n", argv[0]);
         return 2;
     }
     const char *model = argv[1];
-    xe_engine *engine = xe_engine_open(model);
+    xe_engine *engine = xe_engine_open_with_context(model, context);
     xe_session *session = xe_session_new(engine);
     int32_t ids[72];
     for (int i = 0; i < 64; i++) ids[i] = 2 + i;

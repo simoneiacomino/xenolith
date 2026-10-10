@@ -43,6 +43,14 @@ typedef enum {
     XE_SNAPSHOT_CHANGED
 } xe_snapshot_status;
 
+enum {
+    XE_CONTEXT_MIN = 64,
+    XE_CONTEXT_MAX = 262144,
+    XE_CONTEXT_DEFAULT = XE_CONTEXT_MAX
+};
+
+/* Capacity is fixed for the engine and inherited by all its sessions. */
+xe_engine *xe_engine_open_with_context(const char *gguf_path, int context);
 xe_engine *xe_engine_open(const char *gguf_path);
 xe_engine *xe_engine_open_vocab(const char *gguf_path);
 void xe_engine_close(xe_engine *e);

@@ -14,8 +14,6 @@
 
 *.o
 *.spv
-/.build-ctx
-/.build-ctx.tmp
 /tests/.golden.*/
 /bench/bench_attention
 /bench/bench_b3b
@@ -39,6 +37,7 @@
 /tests/compare_logits
 /tests/dump_layers
 /tests/dump_logits
+/tests/test_cli_context
 /tests/test_conversation
 /tests/test_conversation_model
 /tests/test_decode
@@ -47,6 +46,7 @@
 /tests/test_gpu_alloc
 /tests/test_json
 /tests/test_kv
+/tests/test_kv_model
 /tests/test_kvstore
 /tests/test_model_decode
 /tests/test_prefill_dense
