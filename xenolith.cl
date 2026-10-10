@@ -732,6 +732,8 @@ __kernel void xe_prefill_attn_online_b8_global_shared(
         __global const uint4 *source = (__global const uint4 *)(
             k + ((size_t)kv_head * n_count + key0) * 512);
         __local uint4 *target = (__local uint4 *)lk;
+        /* Read bounds are required even for rows excluded from the scores.
+         * Global KV allocations do not promise an extra tile of padding. */
         if (key0 + 8 <= n_count) {
             for (int x = lid; x < 512; x += 128) target[x] = source[x];
         } else {
@@ -878,6 +880,8 @@ __kernel void xe_prefill_attn_online_b8_global_cow(
         __local uint4 *target = (__local uint4 *)lk;
         int capacity = key0 < split ? prefix_capacity : tail_capacity;
         int source_key = key0 < split ? key0 : key0 - split;
+        /* A tail can end in the middle of a globally aligned tile, even at
+         * power-of-two CTX. Masking scores does not make extra reads safe. */
         if ((key0 + 7 < split || key0 >= split) &&
             source_key + 8 <= capacity) {
             __global const half *base = key0 < split ? prefix_k : tail_k;
