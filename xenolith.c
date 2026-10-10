@@ -43,6 +43,7 @@ static _Noreturn void xe_fatal(const char *fmt, ...) {
 }
 
 typedef enum { XE_MEM_HOST, XE_MEM_SHARED } xe_mem_kind;
+typedef enum { XE_RELAXED_NONE, XE_RELAXED_EXP, XE_RELAXED_EXT } xe_relaxed_limits;
 
 /* We centralize the allocation here because when implementing GPU prefill
  * the buffer touched by GPU should be allocated with zeMemAllocShared().
@@ -64,6 +65,11 @@ size_t xe_test_output_calls;
 #define XE_MODEL_CTX 262144
 #ifndef XE_CTX
 #define XE_CTX XE_MODEL_CTX
+#endif
+/* Global KV commit currently reuses the circular kernel's bit mask.
+ * A follow-up must use linear indexing before arbitrary capacities are safe. */
+#if XE_CTX < 64 || XE_CTX > XE_MODEL_CTX || (XE_CTX & (XE_CTX - 1)) != 0
+#error "XE_CTX must be a power of two between 64 and XE_MODEL_CTX"
 #endif
 #define XE_Q_HEADS 16
 #define XE_DENSE_FFN 2112
@@ -178,6 +184,8 @@ typedef struct {
     ze_driver_handle_t driver;
     ze_device_handle_t device;
     ze_context_handle_t context;
+    uint64_t max_mem_alloc_size;
+    xe_relaxed_limits relaxed_limits;
     ze_command_list_handle_t commands;
     ze_module_handle_t module;
     ze_kernel_handle_t prefill_rms_scale;
@@ -387,10 +395,36 @@ static void *xe_alloc(const xe_engine *e, size_t n, xe_mem_kind kind) {
     ze_host_mem_alloc_desc_t host_desc = {
         .stype = ZE_STRUCTURE_TYPE_HOST_MEM_ALLOC_DESC
     };
+    ze_relaxed_allocation_limits_exp_desc_t relaxed_exp = {
+        .stype = ZE_STRUCTURE_TYPE_RELAXED_ALLOCATION_LIMITS_EXP_DESC,
+        .flags = ZE_RELAXED_ALLOCATION_LIMITS_EXP_FLAG_MAX_SIZE
+    };
+#ifdef ZE_RELAXED_ALLOCATION_LIMITS_EXT_NAME
+    ze_relaxed_allocation_limits_ext_desc_t relaxed_ext = {
+        .stype = ZE_STRUCTURE_TYPE_RELAXED_ALLOCATION_LIMITS_EXT_DESC,
+        .flags = ZE_RELAXED_ALLOCATION_LIMITS_EXT_FLAG_MAX_SIZE
+    };
+#endif
+    if (rounded > e->gpu.max_mem_alloc_size) {
+        if (e->gpu.relaxed_limits == XE_RELAXED_EXP)
+            device_desc.pNext = &relaxed_exp;
+#ifdef ZE_RELAXED_ALLOCATION_LIMITS_EXT_NAME
+        else if (e->gpu.relaxed_limits == XE_RELAXED_EXT)
+            device_desc.pNext = &relaxed_ext;
+#endif
+        else
+            xe_fatal("shared allocation of %zu bytes exceeds device limit %llu; "
+                     "driver does not support relaxed allocation limits",
+                     rounded, (unsigned long long)e->gpu.max_mem_alloc_size);
+    }
     void *p = NULL;
-    xe_ze_check("zeMemAllocShared",
-                zeMemAllocShared(e->gpu.context, &device_desc, &host_desc,
-                                 rounded, 64, e->gpu.device, &p));
+    ze_result_t result = zeMemAllocShared(e->gpu.context, &device_desc, &host_desc,
+                                        rounded, 64, e->gpu.device, &p);
+    if (result != ZE_RESULT_SUCCESS)
+        xe_fatal("zeMemAllocShared failed: 0x%x allocating %zu bytes "
+                 "(device limit %llu, relaxed limits %s)", result, rounded,
+                 (unsigned long long)e->gpu.max_mem_alloc_size,
+                 device_desc.pNext ? "enabled" : "disabled");
     return p;
 }
 
@@ -418,6 +452,7 @@ static xe_gpu_status xe_gpu_classify(uint32_t id) {
     switch (id) {
         case 0xa7a0: /* Maintainer's Core i7-13700H. */
         case 0x7d51: /* Core Ultra 7 255H, reported by aziis98 in PR #2. */
+        case 0x64a0: /* Core Ultra 7 268V; Raffaele's WSL report in PR #6, 64k capacity. */
             return XE_GPU_TESTED;
         /* Tiger Lake. */
         case 0x9a40: case 0x9a49: case 0x9a59: case 0x9a60:
@@ -445,7 +480,7 @@ static xe_gpu_status xe_gpu_classify(uint32_t id) {
         case 0x7d40: case 0x7d45: case 0x7d55: case 0x7dd5:
         case 0x7d41: case 0x7d67: case 0x7dd1:
         /* Lunar Lake. */
-        case 0x6420: case 0x64a0: case 0x64b0:
+        case 0x6420: case 0x64b0:
         /* Panther Lake. */
         case 0xb080: case 0xb081: case 0xb082: case 0xb083:
         case 0xb084: case 0xb085: case 0xb086: case 0xb087:
@@ -463,6 +498,30 @@ static xe_gpu_status xe_gpu_classify(uint32_t id) {
         default:
             return XE_GPU_NOT_ENABLED;
     }
+}
+
+static xe_relaxed_limits xe_gpu_get_relaxed_limits(ze_driver_handle_t driver) {
+    uint32_t count = 0;
+    xe_ze_check("zeDriverGetExtensionProperties count",
+                zeDriverGetExtensionProperties(driver, &count, NULL));
+    if (!count) return XE_RELAXED_NONE;
+    ze_driver_extension_properties_t *extensions =
+        xe_alloc(NULL, (size_t)count * sizeof(*extensions), XE_MEM_HOST);
+    xe_ze_check("zeDriverGetExtensionProperties",
+                zeDriverGetExtensionProperties(driver, &count, extensions));
+    xe_relaxed_limits limits = XE_RELAXED_NONE;
+    for (uint32_t i = 0; i < count; i++) {
+        if (extensions[i].version < ZE_MAKE_VERSION(1, 0)) continue;
+        if (limits == XE_RELAXED_NONE &&
+            strcmp(extensions[i].name, ZE_RELAXED_ALLOCATION_LIMITS_EXP_NAME) == 0)
+            limits = XE_RELAXED_EXP;
+#ifdef ZE_RELAXED_ALLOCATION_LIMITS_EXT_NAME
+        if (strcmp(extensions[i].name, ZE_RELAXED_ALLOCATION_LIMITS_EXT_NAME) == 0)
+            limits = XE_RELAXED_EXT;
+#endif
+    }
+    xe_free(NULL, extensions, XE_MEM_HOST);
+    return limits;
 }
 
 static void xe_gpu_init(xe_engine *e) {
@@ -484,6 +543,8 @@ static void xe_gpu_init(xe_engine *e) {
         .stype = ZE_STRUCTURE_TYPE_DEVICE_PROPERTIES
     };
     xe_ze_check("zeDeviceGetProperties", zeDeviceGetProperties(e->gpu.device, &properties));
+    e->gpu.max_mem_alloc_size = properties.maxMemAllocSize;
+    e->gpu.relaxed_limits = xe_gpu_get_relaxed_limits(e->gpu.driver);
     xe_gpu_status status = xe_gpu_classify(properties.deviceId);
     if (properties.vendorId != 0x8086 || status == XE_GPU_NOT_ENABLED)
         xe_fatal("GPU %04x:%04x is not enabled; see README.md for Intel Xe integrated GPU device IDs",
