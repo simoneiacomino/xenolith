@@ -98,6 +98,26 @@ make
 Run `./xenolith --help` for commands and options. For client integration, see
 the [protocol](PROTOCOL.md) and the [C API](xenolith.h).
 
+Model loading checks the supported architecture, tokenizer, tensor shapes and
+types. Compatible weight variants are accepted; there is no checksum allowlist.
+This does not certify the quality of a fine-tune or add support for other tensor
+layouts or quantizations.
+
+Every full engine opening computes SHA-256 over the entire GGUF using the
+existing C implementation, with no additional dependency. This adds a full file
+scan to startup and can take tens of seconds for the target model; start and
+completion messages are written to stderr. The digest is retained for that
+engine's lifetime, so checkpoints and restores do not rescan the weights.
+Tokenizer-only operations remain lightweight unless the C caller explicitly
+requests the model fingerprint. Do not modify the model file while it is open.
+
+Checkpoints bind this content identity. Changed weights invalidate their reuse,
+even if all metadata are unchanged; the runtime rebuilds from the preserved
+transcript and reports `model_mismatch`. Older checkpoints identified only by
+metadata also require rebuilding once. Identical files retain the same identity
+regardless of path or timestamps. Full hashing identifies content; it does not
+authenticate its publisher or compare it to a certified model checksum.
+
 ## Testing
 
 - `make check-unit check-context`: host and CLI checks, without a GPU or model.

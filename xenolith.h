@@ -53,6 +53,12 @@ enum {
 xe_engine *xe_engine_open_with_context(const char *gguf_path, int context);
 xe_engine *xe_engine_open(const char *gguf_path);
 xe_engine *xe_engine_open_vocab(const char *gguf_path);
+/* SHA-256 of the complete original GGUF, owned by the engine until close.
+ * Full engine opening computes it eagerly; vocab-only opening computes it on
+ * the first explicit call. Subsequent calls reuse it. Call on the engine owner
+ * thread. The model file must remain unchanged for the engine's lifetime.
+ * This identifies cache contents; it does not restrict compatible variants. */
+const uint8_t *xe_engine_model_fingerprint(xe_engine *e);
 void xe_engine_close(xe_engine *e);
 void xe_engine_info(const xe_engine *e, FILE *out);
 

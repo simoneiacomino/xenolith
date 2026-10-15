@@ -343,10 +343,17 @@ point is missing or rejected, restoration tries earlier compatible points in
 the current cache epoch before rebuilding. Resuming an earlier point requires
 prefill for the remaining transcript.
 
-Compatible v1 snapshots from `68b8fbf55` remain readable without conversion,
-subject to matching build and numerical settings; other v1 producers remain
-unsupported. Incompatible cache falls back to prefill. Older engines cannot
-read the new checkpoint format.
+Checkpoint model identity is the SHA-256 of the complete GGUF, including tensor
+values. A compatible fine-tune can be loaded, but cannot reuse another model's
+computed state. A mismatch reports `model_mismatch` and falls back to prefill
+from the retained transcript. Moving or copying identical model bytes does not
+invalidate this identity.
+
+Older checkpoints with header-only model identities, including v1 from
+`68b8fbf55` and earlier v2 writers, are rejected as `model_mismatch` and rebuilt.
+Their original tensor contents cannot be verified retroactively. The checkpoint
+layout remains v2 and its numerical ABI is unchanged; current writers continue
+to support reuse across builds with compatible numerical settings.
 
 ## History and rewinding
 

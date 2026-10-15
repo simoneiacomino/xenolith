@@ -33,8 +33,8 @@ int main(int argc, char **argv) {
     if (ok) ok &= xe_session_snapshot_size(session, &snapshot_size) ==
                   XE_SNAPSHOT_OK;
     /* 3.7 finding 1: the first checkpoint of a fresh process must cost
-     * the same as the second (the MODEL fingerprint is no longer a lazy
-     * SHA-256 of the whole GGUF). */
+     * the same as the second (the full MODEL digest is computed at opening,
+     * rather than lazily on the first checkpoint). */
     struct timespec t0, t1, t2;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     if (ok) ok &= xe_session_snapshot_save(session, file) == XE_SNAPSHOT_OK;

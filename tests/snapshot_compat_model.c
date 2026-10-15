@@ -29,9 +29,11 @@ static void check_logits(xe_session *s, FILE *oracle, int writing) {
 }
 
 int main(int argc, char **argv) {
-    CHECK(argc == 4);
+    CHECK(argc == 4 || argc == 5);
     int writing = !strcmp(argv[1], "write");
     CHECK(writing || !strcmp(argv[1], "read"));
+    int replay = argc == 5 && !strcmp(argv[4], "model-mismatch");
+    CHECK(argc == 4 || (!writing && replay));
     xe_engine *engine = xe_engine_open_with_context(argv[2], 4097);
     xe_session *session = xe_session_new(engine);
     const int lengths[] = {64, 1057};
@@ -53,9 +55,15 @@ int main(int argc, char **argv) {
             CHECK(xe_session_snapshot_save(session, snapshot) == XE_SNAPSHOT_OK);
         } else {
             xe_test_prefill_batches = xe_test_decode_tokens = xe_test_output_calls = 0;
-            CHECK(xe_session_snapshot_load(session, snapshot, &prefix) == XE_SNAPSHOT_OK);
+            CHECK(xe_session_snapshot_load(session, snapshot, &prefix) ==
+                  (replay ? XE_SNAPSHOT_MODEL_MISMATCH : XE_SNAPSHOT_OK));
             CHECK(xe_test_prefill_batches == 0 && xe_test_decode_tokens == 0 &&
                   xe_test_output_calls == 0);
+            if (replay) {
+                CHECK(xe_session_position(session) == 0);
+                xe_session_sync(session, &prefix);
+                CHECK(xe_test_prefill_batches > 0);
+            }
             CHECK(xe_session_position(session) == n);
         }
         CHECK(fclose(snapshot) == 0);
@@ -74,7 +82,7 @@ int main(int argc, char **argv) {
         if (!writing) CHECK(fgetc(oracle) == EOF && !ferror(oracle));
         CHECK(fclose(oracle) == 0);
         printf("snapshot model compatibility: %s N=%d exact logits, CPU decode, GPU extension PASS\n",
-               argv[1], n);
+               replay ? "replay" : argv[1], n);
         fflush(stdout);
     }
     xe_session_free(session);

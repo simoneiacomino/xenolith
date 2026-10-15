@@ -58,6 +58,21 @@ int main(int argc, char **argv) {
     CHECK(capacity >= 64 && capacity <= 4097 && n > 0 && n <= capacity);
     xe_engine engine = {.context = capacity, .pool_initialized = 1,
                         .owner = pthread_self(), .scalar_rms = 1};
+    /* Synthetic header/payload bytes exercise model identity independently of
+     * GPU inference and GGUF schema validation, also with historical writers. */
+    const char *model_path = getenv("SNAPSHOT_MODEL_FILE");
+    if (model_path) {
+        FILE *model = fopen(model_path, "rb");
+        uint64_t bytes;
+        CHECK(model && format_file_size(model, &bytes) && bytes >= 64 && bytes <= SIZE_MAX);
+        engine.map_len = (size_t)bytes;
+        engine.header_len = 64;
+        engine.map = mmap(NULL, engine.map_len, PROT_READ, MAP_PRIVATE, fileno(model), 0);
+        CHECK(engine.map != MAP_FAILED && fclose(model) == 0);
+        xe_snapshot_fingerprints_init(&engine);
+        /* Save/load must use the cached identity, never revisit mapped weights. */
+        CHECK(mprotect(engine.map, engine.map_len, PROT_NONE) == 0);
+    }
     xe_session s = {.engine = &engine};
     s.tokens = calloc((size_t)capacity, sizeof *s.tokens);
     s.logits = calloc(XE_VOCAB, sizeof *s.logits);
@@ -96,6 +111,7 @@ int main(int argc, char **argv) {
     CHECK(fclose(file) == 0);
     free(s.tokens); free(s.logits);
     free(s.swa_k); free(s.swa_v); free(s.global_k); free(s.global_v);
+    if (model_path) CHECK(munmap(engine.map, engine.map_len) == 0);
     return 0;
 }
 #endif
