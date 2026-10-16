@@ -58,7 +58,8 @@ typedef enum {
 typedef enum {
     CONVERSATION_BLOCK_TEXT = 1,
     CONVERSATION_BLOCK_JSON = 2,
-    CONVERSATION_BLOCK_BINARY = 3
+    CONVERSATION_BLOCK_BINARY = 3,
+    CONVERSATION_BLOCK_IMAGE = 4 /* versioned media payload, rejected by old readers */
 } conversation_block_format;
 
 typedef enum {

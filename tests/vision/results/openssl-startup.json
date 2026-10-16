@@ -1,0 +1,616 @@
+{
+  "status": "PASS",
+  "source_commit_before_change": "a7f7e68",
+  "cases": {
+    "openssl": {
+      "context": 65536,
+      "image_sha256": "3f136dfff89d27442fb82250bc847c99613ed7e1895033075f8ab4289316020f",
+      "executable_sha256": "7a38dee7b65540f57e7d02b0f51477dbcfba4d1d0ab83280a0cfc06a4cf63f96",
+      "cases": [
+        {
+          "kind": "image",
+          "command": [
+            "/home/simo/dev/xenolith-vision-20261014/candidate/xenolith",
+            "chat",
+            "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+            "--ctx",
+            "65536",
+            "--top-k",
+            "1",
+            "-n",
+            "64",
+            "--mmproj",
+            "/home/simo/dev/xenolith-vision-20261014/reference/mmproj-F16.gguf",
+            "--image",
+            "/home/simo/dev/xenolith-vision-20261014/candidate/gattino.jpg"
+          ],
+          "prompts": [
+            "What animal is shown? Reply with just the animal name.",
+            "Describe its fur color briefly, based on the image."
+          ],
+          "answers": [
+            "cat",
+            "The kitten has tabby fur with a mix of brown, tan, and black stripes."
+          ],
+          "seconds": 31.407850650999535,
+          "status": "PASS"
+        },
+        {
+          "kind": "text",
+          "command": [
+            "/home/simo/dev/xenolith-vision-20261014/candidate/xenolith",
+            "chat",
+            "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+            "--ctx",
+            "65536",
+            "--top-k",
+            "1",
+            "-n",
+            "64"
+          ],
+          "prompts": [
+            "Reply with only the word HELLO.",
+            "Reply with only the word WORLD."
+          ],
+          "answers": [
+            "HELLO",
+            "WORLD"
+          ],
+          "seconds": 11.862878162000015,
+          "status": "PASS"
+        }
+      ],
+      "status": "PASS",
+      "image_stderr": "vision: budget=280 rows=266 preprocess_ms=32.173 model_hash_ms=4021.177 mmproj_load_ms=740.501 encoder_ms=17282.390\n",
+      "text_stderr": "",
+      "timings_ms": {
+        "preprocess_ms": 32.173,
+        "model_hash_ms": 4021.177,
+        "mmproj_load_ms": 740.501,
+        "encoder_ms": 17282.39
+      }
+    },
+    "metadata": {
+      "context": 65536,
+      "image_sha256": "3f136dfff89d27442fb82250bc847c99613ed7e1895033075f8ab4289316020f",
+      "executable_sha256": "7a38dee7b65540f57e7d02b0f51477dbcfba4d1d0ab83280a0cfc06a4cf63f96",
+      "cases": [
+        {
+          "kind": "image",
+          "command": [
+            "/home/simo/dev/xenolith-vision-20261014/candidate/xenolith",
+            "chat",
+            "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+            "--ctx",
+            "65536",
+            "--top-k",
+            "1",
+            "-n",
+            "64",
+            "--mmproj",
+            "/home/simo/dev/xenolith-vision-20261014/reference/mmproj-F16.gguf",
+            "--image",
+            "/home/simo/dev/xenolith-vision-20261014/candidate/gattino.jpg"
+          ],
+          "prompts": [
+            "What animal is shown? Reply with just the animal name.",
+            "Describe its fur color briefly, based on the image."
+          ],
+          "answers": [
+            "cat",
+            "The kitten has tabby fur with a mix of brown, tan, and black stripes."
+          ],
+          "seconds": 41.219125313000404,
+          "status": "PASS"
+        },
+        {
+          "kind": "text",
+          "command": [
+            "/home/simo/dev/xenolith-vision-20261014/candidate/xenolith",
+            "chat",
+            "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+            "--ctx",
+            "65536",
+            "--top-k",
+            "1",
+            "-n",
+            "64"
+          ],
+          "prompts": [
+            "Reply with only the word HELLO.",
+            "Reply with only the word WORLD."
+          ],
+          "answers": [
+            "HELLO",
+            "WORLD"
+          ],
+          "seconds": 13.136420103000091,
+          "status": "PASS"
+        }
+      ],
+      "status": "PASS",
+      "image_stderr": "xenolith: warning: OpenSSL SHA-256 disabled by XENOLITH_WEIGHTS_VERIFY for language model; using metadata-only weight checks, without full content verification.\nxenolith: warning: OpenSSL SHA-256 disabled by XENOLITH_WEIGHTS_VERIFY for mmproj; using metadata-only weight checks, without full content verification.\nvision: budget=280 rows=266 preprocess_ms=56.783 model_hash_ms=141.274 mmproj_load_ms=521.591 encoder_ms=19181.630\n",
+      "text_stderr": "",
+      "timings_ms": {
+        "preprocess_ms": 56.783,
+        "model_hash_ms": 141.274,
+        "mmproj_load_ms": 521.591,
+        "encoder_ms": 19181.63
+      }
+    }
+  },
+  "source_sha256": {
+    "format.c": "39b3d39b09ff9825e80dcb3bf554f52b1f0e69298b5c37661c3e42da3ee04c4a",
+    "format.h": "b4db13aee7c097b64d79912b1f4466ab769795bcf88def638e3a4910c65bde3a",
+    "vision.c": "fe47e2199be1cc7cef34950227952ea92242bc0c2078ff087406a47be776114d",
+    "vision.h": "e7fc4cdd891f1d97970bf44d809fdd96bfe52e2ed2a004eb6ecd4d892dd5b5e2",
+    "vision_gpu.inc": "01e86742b16f0924522c1fb991be43ad1de646433a4f9e97dd960140fe21bbd6",
+    "vision_runtime.inc": "2b0bff295a14f86f179a756c4c9f1e3c565670bd8829e46e8e1359df7fb91e89",
+    "xenolith.c": "8690aff36bf6e3d759ea6d1c3abebb3b20d7fa70c51e1655542c4ac54fafd0f2",
+    "xenolith.h": "7aa3838bafa8e828dea4610a882341f236b90d022758d925df060d7652664e8c",
+    "main.c": "10738f774c375d704e6786e3c30ba26d3aba801671a9dd683e640064f0884136",
+    "Makefile": "a1132f2ef28ade9264d05c88ede75cab18ee9ec5fdb9baa45f0a42c101cd77f9"
+  },
+  "checks": {
+    "suites": {
+      "sha256": "ef3a76587e140b278f1d2ea3de504419b68c5d8548ea0dc69f854b939d07c462",
+      "last_lines": [
+        "snapshot: metadata rejection and destructive payload PASS",
+        "snapshot: twin SWA wrap promote/repair PASS",
+        "snapshot: capacity 262144 maximum size 5580522112 PASS",
+        "./tests/test_kvstore",
+        "kvstore: publish find=ok PASS",
+        "kvstore: load and hits PASS",
+        "kvstore: eviction save=ok/ok find=ok/miss/ok same=1/1 PASS",
+        "kvstore: pin PASS",
+        "kvstore: mismatch PASS",
+        "kvstore: atomic ids hits eviction pin isolation PASS",
+        "./tests/test_prefill_session route-reset",
+        "prefill-route-reset: 33 cases PASS"
+      ]
+    },
+    "additional": [
+      "OpenSSL success: exact SHA-256 vs portable implementation",
+      "forced metadata: no read of inaccessible input buffer",
+      "missing EVP symbol: no full-file scan",
+      "OpenSSL failure and incorrect digest length: no full-file scan",
+      "ASan/UBSan fast digest unit tests",
+      "private COW tensor mutation detected with full SHA and allowed by metadata-only policy",
+      "corrupted GGUF header rejected in both policies",
+      "missing OpenSSL emits metadata-only warnings"
+    ]
+  },
+  "executable_sha256": "7a38dee7b65540f57e7d02b0f51477dbcfba4d1d0ab83280a0cfc06a4cf63f96",
+  "before_chat": {
+    "context": 65536,
+    "image_sha256": "3f136dfff89d27442fb82250bc847c99613ed7e1895033075f8ab4289316020f",
+    "executable_sha256": "882231b769789bda105a8c90cdc944088badf81cea4ba4f869b6e6efb96bf30f",
+    "cases": [
+      {
+        "kind": "image",
+        "command": [
+          "/home/simo/dev/xenolith-vision-20261014/candidate/xenolith",
+          "chat",
+          "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "--ctx",
+          "65536",
+          "--top-k",
+          "1",
+          "-n",
+          "64",
+          "--mmproj",
+          "/home/simo/dev/xenolith-vision-20261014/reference/mmproj-F16.gguf",
+          "--image",
+          "/home/simo/dev/xenolith-vision-20261014/candidate/gattino.jpg"
+        ],
+        "prompts": [
+          "What animal is shown? Reply with just the animal name.",
+          "Describe its fur color briefly, based on the image."
+        ],
+        "answers": [
+          "cat",
+          "The kitten has tabby fur with a mix of brown, tan, and black stripes."
+        ],
+        "seconds": 67.650582127,
+        "status": "PASS"
+      },
+      {
+        "kind": "text",
+        "command": [
+          "/home/simo/dev/xenolith-vision-20261014/candidate/xenolith",
+          "chat",
+          "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "--ctx",
+          "65536",
+          "--top-k",
+          "1",
+          "-n",
+          "64"
+        ],
+        "prompts": [
+          "Reply with only the word HELLO.",
+          "Reply with only the word WORLD."
+        ],
+        "answers": [
+          "HELLO",
+          "WORLD"
+        ],
+        "seconds": 12.548564627000005,
+        "status": "PASS"
+      }
+    ],
+    "status": "PASS",
+    "main_source_sha256": "10738f774c375d704e6786e3c30ba26d3aba801671a9dd683e640064f0884136",
+    "image_source": "https://commons.wikimedia.org/wiki/File:Cat_(Kitten).jpg",
+    "image_author": "C1K98V",
+    "image_license": "CC BY-SA 4.0",
+    "context_checks": "cli context: 143 cases PASS",
+    "encoder_log": "vision: budget=280 rows=266 preprocess_ms=37.069 model_hash_ms=35587.173 mmproj_load_ms=3775.179 encoder_ms=17705.540\n",
+    "image_paths": [
+      "/home/simo/dev/xenolith-vision-20261014/candidate/gattino.jpg",
+      "/mnt/c/Users/devcloud/gattino.jpg"
+    ]
+  },
+  "session_modes": {
+    "checks": [
+      {
+        "mode": "full",
+        "response": "Red",
+        "resume": null,
+        "events": [
+          {
+            "event": "start"
+          },
+          {
+            "event": "inference_progress",
+            "phase": "prefill",
+            "state": "running",
+            "tokens": 0,
+            "total": 108,
+            "elapsed_ms": 0
+          },
+          {
+            "event": "inference_progress",
+            "phase": "prefill",
+            "state": "finished",
+            "tokens": 108,
+            "total": 108,
+            "elapsed_ms": 2119
+          },
+          {
+            "event": "inference_progress",
+            "phase": "decode",
+            "state": "running",
+            "tokens": 0,
+            "elapsed_ms": 0
+          },
+          {
+            "event": "text_delta",
+            "text": "Red"
+          },
+          {
+            "event": "inference_progress",
+            "phase": "decode",
+            "state": "finished",
+            "tokens": 2,
+            "elapsed_ms": 120
+          },
+          {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 108,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 110
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 108,
+                "total": 108,
+                "elapsed_ms": 2119
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 120
+              }
+            },
+            "marker": 4
+          }
+        ]
+      },
+      {
+        "mode": "metadata",
+        "response": "Red",
+        "resume": {
+          "loaded": false,
+          "reason": "model_mismatch",
+          "tokens": 110
+        },
+        "events": [
+          {
+            "event": "start"
+          },
+          {
+            "event": "inference_progress",
+            "phase": "prefill",
+            "state": "running",
+            "tokens": 0,
+            "total": 133,
+            "elapsed_ms": 0
+          },
+          {
+            "event": "inference_progress",
+            "phase": "prefill",
+            "state": "finished",
+            "tokens": 133,
+            "total": 133,
+            "elapsed_ms": 2845
+          },
+          {
+            "event": "inference_progress",
+            "phase": "decode",
+            "state": "running",
+            "tokens": 0,
+            "elapsed_ms": 0
+          },
+          {
+            "event": "text_delta",
+            "text": "Red"
+          },
+          {
+            "event": "inference_progress",
+            "phase": "decode",
+            "state": "finished",
+            "tokens": 2,
+            "elapsed_ms": 64
+          },
+          {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 133,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 135
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 133,
+                "total": 133,
+                "elapsed_ms": 2845
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 64
+              }
+            },
+            "marker": 8,
+            "resume": {
+              "loaded": false,
+              "reason": "model_mismatch",
+              "tokens": 110
+            }
+          }
+        ]
+      },
+      {
+        "mode": "metadata",
+        "response": "Red",
+        "resume": {
+          "loaded": true,
+          "tokens": 135
+        },
+        "events": [
+          {
+            "event": "start"
+          },
+          {
+            "event": "inference_progress",
+            "phase": "prefill",
+            "state": "running",
+            "tokens": 0,
+            "total": 23,
+            "elapsed_ms": 0
+          },
+          {
+            "event": "inference_progress",
+            "phase": "prefill",
+            "state": "finished",
+            "tokens": 23,
+            "total": 23,
+            "elapsed_ms": 788
+          },
+          {
+            "event": "inference_progress",
+            "phase": "decode",
+            "state": "running",
+            "tokens": 0,
+            "elapsed_ms": 0
+          },
+          {
+            "event": "text_delta",
+            "text": "Red"
+          },
+          {
+            "event": "inference_progress",
+            "phase": "decode",
+            "state": "finished",
+            "tokens": 2,
+            "elapsed_ms": 128
+          },
+          {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 23,
+              "cache_read": 135,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 160
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 23,
+                "total": 23,
+                "elapsed_ms": 788
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 128
+              }
+            },
+            "marker": 12,
+            "resume": {
+              "loaded": true,
+              "tokens": 135
+            }
+          }
+        ]
+      },
+      {
+        "mode": "full",
+        "response": "Red",
+        "resume": {
+          "loaded": false,
+          "reason": "model_mismatch",
+          "tokens": 160
+        },
+        "events": [
+          {
+            "event": "start"
+          },
+          {
+            "event": "inference_progress",
+            "phase": "prefill",
+            "state": "running",
+            "tokens": 0,
+            "total": 183,
+            "elapsed_ms": 0
+          },
+          {
+            "event": "inference_progress",
+            "phase": "prefill",
+            "state": "finished",
+            "tokens": 183,
+            "total": 183,
+            "elapsed_ms": 2668
+          },
+          {
+            "event": "inference_progress",
+            "phase": "decode",
+            "state": "running",
+            "tokens": 0,
+            "elapsed_ms": 0
+          },
+          {
+            "event": "text_delta",
+            "text": "Red"
+          },
+          {
+            "event": "inference_progress",
+            "phase": "decode",
+            "state": "finished",
+            "tokens": 2,
+            "elapsed_ms": 65
+          },
+          {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 183,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 185
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 183,
+                "total": 183,
+                "elapsed_ms": 2668
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 65
+              }
+            },
+            "marker": 16,
+            "resume": {
+              "loaded": false,
+              "reason": "model_mismatch",
+              "tokens": 160
+            }
+          }
+        ]
+      }
+    ],
+    "status": "PASS"
+  },
+  "text_regression": [
+    {
+      "context": 65536,
+      "file": "depth2048.f32",
+      "equal": true,
+      "baseline_sha256": "f4301818159050903b376d422c51b33429271413bca480437831e0c0e5ff4cda",
+      "candidate_sha256": "f4301818159050903b376d422c51b33429271413bca480437831e0c0e5ff4cda"
+    },
+    {
+      "context": 65536,
+      "file": "depth512.f32",
+      "equal": true,
+      "baseline_sha256": "436ebad15e1a8865bc82badb3683e536999cfe2e238f368744c21faec0212390",
+      "candidate_sha256": "436ebad15e1a8865bc82badb3683e536999cfe2e238f368744c21faec0212390"
+    },
+    {
+      "context": 131072,
+      "file": "depth2048.f32",
+      "equal": true,
+      "baseline_sha256": "f4301818159050903b376d422c51b33429271413bca480437831e0c0e5ff4cda",
+      "candidate_sha256": "f4301818159050903b376d422c51b33429271413bca480437831e0c0e5ff4cda"
+    },
+    {
+      "context": 131072,
+      "file": "depth512.f32",
+      "equal": true,
+      "baseline_sha256": "436ebad15e1a8865bc82badb3683e536999cfe2e238f368744c21faec0212390",
+      "candidate_sha256": "436ebad15e1a8865bc82badb3683e536999cfe2e238f368744c21faec0212390"
+    }
+  ],
+  "encoder70": {
+    "openssl": {
+      "sha256": "7872f946040c3872034f57d54a15cfda858df35ddbc0fc07ba1423b41fa56587",
+      "log": "vision: budget=70 rows=70 preprocess_ms=50.936 model_hash_ms=6580.111 mmproj_load_ms=1006.140 encoder_ms=2887.974\n"
+    },
+    "metadata": {
+      "sha256": "7872f946040c3872034f57d54a15cfda858df35ddbc0fc07ba1423b41fa56587",
+      "log": "xenolith: warning: OpenSSL SHA-256 disabled by XENOLITH_WEIGHTS_VERIFY for language model; using metadata-only weight checks, without full content verification.\nxenolith: warning: OpenSSL SHA-256 disabled by XENOLITH_WEIGHTS_VERIFY for mmproj; using metadata-only weight checks, without full content verification.\nvision: budget=70 rows=70 preprocess_ms=51.251 model_hash_ms=106.036 mmproj_load_ms=555.719 encoder_ms=2950.802\n"
+    }
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "phase_note": "Model/session and 512/1024 comparisons preceded the dispatch scheduling fix; host/context/GPU/vision suites, both full wire sessions, 1120 same-session restart and text baseline dumps were repeated afterward.",
+  "final-check.log": {
+    "sha256": "24c0dfb959ee9ff4470d8a16016da99dcb284a1655937b4c020d309dd86533f2",
+    "last_lines": [
+      "GPU allocation limits: PASS",
+      "context limits: PASS",
+      "vision attention: rows 17 previous 7 max 3.18e-07 PASS",
+      "vision attention: rows 1120 previous 1023 max 1.98e-06 PASS",
+      "vision ring: rows 512 start 900 PASS",
+      "vision ring: rows 1024 start 23 PASS",
+      "vision ring: rows 1120 start 977 PASS",
+      "vision input: boundaries, lengths, identity and finite rows PASS"
+    ]
+  },
+  "final-cli-check.log": {
+    "sha256": "10cd62ebd46cfd90a4a0f09ae4a2626c229a2e5028eecf7ba2ef6c4a646b9123",
+    "last_lines": [
+      "gcc -O3 -march=native -std=c11 -Wall -Wextra -pthread -DXE_BUILD_COMMIT='\"unknown\"' -DXE_NUMERIC_SOURCE_HASH='\"735388758950fdb808c946eec8939ce9b4af98ebfb658c2613a554cd5987b540\"' -DXE_NUMERIC_CFLAGS_HASH='\"2a745642dea153a3544b635f7d98d832ff8206bf8b8df1fe3d3111cac5c259f4\"'   -c -o main.o main.c",
+      "gcc -O3 -march=native -std=c11 -Wall -Wextra -pthread -DXE_BUILD_COMMIT='\"unknown\"' -DXE_NUMERIC_SOURCE_HASH='\"735388758950fdb808c946eec8939ce9b4af98ebfb658c2613a554cd5987b540\"' -DXE_NUMERIC_CFLAGS_HASH='\"2a745642dea153a3544b635f7d98d832ff8206bf8b8df1fe3d3111cac5c259f4\"' -o xenolith main.o xenolith.o format.o vision.o json.o profile.o kvstore.o conversation.o runtime.o serve.o xenolith_gpu_spv.o -lm -lze_loader",
+      "/usr/bin/ld: warning: xenolith_gpu_spv.o: missing .note.GNU-stack section implies executable stack",
+      "/usr/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker",
+      "gcc -O2 -std=c11 -Wall -Wextra -pthread -I. -o tests/test_cli_context tests/test_cli_context.c",
+      "./tests/test_cli_context",
+      "cli context: 140 cases PASS"
+    ]
+  },
+  "runtime-build-check.log": {
+    "sha256": "f88c2bef095fb9896101410428f5c018d3de64d397aea0d6591071698583146b",
+    "last_lines": [
+      "kvstore: publish find=ok PASS",
+      "kvstore: load and hits PASS",
+      "kvstore: eviction save=ok/ok find=ok/miss/ok same=1/1 PASS",
+      "kvstore: pin PASS",
+      "kvstore: mismatch PASS",
+      "kvstore: atomic ids hits eviction pin isolation PASS",
+      "./tests/test_prefill_session route-reset",
+      "prefill-route-reset: 33 cases PASS"
+    ]
+  },
+  "vision-session-final70.log": {
+    "sha256": "d6ae6ab6bea33ecf4434d6b19553f99dd36f965850146eb92c908a9ec30e8425",
+    "last_lines": [
+      "vision session: identity, snapshot, COW, promotion, replay and rewind PASS"
+    ]
+  },
+  "vision-session-final1120.log": {
+    "sha256": "d6ae6ab6bea33ecf4434d6b19553f99dd36f965850146eb92c908a9ec30e8425",
+    "last_lines": [
+      "vision session: identity, snapshot, COW, promotion, replay and rewind PASS"
+    ]
+  },
+  "final-test_profile.log": {
+    "sha256": "7900de0de53725c588abc9236607005815f763c985317add0845a50bda5052de",
+    "last_lines": [
+      "test_profile: all checks passed"
+    ]
+  },
+  "final-test_runtime.log": {
+    "sha256": "2134be182e0d10d5960bf329b60e09d488a35d10924f6cd0616a9ebe55fcf78d",
+    "last_lines": [
+      "test_runtime: all checks passed"
+    ]
+  },
+  "final-test_runtime_model.log": {
+    "sha256": "a0a59a2655a2973892e1ba73618119fbad86f0987828243655ec094fec5605c6",
+    "last_lines": [
+      "test_runtime_model: all checks passed"
+    ]
+  },
+  "final-test_serve.log": {
+    "sha256": "58aba59a6ecd160d229c5c420dc831246fb51181e319ea7b75c5c92ebb708978",
+    "last_lines": [
+      "test_serve: long session 241211 tokens, rebuild 1003380 bytes in 154 ms, history 1006418 bytes in 2 ms",
+      "test_serve: all checks passed"
+    ]
+  },
+  "final-test_serve_model.log": {
+    "sha256": "37ab7d3af211c787c6cb045b4257eea70bac940c0856caf1291b1dc8e10b1f3c",
+    "last_lines": [
+      "test_serve_model: all checks passed"
+    ]
+  },
+  "no-trace-fix-check.log": {
+    "sha256": "5cc35a50f6052247dcc13eaf902b727c24d99698a39ede36e1b2531a20a01832",
+    "last_lines": [
+      "kvstore: publish find=ok PASS",
+      "kvstore: load and hits PASS",
+      "kvstore: eviction save=ok/ok find=ok/miss/ok same=1/1 PASS",
+      "kvstore: pin PASS",
+      "kvstore: mismatch PASS",
+      "kvstore: atomic ids hits eviction pin isolation PASS",
+      "./tests/test_prefill_session route-reset",
+      "prefill-route-reset: 33 cases PASS"
+    ]
+  }
+}

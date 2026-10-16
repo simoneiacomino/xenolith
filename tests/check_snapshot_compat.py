@@ -63,7 +63,7 @@ def main():
         tmp = Path(tmp)
 
         def compile_fixture(name, source, commit, numeric_hash, cflags_hash, compiler=None,
-                            fixture="snapshot_compat_fixture.c"):
+                            fixture="snapshot_compat_fixture.c", kernel=gpu_object):
             output = tmp / name
             defines = {
                 "SNAPSHOT_ENGINE_SOURCE": str(source / "xenolith.c"),
@@ -76,8 +76,12 @@ def main():
             command += [f'-D{key}="{value}"' for key, value in defines.items()]
             if compiler:
                 command += ["-U__VERSION__", f'-D__VERSION__="{compiler}"']
-            command += [ROOT / "tests" / fixture, source / "format.c",
-                        gpu_object, "-Wl,--gc-sections", "-lm", "-lze_loader", "-o", output]
+            command += [ROOT / "tests" / fixture, source / "format.c"]
+            if (source / "vision.c").is_file():
+                command += [source / "vision.c"]
+            if (source / "vision_encoder.c").is_file():
+                command += [source / "vision_encoder.c"]
+            command += [kernel, "-Wl,--gc-sections", "-lm", "-lze_loader", "-o", output]
             run(command)
             return output
 
@@ -188,10 +192,18 @@ def main():
                     (legacy / name).write_bytes(data)
                 if version == 1 and source_hash(legacy) != "528b6db377397368158a28dc155047628ac30a5a06c38aa6c32a5680ccd56d84":
                     parser.error("legacy source does not match the supported baseline")
+                legacy_kernel = gpu_object
                 if (legacy / "xenolith.cl").read_bytes() != (ROOT / "xenolith.cl").read_bytes():
-                    parser.error("kernel changed: build a separate historical kernel for inference checks")
+                    # Compile the actual historical producer, including its kernel.
+                    run(["ocloc", "compile", "-file", "xenolith.cl", "-device", "xe-lp",
+                         "-spv_only", "-output", "xenolith_gpu", "-output_no_suffix",
+                         "-out_dir", ".", "-options", "-cl-std=CL3.0", "-q"], cwd=legacy)
+                    run(["ld", "-r", "-b", "binary", "-o", "xenolith_gpu_spv.o", "xenolith_gpu.spv"], cwd=legacy)
+                    run(["objcopy", "--rename-section", ".data=.rodata,alloc,load,readonly,data,contents",
+                         "xenolith_gpu_spv.o"], cwd=legacy)
+                    legacy_kernel = legacy / "xenolith_gpu_spv.o"
                 old = compile_fixture(f"metadata-v{version}-writer", legacy, commit[:9],
-                                      source_hash(legacy), flags_hash)
+                                      source_hash(legacy), flags_hash, kernel=legacy_kernel)
                 saved = tmp / f"metadata-v{version}.xkv"
                 exercise(old, "write", saved)
                 legacy_bytes = saved.read_bytes()
@@ -210,7 +222,7 @@ def main():
                 exercise(old, "write", large, capacity=2049, tokens=1057)
                 exercise(a, "read", large, "model-mismatch", capacity=2049, tokens=1057)
                 large.unlink()
-                writers.append((version, commit, legacy))
+                writers.append((version, commit, legacy, legacy_kernel))
                 print(f"snapshot compatibility: metadata v{version} rejected without state changes PASS", flush=True)
             if args.model:
                 new_model = compile_fixture("current-model", ROOT, "build-a", source_hash(ROOT),
@@ -219,10 +231,10 @@ def main():
                                               "different-flags", "compat-test-compiler",
                                               fixture="snapshot_compat_model.c")
                 pairs = [("v2 content cross-build", new_model, other_model, [])]
-                for version, commit, legacy in writers:
+                for version, commit, legacy, legacy_kernel in writers:
                     old_model = compile_fixture(f"metadata-v{version}-model", legacy, commit[:9],
                                                 source_hash(legacy), flags_hash,
-                                                fixture="snapshot_compat_model.c")
+                                                fixture="snapshot_compat_model.c", kernel=legacy_kernel)
                     pairs.append((f"metadata v{version} -> replay", old_model, new_model,
                                   ["model-mismatch"]))
                 for label, writer, reader, extra in pairs:

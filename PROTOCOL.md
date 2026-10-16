@@ -1,7 +1,7 @@
 # Xenolith wire protocol
 
-This document describes protocol version 1 as implemented by [serve.c](serve.c).
-It is a local, text-only protocol for one served model. A client can maintain a
+This document describes protocol versions 1 and 2 as implemented by [serve.c](serve.c).
+It is a local protocol for one served model. A client can maintain a
 durable conversation by appending turns, or send a complete transcript for a
 temporary generation. Xenolith generates tool calls; the client executes tools.
 
@@ -30,6 +30,13 @@ available, otherwise `wire.sock` inside the state directory. Default state and
 cache directories are `$XDG_STATE_HOME/xenolith` and `$XDG_CACHE_HOME/xenolith/kv`,
 falling back to `~/.local/state/xenolith` and `~/.cache/xenolith/kv`.
 
+Without `--mmproj`, the service exposes the existing text-only protocol 1.
+With `--mmproj /path/to/mmproj-F16.gguf`, it exposes protocol 2 with images,
+with the reference artifacts documented in [tests/vision/manifest.json](tests/vision/manifest.json).
+Vision defaults to context 65536 and accepts only `--ctx 65536|131072`.
+Clients must inspect `describe.protocol` and `describe.vision` before sending
+images. A protocol 1 service rejects image requests and visual conversations.
+
 `--cache-budget` also determines model fingerprint preparation. With a positive
 budget (including the default), `serve` and `wire` compute the full GGUF SHA-256
 once during startup, before repacking releases source pages. All snapshot
@@ -37,16 +44,23 @@ fingerprints are ready before the socket accepts clients or stdin requests are
 processed. Startup diagnostics go to stderr; fingerprint computation does not
 occur during prefill, decode or finalization.
 
-With `--cache-budget 0`, startup skips model fingerprint computation as well as
-disk KV cache reads and writes. Durable conversation history and in-memory KV
+For text-only services, `--cache-budget 0` skips model fingerprint computation
+as well as disk KV cache reads and writes. Durable conversation history and in-memory KV
 reuse still work. The standalone `chat`, `run`, `info`, `oracle` and `bench`
-commands also skip model fingerprint computation.
+commands also skip model fingerprint computation when used without images.
 
 This is a service-wide startup decision, not a per-request choice. An
 `ephemeral` request sent to a cache-enabled service still uses an engine whose
-fingerprints were prepared at startup. For an ephemeral-only service that
+fingerprints were prepared at startup. For a text-only, ephemeral-only service that
 avoids this work, start it with `--cache-budget 0`. A positive budget prepares
 the fingerprints even if opening the cache directory later fails.
+
+With `--mmproj`, vision also needs full model and projector identities for
+image records and derived embeddings, independently of disk KV caching. These
+hashes and the visual numerical identity are prepared during startup even with
+`--cache-budget 0`; that option still disables both disk caches. Model hashing
+occurs before repacking and is reused when vision is enabled. CLI image commands
+likewise prepare identities before encoding the image.
 
 Each frame is one JSON object followed by a newline. Escape newlines inside
 strings; do not pretty-print a frame across lines. There are no request IDs or
@@ -70,6 +84,11 @@ steps on other connections. On the generating connection, commands other than
 `cancel` receive `busy`. Cancellation is cooperative, not an interrupt of a
 running kernel.
 
+In protocol 2, each frame is limited to 96 MiB, independently of context size.
+Image preparation in `append`, `rebuild` and `ephemeral` is synchronous; its
+cost precedes the reply or generation stream and is excluded from the existing
+prefill/decode counters. Cancellation is available once generation has started.
+
 Requests use an `op` string. Ordinary replies have `ok: true` and operation
 fields, or `ok: false`, `code` and `error`. Successful `generate` and `ephemeral`
 requests enter the event stream directly: **there is no initial `ok: true` ACK**.
@@ -82,7 +101,7 @@ Send `{"op":"describe"}` first. The reply contains:
 | Field | Meaning |
 |---|---|
 | `ok` | `true`. |
-| `protocol` | `1`. Reject versions your client does not support. |
+| `protocol` | `1` for text-only services, `2` when vision is enabled. Reject versions your client does not support. |
 | `model` | Served model identifier; there is no model-selection field on requests. |
 | `context_window` | Maximum context size in tokens. |
 | `max_output` | Advertised output limit. Available context can impose a lower limit. |
@@ -139,6 +158,7 @@ in the table are in addition to `ok: true`; “empty” means `{"ok":true}`.
 | `checkpoint` | None | `saved`, `tokens`, and `reason` when not saved; attempts a snapshot of the bound session. |
 | `pending` | None | `calls`: unresolved tool-call IDs in the bound session. |
 | `history` | None | `entries`: the bound session's visible history. |
+| `media` (v2) | `image_id`, optional byte `offset` and `limit` | `offset`, `total`, Base64 `data`; retrieves media belonging to the bound conversation. |
 | `cancel` | None | Empty ACK for an active or queued generation on this connection; see cancellation below. |
 
 `append`, `generate`, `rebuild`, `rewind`, `rewind_cost`, `checkpoint`, `pending`
@@ -184,6 +204,54 @@ call if no name is supplied. Preserve result order when several calls use the
 same tool name. Imported `call_id` values are not preserved:
 rebuild creates new IDs. Read `history` afterward to recover the new markers and
 call IDs. Use ordinary `append` with the server-issued `call_id` for live results.
+
+### Images in protocol 2
+
+`describe.vision` advertises `formats` (`png`, `jpeg`), `budgets`
+(`70,140,280,560,1120`), `default_budget` (280), `max_bytes` (50331648),
+`max_context_media_bytes` (268435456) and `media_refs` (`true`).
+Each user message or tool result can include one image, alongside optional text:
+
+```json
+{"op":"append","role":"user","text":"What is shown?","image":{"data":"<Base64 PNG/JPEG>","budget":280}}
+```
+
+The same `image` field works on user/tool messages in `rebuild` and `ephemeral`.
+Assistant and system images are rejected. `budget` is optional; its value is an
+upper bound, and the actual visual length depends on aspect ratio. All valid
+image rows occupy context positions; launch padding occupies none. Multiple
+images use separate messages. Images are decoded as RGB, with EXIF orientation
+and alpha composited on white. Limits are 48 MiB encoded per image, 32 million
+decoded pixels, 16384 pixels per original dimension and 256 MiB of media in
+the active context. Encoded Base64 must be canonical standard Base64 with
+padding, without whitespace or URL-safe substitutions.
+
+`history.entries[].image` contains `id`, `bytes`, `budget` and actual `rows`.
+The `id` is SHA-256 of the original encoded bytes, scoped to the bound
+conversation, including records retained after rewind. It is a media reference,
+not a KV identity. To reuse retained media, provide exactly one of `data` or `id`:
+
+```json
+{"op":"append","role":"user","text":"Look again.","image":{"id":"<64 hex characters>","budget":70}}
+{"op":"media","image_id":"<64 hex characters>","offset":0,"limit":262144}
+```
+
+`media` defaults to a 256 KiB chunk. Its `limit` must be 1..50331648; `offset`
+must be 0..`total`. The last chunk can be shorter or empty at EOF. Decode each
+returned chunk independently and advance by its decoded byte count. Ephemeral
+images are not persisted and do not create retrievable media IDs.
+
+The conversation retains original image bytes, preprocessing metadata and
+model fingerprints, so deleting the original file or derived embedding cache
+does not lose the image. Derived embeddings live in `CACHE/vision-v1`, with
+a separate 2 GiB eviction budget; `--cache-budget` bounds KV checkpoints and
+shared segments. `--cache-budget 0` disables both disk caches without deleting
+their files or transcript media. Their identity includes content, resized pixels,
+budget, both weight fingerprints, source/compiler/SPIR-V fingerprints, GPU identity,
+driver version and the compiled native GPU module. Visual KV snapshots bind
+the complete mixed input and numerical fingerprint. A mismatch triggers replay;
+a missing or corrupt source is an explicit error. Old model artifacts require
+rebuilding the conversation with the intended model and media.
 
 ### Generation settings
 
@@ -369,9 +437,15 @@ invalidate this identity.
 
 Older checkpoints with header-only model identities, including v1 from
 `68b8fbf55` and earlier v2 writers, are rejected as `model_mismatch` and rebuilt.
-Their original tensor contents cannot be verified retroactively. The checkpoint
-layout remains v2 and its numerical ABI is unchanged; current writers continue
+Their original tensor contents cannot be verified retroactively. The text
+checkpoint layout remains v2 and its numerical ABI is unchanged; current writers continue
 to support reuse across builds with compatible numerical settings.
+
+Visual snapshots use format v3 with a mixed-input identity and numerical ABI.
+The earlier visual-v2 format is recognized separately from text-v2 and falls
+back to media replay. Prefix validation includes image content, budget and
+complete-image boundaries. Incompatible cache never discards the transcript or
+source media. Older engines cannot read the new visual checkpoint format.
 
 ## History and rewinding
 
@@ -461,3 +535,17 @@ terminal event. Optional reports may also be absent on older engines.
 The external protocol is implemented in [serve.c](serve.c); [runtime.h](runtime.h)
 defines the C orchestration API behind it. The `wire` CLI command and socket
 name remain unchanged by the internal rename to `runtime`.
+
+Vision uses the same in-tree full SHA-256 implementation as text checkpoints,
+with Intel SHA instructions when available and a portable C fallback. It has no
+OpenSSL dependency or metadata-only verification mode. Model and projector
+structure must match the supported architecture, tensor shapes and types.
+Reference hashes identify the tested artifacts; different compatible weights
+load with a diagnostic and distinct cache identities. Structural compatibility
+does not certify the quality of a fine-tune or its pairing with a projector.
+
+Persisted source images survive weight changes. The runtime derives embeddings
+and KV under the current identities; it never reuses computations from different
+weights. Original media integrity and preprocessing checks still apply. Older
+metadata-based visual records can supply media for replay, but their identities
+cannot establish compatible computed state.

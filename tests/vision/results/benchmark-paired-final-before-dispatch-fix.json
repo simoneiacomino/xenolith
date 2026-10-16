@@ -1,0 +1,701 @@
+{
+  "order": [
+    "baseline",
+    "candidate",
+    "candidate",
+    "baseline"
+  ],
+  "repetitions_per_run": 5,
+  "runs_per_variant": 2,
+  "contexts": [
+    65536,
+    131072
+  ],
+  "text_prefill_rows": 512,
+  "warmup": true,
+  "delay_seconds": 1,
+  "records": [
+    {
+      "file": "paired-final-ctx65536-1-base.jsonl",
+      "variant": "base",
+      "context": 65536,
+      "sha256": "e3ce38595ceccf848e9e08a410ec46ad6415038a3d908d912a3b638a88adb280",
+      "samples": [
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "model_size": 14233222264,
+          "backends": "Level Zero,CPU",
+          "implementation": "Level Zero+CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 2048,
+          "n_gen": 0,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:12:13Z",
+          "avg_ns": 9231815531,
+          "stddev_ns": 138057127,
+          "avg_ts": 221.880868,
+          "stddev_ts": 3.2891,
+          "samples_ns": [
+            9445033127,
+            9190586199,
+            9281517259,
+            9089080160,
+            9152860909
+          ],
+          "samples_ts": [
+            216.833543,
+            222.836711,
+            220.653579,
+            225.325331,
+            223.755176
+          ]
+        },
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "model_size": 14233222264,
+          "backends": "CPU",
+          "implementation": "CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 0,
+          "n_gen": 128,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:13:00Z",
+          "avg_ns": 5374039865,
+          "stddev_ns": 113585439,
+          "avg_ts": 23.826932,
+          "stddev_ts": 0.515957,
+          "samples_ns": [
+            5177955426,
+            5455581843,
+            5443962438,
+            5414010119,
+            5378689501
+          ],
+          "samples_ts": [
+            24.720182,
+            23.462209,
+            23.512286,
+            23.642364,
+            23.797618
+          ]
+        }
+      ]
+    },
+    {
+      "file": "paired-final-ctx65536-2-candidate.jsonl",
+      "variant": "candidate",
+      "context": 65536,
+      "sha256": "77523ea8f562291f68f540e7e822034e5292b789b1e43cd41920979ee2ea7d10",
+      "samples": [
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "context_window": 65536,
+          "text_prefill_rows": 512,
+          "model_size": 14233222264,
+          "backends": "Level Zero,CPU",
+          "implementation": "Level Zero+CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 2048,
+          "n_gen": 0,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:13:48Z",
+          "avg_ns": 9212528485,
+          "stddev_ns": 171772552,
+          "avg_ts": 222.36675,
+          "stddev_ts": 4.075507,
+          "samples_ns": [
+            9104370431,
+            9496338700,
+            9255047596,
+            9094233904,
+            9112651796
+          ],
+          "samples_ts": [
+            224.94691,
+            215.662064,
+            221.284653,
+            225.197639,
+            224.742484
+          ]
+        },
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "context_window": 65536,
+          "text_prefill_rows": 512,
+          "model_size": 14233222264,
+          "backends": "CPU",
+          "implementation": "CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 0,
+          "n_gen": 128,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:14:36Z",
+          "avg_ns": 5371172800,
+          "stddev_ns": 117646073,
+          "avg_ts": 23.840282,
+          "stddev_ts": 0.534196,
+          "samples_ns": [
+            5171126332,
+            5477339495,
+            5429852005,
+            5390969466,
+            5386576704
+          ],
+          "samples_ts": [
+            24.752828,
+            23.36901,
+            23.573387,
+            23.74341,
+            23.762773
+          ]
+        }
+      ]
+    },
+    {
+      "file": "paired-final-ctx65536-3-candidate.jsonl",
+      "variant": "candidate",
+      "context": 65536,
+      "sha256": "21b1fd16f3409ef3b6df3ef5b7543a17db301a637166e7ff25d9985f95bd8171",
+      "samples": [
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "context_window": 65536,
+          "text_prefill_rows": 512,
+          "model_size": 14233222264,
+          "backends": "Level Zero,CPU",
+          "implementation": "Level Zero+CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 2048,
+          "n_gen": 0,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:15:23Z",
+          "avg_ns": 9270524610,
+          "stddev_ns": 173438813,
+          "avg_ts": 220.976006,
+          "stddev_ts": 4.061557,
+          "samples_ns": [
+            9279422801,
+            9229788655,
+            9561683707,
+            9150561732,
+            9131166154
+          ],
+          "samples_ts": [
+            220.703383,
+            221.890238,
+            214.188219,
+            223.811397,
+            224.286796
+          ]
+        },
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "context_window": 65536,
+          "text_prefill_rows": 512,
+          "model_size": 14233222264,
+          "backends": "CPU",
+          "implementation": "CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 0,
+          "n_gen": 128,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:16:11Z",
+          "avg_ns": 5385063709,
+          "stddev_ns": 105779785,
+          "avg_ts": 23.7769,
+          "stddev_ts": 0.474173,
+          "samples_ns": [
+            5213191017,
+            5498488188,
+            5430875218,
+            5400698165,
+            5382065959
+          ],
+          "samples_ts": [
+            24.5531,
+            23.279126,
+            23.568945,
+            23.700639,
+            23.782689
+          ]
+        }
+      ]
+    },
+    {
+      "file": "paired-final-ctx65536-4-base.jsonl",
+      "variant": "base",
+      "context": 65536,
+      "sha256": "a93a9b8738ac81c564eb82287397355198b11872211621f0a3db81defdedcfee",
+      "samples": [
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "model_size": 14233222264,
+          "backends": "Level Zero,CPU",
+          "implementation": "Level Zero+CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 2048,
+          "n_gen": 0,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:16:59Z",
+          "avg_ns": 9348265546,
+          "stddev_ns": 169475295,
+          "avg_ts": 219.135164,
+          "stddev_ts": 3.936826,
+          "samples_ns": [
+            9605603836,
+            9213738180,
+            9400085699,
+            9181471834,
+            9340428182
+          ],
+          "samples_ts": [
+            213.208876,
+            222.276774,
+            217.870354,
+            223.057919,
+            219.261897
+          ]
+        },
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "model_size": 14233222264,
+          "backends": "CPU",
+          "implementation": "CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 0,
+          "n_gen": 128,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:17:47Z",
+          "avg_ns": 5410336150,
+          "stddev_ns": 117706965,
+          "avg_ts": 23.667381,
+          "stddev_ts": 0.515033,
+          "samples_ns": [
+            5247370107,
+            5575132006,
+            5441044635,
+            5404831089,
+            5383302911
+          ],
+          "samples_ts": [
+            24.393172,
+            22.959098,
+            23.524894,
+            23.682516,
+            23.777224
+          ]
+        }
+      ]
+    },
+    {
+      "file": "paired-final-ctx131072-1-base.jsonl",
+      "variant": "base",
+      "context": 131072,
+      "sha256": "9a8467e9b2b8f920c92c4311fe51d4fc4506f335531ee8310ace1aeb53b86579",
+      "samples": [
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "model_size": 14233222264,
+          "backends": "Level Zero,CPU",
+          "implementation": "Level Zero+CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 2048,
+          "n_gen": 0,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:18:35Z",
+          "avg_ns": 9237867668,
+          "stddev_ns": 122160709,
+          "avg_ts": 221.727142,
+          "stddev_ts": 2.926593,
+          "samples_ns": [
+            9256534051,
+            9401769395,
+            9296355230,
+            9119076527,
+            9115603139
+          ],
+          "samples_ts": [
+            221.249119,
+            217.831337,
+            220.301392,
+            224.584144,
+            224.669719
+          ]
+        },
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "model_size": 14233222264,
+          "backends": "CPU",
+          "implementation": "CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 0,
+          "n_gen": 128,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:19:23Z",
+          "avg_ns": 5383399616,
+          "stddev_ns": 131382356,
+          "avg_ts": 23.788378,
+          "stddev_ts": 0.59329,
+          "samples_ns": [
+            5165425466,
+            5517480466,
+            5438450994,
+            5405179492,
+            5390461663
+          ],
+          "samples_ts": [
+            24.780147,
+            23.198995,
+            23.536114,
+            23.68099,
+            23.745647
+          ]
+        }
+      ]
+    },
+    {
+      "file": "paired-final-ctx131072-2-candidate.jsonl",
+      "variant": "candidate",
+      "context": 131072,
+      "sha256": "ecdbc70fba4b1f8815ee7011f972916d04d811e223d4e3865706563c1e0c46eb",
+      "samples": [
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "context_window": 131072,
+          "text_prefill_rows": 512,
+          "model_size": 14233222264,
+          "backends": "Level Zero,CPU",
+          "implementation": "Level Zero+CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 2048,
+          "n_gen": 0,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:20:11Z",
+          "avg_ns": 9207175553,
+          "stddev_ns": 182146781,
+          "avg_ts": 222.50325,
+          "stddev_ts": 4.299455,
+          "samples_ns": [
+            9186571205,
+            9091308288,
+            9526085040,
+            9132003224,
+            9099910010
+          ],
+          "samples_ts": [
+            222.934102,
+            225.270108,
+            214.988633,
+            224.266237,
+            225.057171
+          ]
+        },
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "context_window": 131072,
+          "text_prefill_rows": 512,
+          "model_size": 14233222264,
+          "backends": "CPU",
+          "implementation": "CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 0,
+          "n_gen": 128,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:20:59Z",
+          "avg_ns": 5379852794,
+          "stddev_ns": 142371030,
+          "avg_ts": 23.806103,
+          "stddev_ts": 0.643968,
+          "samples_ns": [
+            5146116553,
+            5530776620,
+            5436218634,
+            5401460319,
+            5384691842
+          ],
+          "samples_ts": [
+            24.873125,
+            23.143224,
+            23.545779,
+            23.697295,
+            23.771091
+          ]
+        }
+      ]
+    },
+    {
+      "file": "paired-final-ctx131072-3-candidate.jsonl",
+      "variant": "candidate",
+      "context": 131072,
+      "sha256": "f4e12769e0bd912a31fdde65ae2c275ce359dea5dede45ceef05c4acbb07aced",
+      "samples": [
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "context_window": 131072,
+          "text_prefill_rows": 512,
+          "model_size": 14233222264,
+          "backends": "Level Zero,CPU",
+          "implementation": "Level Zero+CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 2048,
+          "n_gen": 0,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:21:47Z",
+          "avg_ns": 9307936584,
+          "stddev_ns": 138264445,
+          "avg_ts": 220.066307,
+          "stddev_ts": 3.283872,
+          "samples_ns": [
+            9433938508,
+            9144752297,
+            9417983725,
+            9369477710,
+            9173530681
+          ],
+          "samples_ts": [
+            217.088547,
+            223.953578,
+            217.456311,
+            218.582088,
+            223.251011
+          ]
+        },
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "context_window": 131072,
+          "text_prefill_rows": 512,
+          "model_size": 14233222264,
+          "backends": "CPU",
+          "implementation": "CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 0,
+          "n_gen": 128,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:22:36Z",
+          "avg_ns": 5381567770,
+          "stddev_ns": 142864793,
+          "avg_ts": 23.79854,
+          "stddev_ts": 0.642873,
+          "samples_ns": [
+            5155028013,
+            5542172932,
+            5446439847,
+            5394711845,
+            5369486212
+          ],
+          "samples_ts": [
+            24.830127,
+            23.095634,
+            23.501591,
+            23.726939,
+            23.838407
+          ]
+        }
+      ]
+    },
+    {
+      "file": "paired-final-ctx131072-4-base.jsonl",
+      "variant": "base",
+      "context": 131072,
+      "sha256": "9500a6b200b18bcf2d58d9fb26be708b9fdb97d952bdec52e9ae28a1c134222b",
+      "samples": [
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "model_size": 14233222264,
+          "backends": "Level Zero,CPU",
+          "implementation": "Level Zero+CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 2048,
+          "n_gen": 0,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:23:24Z",
+          "avg_ns": 9318016037,
+          "stddev_ns": 93260900,
+          "avg_ts": 219.806938,
+          "stddev_ts": 2.205834,
+          "samples_ns": [
+            9232232576,
+            9364081440,
+            9416542784,
+            9371896766,
+            9205326618
+          ],
+          "samples_ts": [
+            221.8315,
+            218.708051,
+            217.489587,
+            218.525668,
+            222.479884
+          ]
+        },
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "model_size": 14233222264,
+          "backends": "CPU",
+          "implementation": "CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 0,
+          "n_gen": 128,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:24:12Z",
+          "avg_ns": 5378694301,
+          "stddev_ns": 151701217,
+          "avg_ts": 23.813085,
+          "stddev_ts": 0.686596,
+          "samples_ns": [
+            5132544576,
+            5538564045,
+            5454831240,
+            5389092212,
+            5378439430
+          ],
+          "samples_ts": [
+            24.938897,
+            23.110683,
+            23.465437,
+            23.751681,
+            23.798725
+          ]
+        }
+      ]
+    }
+  ],
+  "summary": [
+    {
+      "context": 65536,
+      "test": "pp2048",
+      "baseline_median_ts": 221.46517649999998,
+      "candidate_median_ts": 222.8508175,
+      "change_percent": 0.6256699233254004,
+      "baseline_samples": 10,
+      "candidate_samples": 10,
+      "baseline_min_max": [
+        213.208876,
+        225.325331
+      ],
+      "candidate_min_max": [
+        214.188219,
+        225.197639
+      ]
+    },
+    {
+      "context": 65536,
+      "test": "tg128",
+      "baseline_median_ts": 23.66244,
+      "candidate_median_ts": 23.7220245,
+      "change_percent": 0.25181046417868114,
+      "baseline_samples": 10,
+      "candidate_samples": 10,
+      "baseline_min_max": [
+        22.959098,
+        24.720182
+      ],
+      "candidate_min_max": [
+        23.279126,
+        24.752828
+      ]
+    },
+    {
+      "context": 131072,
+      "test": "pp2048",
+      "baseline_median_ts": 220.77525550000001,
+      "candidate_median_ts": 223.0925565,
+      "change_percent": 1.0496198927510525,
+      "baseline_samples": 10,
+      "candidate_samples": 10,
+      "baseline_min_max": [
+        217.489587,
+        224.669719
+      ],
+      "candidate_min_max": [
+        214.988633,
+        225.270108
+      ]
+    },
+    {
+      "context": 131072,
+      "test": "tg128",
+      "baseline_median_ts": 23.7133185,
+      "candidate_median_ts": 23.712117,
+      "change_percent": -0.00506677291919333,
+      "baseline_samples": 10,
+      "candidate_samples": 10,
+      "baseline_min_max": [
+        23.110683,
+        24.938897
+      ],
+      "candidate_min_max": [
+        23.095634,
+        24.873125
+      ]
+    }
+  ],
+  "executables": {
+    "base": "c13ec666a08a6b994ba042b13205b95a0b137bc412ef9b98d10465f3c89a7e74",
+    "candidate": "4773f754ca1a0e09ac16085bc0516fc42b5581acccefc9b437cd3901c8240256"
+  }
+}

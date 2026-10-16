@@ -4,6 +4,7 @@
 
 #include "xenolith.h"
 #include "xenolith_internal.h"
+#include "vision_encoder.h"
 #include "format.h"
 
 #include <errno.h>
@@ -68,6 +69,7 @@ size_t xe_test_output_calls;
 #define XE_EXPERTS 128
 #define XE_EXPERTS_USED 8
 #define XE_EXPERT_FFN 704
+#define XE_PREFILL_FFN_MAX_ROWS 512
 #define XE_SWA_WINDOW 1024
 #define XE_SWA_KV_HEADS 8
 #define XE_SWA_HEAD_DIM 256
@@ -129,6 +131,11 @@ typedef struct {
     int16_t *sigma;
     int n;
 } xe_q8;
+
+typedef enum {
+    XE_ATTENTION_CAUSAL,
+    XE_ATTENTION_VISUAL
+} xe_attention_mode;
 
 typedef struct {
     int32_t id;
@@ -196,6 +203,7 @@ typedef struct {
     ze_kernel_handle_t prefill_attn_online_b8_global_shared;
     ze_kernel_handle_t prefill_attn_online_b8_global_cow;
     ze_kernel_handle_t prefill_attn_online_b8_swa;
+    ze_kernel_handle_t prefill_attn_online_b8_swa_visual;
     ze_kernel_handle_t prefill_heads_q8;
     ze_kernel_handle_t prefill_rms_residual;
     ze_kernel_handle_t prefill_swa_stage;
@@ -218,14 +226,20 @@ typedef struct {
     ze_kernel_handle_t prefill_expert_geglu_q8;
     ze_kernel_handle_t prefill_route_reduce;
     ze_kernel_handle_t prefill_ffn_finish;
+    xe_vision_gpu vision;
 } xe_gpu;
 
 struct xe_engine {
     int context;
+    xe_vision_model vision_model;
+    void *vision_weights;
+    uint8_t vision_numeric_hash[32];
+    int vision_numeric_hash_ready;
     void *map;
     size_t map_len;
     int map_fd;
     const void *data;
+    size_t tensor_directory_pos;
     size_t header_len;   /* bytes before the tensor data section: metadata + tensor directory */
     uint32_t gguf_version;
     char *name;
@@ -296,6 +310,17 @@ struct xe_engine {
     int model_content_hash_ready;
 };
 
+typedef struct {
+    size_t references;
+    xe_owned_input owned;
+} xe_visual_context;
+
+static void xe_visual_context_release(xe_visual_context *v) {
+    if (v && --v->references == 0) { xe_input_free(&v->owned);free(v); }
+}
+
+static int xe_session_rewind_input(xe_session *s, int position);
+
 struct xe_session {
     xe_engine *engine;
     _Float16 *swa_k;
@@ -311,6 +336,11 @@ struct xe_session {
     size_t workspace_size;
     void *prefill_workspace;
     size_t prefill_workspace_size;
+    int prefill_capacity;
+    int text_prefill_rows;
+    xe_visual_context *visual_context;
+    int visual_prompt_end;
+    uint8_t visual_prompt_hash[32];
     float *hidden;
     float *q;
     float *k;
@@ -501,6 +531,14 @@ static xe_gpu_status xe_gpu_classify(uint32_t id) {
     }
 }
 
+void *xe_vision_alloc_shared(xe_engine *e, size_t bytes) {
+    return xe_alloc(e, bytes, XE_MEM_SHARED);
+}
+
+void xe_vision_free_shared(xe_engine *e, void *pointer) {
+    xe_free(e, pointer, XE_MEM_SHARED);
+}
+
 static xe_relaxed_limits xe_gpu_get_relaxed_limits(ze_driver_handle_t driver) {
     uint32_t count = 0;
     xe_ze_check("zeDriverGetExtensionProperties count",
@@ -600,6 +638,9 @@ static void xe_gpu_init(xe_engine *e) {
         xe_ze_fatal("zeModuleCreate", result);
     }
     if (log) xe_ze_check("zeModuleBuildLogDestroy", zeModuleBuildLogDestroy(log));
+
+    e->gpu.vision.module = e->gpu.module;
+    e->gpu.vision.commands = e->gpu.commands;
 
     const char *prefill_names[40] = {
         "xe_prefill_rms_scale",
@@ -729,6 +770,12 @@ static void xe_gpu_destroy(xe_engine *e) {
     if (e->gpu.commands)
         xe_ze_check("zeCommandListHostSynchronize close",
                     zeCommandListHostSynchronize(e->gpu.commands, UINT64_MAX));
+    for (size_t i = 0; i < sizeof e->gpu.vision.kernels / sizeof *e->gpu.vision.kernels; i++)
+        if (e->gpu.vision.kernels[i])
+            xe_ze_check("zeKernelDestroy vision", zeKernelDestroy(e->gpu.vision.kernels[i]));
+    if (e->gpu.prefill_attn_online_b8_swa_visual)
+        xe_ze_check("zeKernelDestroy prefill visual attention",
+                    zeKernelDestroy(e->gpu.prefill_attn_online_b8_swa_visual));
     if (e->gpu.prefill_ffn_finish)
         xe_ze_check("zeKernelDestroy prefill ffn finish",
                     zeKernelDestroy(e->gpu.prefill_ffn_finish));
@@ -854,6 +901,11 @@ static void xe_gpu_destroy(xe_engine *e) {
         xe_ze_check("zeCommandListDestroy", zeCommandListDestroy(e->gpu.commands));
     if (e->gpu.context) xe_ze_check("zeContextDestroy", zeContextDestroy(e->gpu.context));
     memset(&e->gpu, 0, sizeof e->gpu);
+}
+
+static void xe_gpu_wait(xe_engine *e) {
+    xe_ze_check("zeCommandListHostSynchronize",
+                zeCommandListHostSynchronize(e->gpu.commands, UINT64_MAX));
 }
 
 static void xe_gpu_pointer_arg(ze_kernel_handle_t kernel, uint32_t index,
@@ -991,12 +1043,31 @@ static void __attribute__((unused)) xe_prefill_qkv_append(
                                                 &groups, NULL, 0, NULL));
 }
 
+static ze_kernel_handle_t xe_prefill_visual_attention_kernel(xe_engine *e) {
+    if (!e->gpu.prefill_attn_online_b8_swa_visual) {
+        ze_kernel_desc_t desc = {
+            .stype = ZE_STRUCTURE_TYPE_KERNEL_DESC,
+            .pKernelName = "xe_prefill_attn_online_b8_swa_visual"
+        };
+        xe_ze_check("zeKernelCreate prefill visual attention",
+                    zeKernelCreate(e->gpu.module, &desc,
+                                   &e->gpu.prefill_attn_online_b8_swa_visual));
+        xe_ze_check("zeKernelSetGroupSize prefill visual attention",
+                    zeKernelSetGroupSize(e->gpu.prefill_attn_online_b8_swa_visual,
+                                         128, 1, 1));
+    }
+    return e->gpu.prefill_attn_online_b8_swa_visual;
+}
+
 static void __attribute__((unused)) xe_prefill_attention_online_append(
         xe_engine *e, const float *q, const _Float16 *k, const _Float16 *v,
         float *output, int rows, int keys, int dimension, int kv_heads,
-        int query_offset, int window) {
+        int query_offset, int window, xe_attention_mode mode) {
+    /* Global decoder layers remain causal for visual batches too. */
     ze_kernel_handle_t kernel = dimension == 256
-                                ? e->gpu.prefill_attn_online_b8_swa
+                                ? mode == XE_ATTENTION_VISUAL
+                                  ? xe_prefill_visual_attention_kernel(e)
+                                  : e->gpu.prefill_attn_online_b8_swa
                                 : e->gpu.prefill_attn_online_b8_global_shared;
     xe_gpu_pointer_arg(kernel, 0, q);
     xe_gpu_pointer_arg(kernel, 1, k);
@@ -1766,6 +1837,8 @@ static void xe_workspace_q8(xe_workspace_arena *a, xe_q8 *q, int n) {
 }
 
 typedef struct {
+    int capacity;
+    int ffn_capacity;
     float *hidden[2];
     float *row_scale;
     xe_q8 attention_input;
@@ -1805,10 +1878,13 @@ typedef struct {
 
 static _Float16 *xe_kv_layer_ptr(xe_session *s, int layer, int value);
 
-static size_t __attribute__((unused)) xe_prefill_workspace_layout(
-        xe_prefill_workspace *w, void *base) {
-    const int rows = 512;
-    const int routes = rows * XE_EXPERTS_USED;
+static size_t xe_prefill_workspace_layout_rows(
+        xe_prefill_workspace *w, void *base, int rows) {
+    w->capacity = rows;
+    const int ffn_rows = rows < XE_PREFILL_FFN_MAX_ROWS
+                         ? rows : XE_PREFILL_FFN_MAX_ROWS;
+    w->ffn_capacity = ffn_rows;
+    const int routes = ffn_rows * XE_EXPERTS_USED;
     const int q_width = XE_Q_HEADS * XE_GLOBAL_HEAD_DIM;
     const int kv_width = XE_SWA_KV_HEADS * XE_SWA_HEAD_DIM;
     const int stage_keys = XE_SWA_WINDOW + rows - 1;
@@ -1850,12 +1926,13 @@ static size_t __attribute__((unused)) xe_prefill_workspace_layout(
         &a, (size_t)rows * XE_EMBD * sizeof(float));
     w->attention_output = xe_workspace_take(
         &a, (size_t)rows * XE_EMBD * sizeof(float));
-    xe_workspace_q8(&a, &w->dense_input, rows * XE_EMBD);
-    xe_workspace_q8(&a, &w->moe_input, rows * XE_EMBD);
+    /* FFN tiles run in order and share scratch across the full attention batch. */
+    xe_workspace_q8(&a, &w->dense_input, ffn_rows * XE_EMBD);
+    xe_workspace_q8(&a, &w->moe_input, ffn_rows * XE_EMBD);
     w->router_input = xe_workspace_take(
-        &a, (size_t)rows * XE_EMBD * sizeof(float));
+        &a, (size_t)ffn_rows * XE_EMBD * sizeof(float));
     w->router_logits = xe_workspace_take(
-        &a, (size_t)rows * XE_EXPERTS * sizeof(float));
+        &a, (size_t)ffn_rows * XE_EXPERTS * sizeof(float));
     w->route_expert = xe_workspace_take(
         &a, (size_t)routes * sizeof(int));
     w->route_weight = xe_workspace_take(
@@ -1873,20 +1950,25 @@ static size_t __attribute__((unused)) xe_prefill_workspace_layout(
         &a, (size_t)routes * sizeof(int));
     xe_workspace_q8(&a, &w->packed_moe, routes * XE_EMBD);
     w->dense_gate = xe_workspace_take(
-        &a, (size_t)rows * XE_DENSE_FFN * sizeof(float));
+        &a, (size_t)ffn_rows * XE_DENSE_FFN * sizeof(float));
     w->dense_up = xe_workspace_take(
-        &a, (size_t)rows * XE_DENSE_FFN * sizeof(float));
-    xe_workspace_q8(&a, &w->dense_activation, rows * XE_DENSE_FFN);
+        &a, (size_t)ffn_rows * XE_DENSE_FFN * sizeof(float));
+    xe_workspace_q8(&a, &w->dense_activation, ffn_rows * XE_DENSE_FFN);
     w->dense_down = xe_workspace_take(
-        &a, (size_t)rows * XE_EMBD * sizeof(float));
+        &a, (size_t)ffn_rows * XE_EMBD * sizeof(float));
     w->expert_gate_up = xe_workspace_take(
         &a, (size_t)routes * 2 * XE_EXPERT_FFN * sizeof(float));
     xe_workspace_q8(&a, &w->expert_activation, routes * XE_EXPERT_FFN);
     w->expert_down = xe_workspace_take(
         &a, (size_t)routes * XE_EMBD * sizeof(float));
     w->moe_output = xe_workspace_take(
-        &a, (size_t)rows * XE_EMBD * sizeof(float));
+        &a, (size_t)ffn_rows * XE_EMBD * sizeof(float));
     return (a.pos + 63) & ~(size_t)63;
+}
+
+static size_t __attribute__((unused)) xe_prefill_workspace_layout(
+        xe_prefill_workspace *w, void *base) {
+    return xe_prefill_workspace_layout_rows(w, base, 512);
 }
 
 static void __attribute__((unused)) xe_prefill_rope_prepare_batch(
@@ -1907,8 +1989,8 @@ static void __attribute__((unused)) xe_prefill_rope_prepare_batch(
 
 static void xe_prefill_attention_qkv_append(
         xe_engine *e, int layer_index, xe_prefill_workspace *w, int rows) {
-    if (rows < 1 || rows > 512)
-        xe_fatal("prefill layer initial supports M1 through M512");
+    if (rows < 1 || rows > w->capacity)
+        xe_fatal("prefill layer exceeds workspace capacity");
     const xe_layer *layer = &e->layers[layer_index];
     int global = XE_IS_GLOBAL(layer_index);
     int dimension = global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM;
@@ -1955,14 +2037,14 @@ static void xe_prefill_attention_project_append(
 static void xe_prefill_attention_output_append(
         xe_engine *e, int layer_index, xe_prefill_workspace *w, int rows,
         const _Float16 *k, const _Float16 *v, int keys, int query_offset,
-        int window) {
+        int window, xe_attention_mode mode) {
     int global = XE_IS_GLOBAL(layer_index);
     int dimension = global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM;
     int kv_heads = global ? XE_GLOBAL_KV_HEADS : XE_SWA_KV_HEADS;
     xe_prefill_attention_online_append(e, w->q_heads, k, v,
                                         w->attention_heads, rows, keys,
                                         dimension, kv_heads, query_offset,
-                                        window);
+                                        window, mode);
     xe_prefill_attention_project_append(e, layer_index, w, rows);
 }
 
@@ -1971,12 +2053,12 @@ static void xe_prefill_attention_prepared_append(
     xe_prefill_attention_qkv_append(e, layer_index, w, rows);
     xe_prefill_attention_output_append(
         e, layer_index, w, rows, w->k_batch, w->v_batch, rows, 0,
-        XE_IS_GLOBAL(layer_index) ? 0 : XE_SWA_WINDOW);
+        XE_IS_GLOBAL(layer_index) ? 0 : XE_SWA_WINDOW, XE_ATTENTION_CAUSAL);
 }
 
 static void xe_prefill_attention_batch_append(
         xe_session *s, int layer_index, xe_prefill_workspace *w, int rows,
-        int batch_start) {
+        int batch_start, xe_attention_mode mode) {
     xe_engine *e = s->engine;
     int global = XE_IS_GLOBAL(layer_index);
     int dimension = global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM;
@@ -2003,7 +2085,7 @@ static void xe_prefill_attention_batch_append(
     } else if (batch_start == 0) {
         xe_prefill_attention_output_append(
             e, layer_index, w, rows, w->k_batch, w->v_batch, rows, 0,
-            global ? 0 : XE_SWA_WINDOW);
+            global ? 0 : XE_SWA_WINDOW, mode);
         if (global)
             xe_prefill_linear_commit_append(e, cache_k, cache_v, w->k_batch,
                                             w->v_batch, rows, batch_start,
@@ -2018,7 +2100,7 @@ static void xe_prefill_attention_batch_append(
                                         dimension, kv_heads, capacity);
         xe_prefill_attention_output_append(
             e, layer_index, w, rows, cache_k, cache_v, capacity,
-            batch_start, 0);
+            batch_start, 0, mode);
     } else {
         int stage_base = batch_start >= XE_SWA_WINDOW - 1
                          ? batch_start - (XE_SWA_WINDOW - 1) : 0;
@@ -2028,7 +2110,7 @@ static void xe_prefill_attention_batch_append(
                                     batch_start, stage_base, stage_count);
         xe_prefill_attention_output_append(
             e, layer_index, w, rows, w->k_stage, w->v_stage, stage_count,
-            batch_start - stage_base, XE_SWA_WINDOW);
+            batch_start - stage_base, XE_SWA_WINDOW, mode);
         xe_prefill_swa_commit_append(e, cache_k, cache_v, w->k_batch,
                                      w->v_batch, rows, batch_start,
                                      dimension, kv_heads, capacity);
@@ -2044,8 +2126,10 @@ static void __attribute__((unused)) xe_prefill_attention_initial_append(
 
 static void __attribute__((unused)) xe_prefill_ffn_append(
         xe_engine *e, int layer_index, xe_prefill_workspace *w, int rows) {
-    if (rows < 1 || rows > 512)
+    if (rows < 1 || rows > XE_PREFILL_FFN_MAX_ROWS)
         xe_fatal("prefill FFN supports M1 through M512");
+    if (rows > w->ffn_capacity)
+        xe_fatal("prefill FFN exceeds workspace capacity");
     const xe_layer *layer = &e->layers[layer_index];
     int wide = rows == 512;
     xe_prefill_rms_append(e, w->attention_output, w->row_scale,
@@ -3871,6 +3955,7 @@ static xe_engine *xe_open_common(const char *gguf_path, int vocab_only, xe_cur *
     e->scalar_rms = 1;
     *c = xe_parse_header(e, gguf_path);
     xe_parse_metadata(e, c, gguf_path);
+    e->tensor_directory_pos = c->pos;
     xe_tok_build(e, gguf_path);
     if (vocab_only) {
         close(e->map_fd);
@@ -3937,9 +4022,100 @@ xe_engine *xe_engine_open_vocab(const char *gguf_path) {
     return xe_open_common(gguf_path, 1, &c);
 }
 
+int xe_engine_enable_vision(xe_engine *e,const char *path,char *error,size_t cap) {
+    if(!e||e->vision_weights){if(error&&cap)snprintf(error,cap,"vision already open or engine missing");return 0;}
+    xe_worker_pool_init(e);
+    xe_require_owner(e);
+    /* Vocab-only CLI encoders have parsed metadata, but not tensor shapes. */
+    if (e->vocab_only && !e->header_len) {
+        if (format_get_u64le((const uint8_t *)e->map + 8) != XE_TENSOR_COUNT) {
+            if (error && cap) snprintf(error, cap, "vision language model tensor count mismatch");
+            return 0;
+        }
+        xe_cur c = {(const uint8_t *)e->map, e->map_len, e->tensor_directory_pos};
+        xe_bind_tensors(e, &c, "vision language model");
+        xe_check_complete(e, "vision language model");
+    }
+    const uint8_t *model_id = xe_engine_model_fingerprint(e);
+    if (!xe_vision_weights_reference(model_id, 0))
+        fprintf(stderr, "xenolith: vision language model differs from the reference weights; "
+                        "using its full content identity for cache isolation.\n");
+    xe_vision_model model;
+    if(!xe_vision_model_open(&model,path,error,cap))return 0;
+    if(!e->gpu.context)xe_gpu_init(e);
+    size_t bytes=model.mapping_size-model.data_offset;
+    e->vision_weights=xe_alloc(e,bytes,XE_MEM_SHARED);
+    memcpy(e->vision_weights,(const uint8_t *)model.mapping+model.data_offset,bytes);
+    for(size_t i=0;i<model.tensor_count;i++)model.tensors[i].data=(const uint8_t *)e->vision_weights+model.tensors[i].offset;
+    munmap(model.mapping,model.mapping_size);model.mapping=NULL;
+    e->vision_model=model;
+    /* Prepare this during startup too, before the first image request. */
+    uint8_t numeric[32];
+    if (!xe_engine_vision_numeric_fingerprint(e, numeric)) {
+        xe_free(e, e->vision_weights, XE_MEM_SHARED);e->vision_weights=NULL;
+        xe_vision_model_close(&e->vision_model);
+        if (error && cap) snprintf(error, cap, "cannot prepare vision numerical identity");
+        return 0;
+    }
+    return 1;
+}
+
+int xe_engine_encode_image(xe_engine *e, const xe_image *im, float *output,
+                            const char *dump) {
+    if (!e || !im || !output || !e->vision_weights || !im->resized ||
+        im->rows < 1 || im->rows > XE_VISUAL_MAX) return 0;
+    xe_require_owner(e);
+    return xe_vision_encode(e, &e->gpu.vision, &e->vision_model, im, output, dump);
+}
+
+const uint8_t *xe_engine_vision_fingerprint(const xe_engine *e) {
+    return e && e->vision_weights ? e->vision_model.sha256 : NULL;
+}
+
+int xe_engine_vision_artifacts_match(const xe_engine *e, const uint8_t model[32],
+                                    const uint8_t projector[32]) {
+    if (!e || !e->vision_weights || !e->model_content_hash_ready) return 0;
+    return model && projector &&
+           !memcmp(model, e->model_content_hash, 32) &&
+           !memcmp(projector, e->vision_model.sha256, 32);
+}
+
+int xe_engine_vision_numeric_fingerprint(xe_engine *e,uint8_t out[32]) {
+    if(!e||!e->gpu.context||!out)return 0;
+    xe_require_owner(e);
+    if(e->vision_numeric_hash_ready){memcpy(out,e->vision_numeric_hash,32);return 1;}
+    ze_device_properties_t device={.stype=ZE_STRUCTURE_TYPE_DEVICE_PROPERTIES};
+    ze_driver_properties_t driver={.stype=ZE_STRUCTURE_TYPE_DRIVER_PROPERTIES};
+    if(zeDeviceGetProperties(e->gpu.device,&device)!=ZE_RESULT_SUCCESS ||
+       zeDriverGetProperties(e->gpu.driver,&driver)!=ZE_RESULT_SUCCESS)return 0;
+    size_t native_size=0;
+    if(zeModuleGetNativeBinary(e->gpu.module,&native_size,NULL)!=ZE_RESULT_SUCCESS||!native_size)return 0;
+    uint8_t *native=malloc(native_size);if(!native)return 0;
+    if(zeModuleGetNativeBinary(e->gpu.module,&native_size,native)!=ZE_RESULT_SUCCESS){free(native);return 0;}
+    format_sha256 hash;format_sha256_init(&hash);
+    const char *domain="xenolith-visual-numeric-v4";
+    format_sha256_update(&hash,domain,strlen(domain));
+    format_sha256_update(&hash,XE_VISION_NUMERIC_REVISION,strlen(XE_VISION_NUMERIC_REVISION));
+    format_sha256_update(&hash,XE_NUMERIC_SOURCE_HASH,strlen(XE_NUMERIC_SOURCE_HASH));
+    format_sha256_update(&hash,XE_NUMERIC_CFLAGS_HASH,strlen(XE_NUMERIC_CFLAGS_HASH));
+    format_sha256_update(&hash,__VERSION__,strlen(__VERSION__));
+    format_sha256_update(&hash,_binary_xenolith_gpu_spv_start,
+                         (size_t)(_binary_xenolith_gpu_spv_end-_binary_xenolith_gpu_spv_start));
+    format_sha256_update(&hash,device.uuid.id,sizeof device.uuid.id);
+    /* Intel's driver UUID contains an initialization timestamp. It names a
+     * driver instance, not stable numerical behavior across restarts. Bind
+     * the actual compiled native module instead, including compiler changes. */
+    format_sha256_update(&hash,native,native_size);free(native);
+    uint8_t bytes[4];format_put_u32le(bytes,driver.driverVersion);
+    format_sha256_update(&hash,bytes,4);format_sha256_final(&hash,e->vision_numeric_hash);
+    e->vision_numeric_hash_ready=1;memcpy(out,e->vision_numeric_hash,32);return 1;
+}
+
 void xe_engine_close(xe_engine *e) {
     if (!e) return;
     xe_worker_pool_destroy(e);
+    xe_free(e, e->vision_weights, XE_MEM_SHARED);
+    xe_vision_model_close(&e->vision_model);
     xe_free(e, e->gelu_lut, XE_MEM_HOST);
     xe_free(e, e->f32_slab, XE_MEM_SHARED);
     for (int i = 0; i < e->repack_part_count; i++)
@@ -4926,11 +5102,12 @@ static void xe_output_decode(xe_session *s, int softcap_mode) {
 #endif
 }
 
-static void xe_prefill_batch_append_run(xe_session *s,
+static void xe_prefill_batch_append_input(xe_session *s,
                                         const int32_t *tokens,
-                                        int rows, int batch_start) {
-    if (rows < 1 || rows > 512)
-        xe_fatal("prefill batch supports M1 through M512");
+                                        int rows, int batch_start, const float *visual,
+                                        xe_attention_mode mode) {
+    if (rows < 1 || rows > s->prefill_capacity)
+        xe_fatal("prefill batch exceeds workspace capacity");
     if (s->prefill_pending)
         xe_fatal("prefill batch already pending");
     if (batch_start != s->n_tokens)
@@ -4942,15 +5119,23 @@ static void xe_prefill_batch_append_run(xe_session *s,
 #endif
     xe_engine *e = s->engine;
     xe_prefill_workspace w;
-    xe_prefill_workspace_layout(&w, s->prefill_workspace);
-    for (int row = 0; row < rows; row++)
-        xe_embed_decode(e, tokens[row],
-                        w.hidden[0] + (size_t)row * XE_EMBD);
+    xe_prefill_workspace_layout_rows(&w, s->prefill_workspace, s->prefill_capacity);
+    if (visual) memcpy(w.hidden[0], visual, (size_t)rows * XE_EMBD * sizeof(float));
+    else for (int row = 0; row < rows; row++)
+        xe_embed_decode(e, tokens[row], w.hidden[0] + (size_t)row * XE_EMBD);
     xe_prefill_rope_prepare_batch(e, &w, rows, batch_start, 0);
     xe_prefill_rope_prepare_batch(e, &w, rows, batch_start, 1);
     for (int layer = 0; layer < XE_LAYERS; layer++) {
-        xe_prefill_attention_batch_append(s, layer, &w, rows, batch_start);
-        xe_prefill_ffn_append(e, layer, &w, rows);
+        xe_prefill_attention_batch_append(s, layer, &w, rows, batch_start, mode);
+        for (int start = 0; start < rows; start += XE_PREFILL_FFN_MAX_ROWS) {
+            int tile_rows = rows - start;
+            if (tile_rows > XE_PREFILL_FFN_MAX_ROWS)
+                tile_rows = XE_PREFILL_FFN_MAX_ROWS;
+            xe_prefill_workspace tile = w;
+            tile.attention_output += (size_t)start * XE_EMBD;
+            tile.hidden[1] += (size_t)start * XE_EMBD;
+            xe_prefill_ffn_append(e, layer, &tile, tile_rows);
+        }
         float *hidden = w.hidden[0];
         w.hidden[0] = w.hidden[1];
         w.hidden[1] = hidden;
@@ -4961,6 +5146,12 @@ static void xe_prefill_batch_append_run(xe_session *s,
     s->prefill_pending_rows = rows;
     s->prefill_pending_hidden = w.hidden[0] +
                                 (size_t)(rows - 1) * XE_EMBD;
+}
+
+static void xe_prefill_batch_append_run(xe_session *s, const int32_t *tokens,
+                                       int rows, int batch_start) {
+    xe_prefill_batch_append_input(s, tokens, rows, batch_start, NULL,
+                                 XE_ATTENTION_CAUSAL);
 }
 
 static void xe_prefill_batch_complete(xe_session *s, int output_logits) {
@@ -5200,6 +5391,26 @@ static void xe_session_swa_repair(xe_session *s) {
     }
 }
 
+static int xe_session_prefill_reserve(xe_session *s,int rows) {
+    if(rows<=s->prefill_capacity)return 1;
+    if(rows>XE_VISUAL_MAX||s->cow||s->prefill_pending)return 0;
+    /* A live shadow borrows this workspace and owns both spare SWA slabs. */
+    if(!s->swa_spare_k||!s->swa_spare_v)return 0;
+    xe_prefill_workspace w;
+    size_t bytes=xe_prefill_workspace_layout_rows(&w,NULL,rows);
+    void *next=xe_alloc(s->engine,bytes,XE_MEM_SHARED);
+    xe_free(s->engine,s->prefill_workspace,XE_MEM_SHARED);
+    s->prefill_workspace=next;s->prefill_workspace_size=bytes;s->prefill_capacity=rows;
+    return 1;
+}
+
+int xe_session_set_text_prefill(xe_session *s,int rows) {
+    if(!s||(rows!=512&&rows!=1024)||s->n_tokens||s->prefill_pending||s->cow)return 0;
+    xe_require_owner(s->engine);
+    if(!xe_session_prefill_reserve(s,rows))return 0;
+    s->text_prefill_rows=rows;return 1;
+}
+
 xe_session *xe_session_new(xe_engine *e) {
     if (!e || e->context < XE_CONTEXT_MIN || e->context > XE_CONTEXT_MAX)
         xe_fatal("session: invalid engine context capacity");
@@ -5221,6 +5432,8 @@ xe_session *xe_session_new(xe_engine *e) {
     s->workspace_size = xe_workspace_layout(s, NULL);
     s->workspace = xe_alloc(e, s->workspace_size, XE_MEM_SHARED);
     xe_workspace_layout(s, s->workspace);
+    s->prefill_capacity = 512;
+    s->text_prefill_rows = 512;
     xe_prefill_workspace prefill;
     s->prefill_workspace_size = xe_prefill_workspace_layout(&prefill, NULL);
     s->prefill_workspace = xe_alloc(e, s->prefill_workspace_size,
@@ -5241,6 +5454,10 @@ xe_session *xe_session_shadow_new(xe_session *source) {
     s->cow = 1;
     s->cow_source = source;
     s->cow_split = source->n_tokens;
+    s->visual_context = source->visual_context;
+    if (s->visual_context) s->visual_context->references++;
+    s->visual_prompt_end = source->visual_prompt_end;
+    memcpy(s->visual_prompt_hash,source->visual_prompt_hash,32);
     s->global_k = source->global_k;
     s->global_v = source->global_v;
     s->swa_k = source->swa_spare_k;
@@ -5253,6 +5470,8 @@ xe_session *xe_session_shadow_new(xe_session *source) {
     xe_workspace_layout(s, s->workspace);
     s->prefill_workspace = source->prefill_workspace;
     s->prefill_workspace_size = source->prefill_workspace_size;
+    s->prefill_capacity = source->prefill_capacity;
+    s->text_prefill_rows = source->text_prefill_rows;
     memcpy(s->tokens, source->tokens,
            (size_t)source->n_tokens * sizeof(*s->tokens));
     memcpy(s->hidden, source->hidden, XE_EMBD * sizeof(*s->hidden));
@@ -5300,6 +5519,7 @@ void xe_session_free(xe_session *s) {
     xe_free(e, s->swa_k, XE_MEM_SHARED);
     xe_free(e, s->swa_spare_v, XE_MEM_SHARED);
     xe_free(e, s->swa_spare_k, XE_MEM_SHARED);
+    xe_visual_context_release(s->visual_context);
     xe_free(e, s, XE_MEM_HOST);
 }
 
@@ -5362,6 +5582,10 @@ void xe_session_reset(xe_session *s) {
     if (!s) xe_fatal("session_reset: missing session");
     xe_require_owner(s->engine);
     s->n_tokens = 0;
+    xe_visual_context_release(s->visual_context);s->visual_context = NULL;
+    s->anchor_valid = 0;
+    s->visual_prompt_end = 0;
+    memset(s->visual_prompt_hash, 0, sizeof s->visual_prompt_hash);
 }
 
 int xe_session_position(xe_session *s) {
@@ -5389,7 +5613,7 @@ static void xe_session_extend(xe_session *s, const int32_t *tokens, int end,
     while (s->n_tokens < end) {
         int start = s->n_tokens;
         int rows = end - start;
-        if (rows > 512) rows = 512;
+        if (rows > s->text_prefill_rows) rows = s->text_prefill_rows;
         if (rows == 1 && cpu_single) {
             int pos = s->n_tokens;
             xe_decode_token_mode(s, tokens[pos], pos,
@@ -5411,14 +5635,18 @@ void xe_session_rewind(xe_session *s, int position) {
         xe_fatal("session_rewind: position %d out of range [0, %d]",
                  position, s->n_tokens);
     if (position == 0) {
-        s->n_tokens = 0;
+        xe_session_reset(s);
+        return;
+    }
+    if (s->visual_context) {
+        if (!xe_session_rewind_input(s,position)) xe_fatal("session_rewind: invalid visual boundary");
         return;
     }
     xe_tokens prefix = { s->tokens, position, s->engine->context };
     xe_session_sync(s, &prefix);
 }
 
-void xe_session_sync_report(xe_session *s, const xe_tokens *prefix,
+static void xe_session_sync_report_impl(xe_session *s, const xe_tokens *prefix,
                             xe_sync_report *report) {
     if (!s || !prefix) xe_fatal("session_sync: missing session or prefix");
     if (!xe_tokens_valid(prefix)) xe_fatal("session_sync: invalid prefix");
@@ -5463,8 +5691,128 @@ void xe_session_sync_report(xe_session *s, const xe_tokens *prefix,
                       common == current && n == current + 1);
 }
 
+void xe_session_sync_report(xe_session *s, const xe_tokens *prefix, xe_sync_report *report) {
+    if (s && s->visual_prompt_end) xe_fatal("visual session requires xe_session_sync_input");
+    xe_session_sync_report_impl(s, prefix, report);
+}
+
 void xe_session_sync(xe_session *s, const xe_tokens *prefix) {
     xe_session_sync_report(s, prefix, NULL);
+}
+
+static xe_visual_context *xe_visual_context_new(const xe_input *in) {
+    xe_visual_context *v=calloc(1,sizeof *v);
+    if (!v) return NULL;
+    if (!xe_input_copy(&v->owned,in)) { free(v);return NULL; }
+    v->references=1;return v;
+}
+
+static int xe_session_common_input_validated(const xe_session *s,const xe_input *in) {
+    int common=0,limit=in->count<s->n_tokens?in->count:s->n_tokens;
+    while(common<limit&&in->tokens[common]==s->tokens[common])common++;
+    const xe_input *old=s->visual_context?&s->visual_context->owned.input:NULL;
+    size_t i=0,j=0,n=old?old->visual_count:0;
+    while(i<n||j<in->visual_count) {
+        const xe_visual_span *a=i<n?old->visual+i:NULL,*b=j<in->visual_count?in->visual+j:NULL;
+        int first=a&&b?(a->start<b->start?a->start:b->start):a?a->start:b->start;
+        if(first>=common)break;
+        if(!a||!b||a->start!=b->start||a->rows!=b->rows||a->budget!=b->budget||
+           a->media_size!=b->media_size||memcmp(a->identity,b->identity,32)||
+           memcmp(a->embeddings,b->embeddings,(size_t)a->rows*XE_VISUAL_WIDTH*4)||
+           (a->media_size&&memcmp(a->media,b->media,a->media_size)))return first;
+        if(common<a->start+a->rows)return a->start;
+        i++;j++;
+    }
+    return common;
+}
+
+int xe_session_common_input(const xe_session *s,const xe_input *in) {
+    if(!s||!xe_input_valid(in,s->engine->context))return -1;
+    return xe_session_common_input_validated(s,in);
+}
+
+int xe_session_has_visual(const xe_session *s) {
+    return s && s->visual_context!=NULL;
+}
+
+int xe_session_sync_input_report(xe_session *s,const xe_input *in,xe_sync_report *report) {
+    if(!s||s->cow||s->prefill_pending||!xe_input_layout_valid(in,s->engine->context))return 0;
+    xe_require_owner(s->engine);
+    int previous=s->n_tokens;
+    if(report)memset(report,0,sizeof *report);
+    for(int i=0;i<in->count;i++)if(in->tokens[i]<0||in->tokens[i]>=XE_VOCAB)return 0;
+    for(size_t i=0;i<in->visual_count;i++)
+        for(int j=0;j<in->visual[i].rows;j++)
+            if(in->tokens[in->visual[i].start+j]!=xe_token_id(s->engine,"<|image|>"))return 0;
+    if(!in->visual_count) {
+        int restarted=s->visual_context!=NULL;
+        if(restarted)xe_session_reset(s);
+        xe_tokens prefix={(int32_t *)in->tokens,in->count,in->count};
+        xe_session_sync_report_impl(s,&prefix,report);
+        if(report&&restarted)report->restarted=1;
+        return 1;
+    }
+    if(s->visual_context && s->n_tokens>=s->visual_prompt_end && in->count>=s->visual_prompt_end &&
+       in->visual_count==s->visual_context->owned.input.visual_count &&
+       xe_session_common_input_validated(s,in)==s->n_tokens) {
+        /* The old owned rows are finite. Equal byte content proves the new
+         * rows are unchanged, without rehashing all pixels on every token. */
+        xe_tokens prefix={(int32_t *)in->tokens,in->count,in->count};
+        xe_session_sync_report_impl(s,&prefix,report);return 1;
+    }
+    int append=xe_session_common_input_validated(s,in)==s->n_tokens && in->count>s->n_tokens;
+    xe_visual_context *next=xe_visual_context_new(in);
+    if(!next)return 0;
+    int capacity=s->text_prefill_rows;
+    for(size_t i=0;i<in->visual_count;i++)if(in->visual[i].rows>capacity)capacity=in->visual[i].rows;
+    if(!xe_session_prefill_reserve(s,capacity)){xe_visual_context_release(next);return 0;}
+    /* Use owned input: in may alias the previous session's token/media data. */
+    in=&next->owned.input;
+    if(append) {
+        xe_visual_context_release(s->visual_context);s->visual_context=NULL;
+        s->visual_prompt_end=0;s->anchor_valid=0;
+    } else xe_session_reset(s);
+    int initial=s->n_tokens;
+    size_t visual=0;
+    while(visual<in->visual_count&&in->visual[visual].start+in->visual[visual].rows<=initial)visual++;
+    while(s->n_tokens<in->count) {
+        int start=s->n_tokens,n=in->count-start;
+        const float *embedding=NULL;
+        if(visual<in->visual_count&&in->visual[visual].start==start) {
+            n=in->visual[visual].rows;embedding=in->visual[visual].embeddings;visual++;
+        } else {
+            if(visual<in->visual_count&&n>in->visual[visual].start-start)n=in->visual[visual].start-start;
+            if(n>s->text_prefill_rows)n=s->text_prefill_rows;
+        }
+        xe_attention_mode mode=embedding?XE_ATTENTION_VISUAL:XE_ATTENTION_CAUSAL;
+        xe_prefill_batch_append_input(s,in->tokens+start,n,start,embedding,mode);
+        xe_gpu_wait(s->engine);xe_prefill_batch_complete(s,start+n==in->count);
+    }
+    xe_session_swa_mirror(s,initial,s->n_tokens);
+    s->visual_context=next;s->visual_prompt_end=in->count;xe_input_hash(in,s->visual_prompt_hash);
+    if(report){report->reused=initial;report->prefilled=in->count-initial;report->restarted=!append&&previous>0;}
+    return 1;
+}
+
+int xe_session_sync_input(xe_session *s,const xe_input *in) {
+    return xe_session_sync_input_report(s,in,NULL);
+}
+
+int xe_session_sync_continuation(xe_session *s,const xe_tokens *prefix,xe_sync_report *report) {
+    if(!s||s->cow||s->prefill_pending||!xe_tokens_valid(prefix)||prefix->len<1||prefix->len<s->n_tokens||
+       prefix->len>s->engine->context)return 0;
+    if(s->visual_context && s->n_tokens<s->visual_prompt_end)return 0;
+    if(memcmp(s->tokens,prefix->v,(size_t)s->n_tokens*4))return 0;
+    xe_session_sync_report_impl(s,prefix,report);return 1;
+}
+
+static int xe_session_rewind_input(xe_session *s,int position) {
+    xe_input in=s->visual_context->owned.input;in.tokens=s->tokens;in.count=s->n_tokens;
+    if(!xe_input_boundary(&in,position))return 0;
+    in.count=position;in.visual_count=0;
+    while(in.visual_count<s->visual_context->owned.input.visual_count &&
+          in.visual[in.visual_count].start+in.visual[in.visual_count].rows<=position)in.visual_count++;
+    return xe_session_sync_input(s,&in);
 }
 
 int xe_session_shadow_start(xe_session *s, const xe_tokens *prefix,
@@ -5543,7 +5891,7 @@ void xe_session_shadow_refresh_logits(xe_session *s) {
 int xe_session_shadow_promote(xe_session *source, xe_session *shadow) {
     if (!source || !shadow || source->cow || !shadow->cow ||
         source->engine != shadow->engine || shadow->prefill_pending ||
-        shadow->cow_source != source || source->swa_spare_k ||
+        shadow->cow_source != source || shadow->visual_context != source->visual_context || source->swa_spare_k ||
         source->swa_spare_v ||
         shadow->n_tokens < shadow->cow_split ||
         source->global_k != shadow->global_k ||
@@ -5608,6 +5956,7 @@ int xe_session_shadow_promote(xe_session *source, xe_session *shadow) {
 }
 
 int xe_session_common(const xe_session *s, const xe_tokens *prefix) {
+    if (s && s->visual_context) xe_fatal("visual session requires xe_session_common_input");
     if (!s || !prefix) xe_fatal("session_common: missing session or prefix");
     if (!xe_tokens_valid(prefix)) xe_fatal("session_common: invalid prefix");
     int limit = prefix->len < s->n_tokens ? prefix->len : s->n_tokens;
@@ -5690,6 +6039,7 @@ int xe_session_token_near_top(xe_session *s, int32_t token,
 
 enum {
     XE_SNAPSHOT_FORMAT_VERSION = 2,
+    XE_SNAPSHOT_VISUAL_VERSION = 3,
     /* State compatibility, not build identity. Bump when persisted KV/logits
      * can no longer be continued under the same numerical contract. Review
      * inference changes explicitly; edits to I/O, CLI or docs do not bump it.
@@ -5910,6 +6260,15 @@ static void xe_snapshot_fingerprints_init(xe_engine *e) {
     e->snapshot_fingerprint_ready = 1;
 }
 
+static int xe_snapshot_visual_numeric(xe_engine *e,uint8_t out[32]) {
+    uint8_t vision[32];if(!xe_engine_vision_numeric_fingerprint(e,vision))return 0;
+    format_sha256 hash;format_sha256_init(&hash);
+    const char *domain="xenolith-visual-snapshot-numeric-v1";
+    format_sha256_update(&hash,domain,strlen(domain));
+    format_sha256_update(&hash,e->snapshot_fingerprint[XE_SNAPSHOT_FP_NUMERIC],32);
+    format_sha256_update(&hash,vision,32);format_sha256_final(&hash,out);return 1;
+}
+
 static void xe_snapshot_boundary_hash(const int32_t *tokens, int n,
                                       uint8_t out[32]) {
     format_sha256 hash;
@@ -5978,6 +6337,7 @@ static int xe_snapshot_layout_build(int capacity, uint64_t position,
 }
 
 xe_snapshot_status xe_session_snapshot_size(xe_session *s, uint64_t *size) {
+    if (s && s->cow) return XE_SNAPSHOT_INVALID_ARGUMENT;
     if (!s || !size) return XE_SNAPSHOT_INVALID_ARGUMENT;
     xe_require_owner(s->engine);
     if (!s->n_tokens) return XE_SNAPSHOT_EMPTY;
@@ -6110,6 +6470,7 @@ static void xe_snapshot_encode_header(xe_engine *e,
 }
 
 xe_snapshot_status xe_session_snapshot_stream(xe_session *s, FILE *out) {
+    if (s && s->cow) return XE_SNAPSHOT_INVALID_ARGUMENT;
     if (!s || !out) return XE_SNAPSHOT_INVALID_ARGUMENT;
     xe_require_owner(s->engine);
     if (!s->n_tokens) return XE_SNAPSHOT_EMPTY;
@@ -6164,6 +6525,19 @@ xe_snapshot_status xe_session_snapshot_stream(xe_session *s, FILE *out) {
     xe_snapshot_boundary_hash(s->tokens, s->n_tokens, boundary);
     xe_snapshot_encode_directory(&layout, directory);
     xe_snapshot_encode_header(s->engine, &layout, boundary, directory, header);
+    if (s->visual_context) {
+        xe_input input=s->visual_context->owned.input;
+        input.tokens=s->tokens;input.count=s->n_tokens;
+        format_put_u16le(header+8,XE_SNAPSHOT_VISUAL_VERSION);format_put_u32le(header+24,1);
+        memcpy(header+96,xe_engine_model_fingerprint(s->engine),32);
+        if(!xe_snapshot_visual_numeric(s->engine,header+96+32*XE_SNAPSHOT_FP_NUMERIC)){free(buffer);return XE_SNAPSHOT_BACKEND;}
+        /* Visual identity occupies 320..351. ABI replaces text diagnostics;
+         * the payload layout stays unchanged for shared global KV segments. */
+        memset(header+320,0,56);
+        xe_input_hash(&input,header+320);
+        format_put_u32le(header+352,XE_SNAPSHOT_NUMERIC_ABI);
+        format_put_u64le(header+376,format_crc64(0,header,376));
+    }
     int ok = format_seek(out, 0) &&
              format_write(out, header, sizeof header) &&
              format_write(out, directory, sizeof directory) &&
@@ -6199,7 +6573,7 @@ static int xe_snapshot_all_zero(const uint8_t *p, size_t n) {
 }
 
 static xe_snapshot_status xe_snapshot_parse_header(
-        xe_engine *e, FILE *in, const xe_tokens *expected,
+        xe_engine *e, FILE *in, const xe_tokens *expected, const xe_input *mixed,
         xe_snapshot_layout *layout,
         uint8_t saved_header[XE_SNAPSHOT_HEADER_SIZE],
         uint8_t saved_directory[XE_SNAPSHOT_MAX_SECTIONS *
@@ -6210,22 +6584,28 @@ static xe_snapshot_status xe_snapshot_parse_header(
         return XE_SNAPSHOT_IO;
     if (memcmp(saved_header, xe_snapshot_magic, sizeof xe_snapshot_magic) != 0)
         return XE_SNAPSHOT_FORMAT;
-    uint16_t version = format_get_u16le(saved_header + 8);
-    if ((version != 1 && version != XE_SNAPSHOT_FORMAT_VERSION) ||
-        format_get_u16le(saved_header + 10) != 0)
-        return XE_SNAPSHOT_VERSION;
+    uint16_t version=format_get_u16le(saved_header+8);
+    uint32_t flags=format_get_u32le(saved_header+24);
+    int legacy_visual=version==2 && flags==1;
+    int visual=legacy_visual || (version==XE_SNAPSHOT_VISUAL_VERSION && flags==1);
+    if ((version!=1 && version!=XE_SNAPSHOT_FORMAT_VERSION && !visual) ||
+        format_get_u16le(saved_header+10)!=0) return XE_SNAPSHOT_VERSION;
     if (format_get_u32le(saved_header + 12) != XE_SNAPSHOT_HEADER_SIZE ||
         format_get_u32le(saved_header + 16) != XE_SNAPSHOT_ENTRY_SIZE)
         return XE_SNAPSHOT_VERSION;
-    if (format_get_u32le(saved_header + 24) != 0 ||
+    if ((!visual && format_get_u32le(saved_header + 24) != 0) ||
         format_get_u32le(saved_header + 28) != 0 ||
         (version == 1 && !xe_snapshot_all_zero(saved_header + 320, 56)) ||
-        (version == XE_SNAPSHOT_FORMAT_VERSION &&
+        (legacy_visual && !xe_snapshot_all_zero(saved_header+352,24)) ||
+        (visual && !legacy_visual && !xe_snapshot_all_zero(saved_header+356,20)) ||
+        (!visual && version == XE_SNAPSHOT_FORMAT_VERSION &&
          (format_get_u32le(saved_header + 324) != 0 ||
           saved_header[343] != 0 || saved_header[375] != 0)))
         return XE_SNAPSHOT_FORMAT;
     if (format_get_u64le(saved_header + 376) !=
         format_crc64(0, saved_header, 376)) return XE_SNAPSHOT_FORMAT;
+    if (visual && (!mixed || !mixed->visual_count)) return XE_SNAPSHOT_TOKEN_MISMATCH;
+    if (!visual && mixed && mixed->visual_count) return XE_SNAPSHOT_TOKEN_MISMATCH;
 
     memset(layout, 0, sizeof *layout);
     for (int i = 0; i < XE_SNAPSHOT_REQUIRED_SECTIONS; i++)
@@ -6310,12 +6690,22 @@ static xe_snapshot_status xe_snapshot_parse_header(
             return XE_SNAPSHOT_FORMAT;
     }
 
-    for (int i = 0; i < XE_SNAPSHOT_FP_NUMERIC; i++)
-        if (memcmp(saved_header + 96 + 32 * i,
-                   e->snapshot_fingerprint[i], 32) != 0)
-            return xe_snapshot_fingerprint_status(i);
+    for (int i = 0; i < XE_SNAPSHOT_FP_NUMERIC; i++) {
+        const uint8_t *current=visual&&i==XE_SNAPSHOT_FP_MODEL?xe_engine_model_fingerprint(e):
+            e->snapshot_fingerprint[i];
+        if(memcmp(saved_header+96+32*i,current,32))return xe_snapshot_fingerprint_status(i);
+    }
     const uint8_t *numeric = saved_header + 96 + 32 * XE_SNAPSHOT_FP_NUMERIC;
-    if (version == 1) {
+    if (legacy_visual) {
+        /* Its opaque build-bound numeric identity predates the stable text
+         * ABI. Recognize the format, but replay media rather than guess. */
+        return XE_SNAPSHOT_NUMERIC_MISMATCH;
+    } else if (visual) {
+        uint8_t visual_numeric[32];
+        if(!xe_snapshot_visual_numeric(e,visual_numeric))return XE_SNAPSHOT_BACKEND;
+        if(format_get_u32le(saved_header+352)!=XE_SNAPSHOT_NUMERIC_ABI ||
+           memcmp(numeric,visual_numeric,32))return XE_SNAPSHOT_NUMERIC_MISMATCH;
+    } else if (version == 1) {
         if (!xe_snapshot_legacy_numeric_matches(e, numeric))
             return XE_SNAPSHOT_NUMERIC_MISMATCH;
     } else if (format_get_u32le(saved_header + 320) != XE_SNAPSHOT_NUMERIC_ABI ||
@@ -6326,6 +6716,10 @@ static xe_snapshot_status xe_snapshot_parse_header(
     xe_snapshot_boundary_hash(expected->v, expected->len, boundary);
     if (memcmp(saved_header + 288, boundary, 32) != 0)
         return XE_SNAPSHOT_TOKEN_MISMATCH;
+    if (visual) {
+        uint8_t identity[32];xe_input_hash(mixed,identity);
+        if (memcmp(identity,saved_header+320,32)) return XE_SNAPSHOT_TOKEN_MISMATCH;
+    }
     return XE_SNAPSHOT_OK;
 }
 
@@ -6435,11 +6829,23 @@ xe_snapshot_status xe_session_snapshot_check_prefix(xe_session *s, FILE *in,
     xe_require_owner(s->engine);
     xe_snapshot_fingerprints_init(s->engine);
     xe_tokens expected = {s->tokens, (int)position, (int)position};
+    xe_input prefix={0};
+    const xe_input *mixed=NULL;
+    if(s->visual_context) {
+        prefix=s->visual_context->owned.input;
+        prefix.tokens=s->tokens;prefix.count=s->n_tokens;
+        if(!xe_input_boundary(&prefix,(int)position))return XE_SNAPSHOT_TOKEN_MISMATCH;
+        prefix.count=(int)position;prefix.visual_count=0;
+        while(prefix.visual_count<s->visual_context->owned.input.visual_count &&
+              prefix.visual[prefix.visual_count].start+prefix.visual[prefix.visual_count].rows<=prefix.count)
+            prefix.visual_count++;
+        if(prefix.visual_count)mixed=&prefix;
+    }
     uint8_t header[XE_SNAPSHOT_HEADER_SIZE];
     uint8_t directory[XE_SNAPSHOT_MAX_SECTIONS * XE_SNAPSHOT_ENTRY_SIZE];
     xe_snapshot_layout layout;
     xe_snapshot_status status = xe_snapshot_parse_header(
-        s->engine, in, &expected, &layout, header, directory);
+        s->engine, in, &expected, mixed, &layout, header, directory);
     if (status != XE_SNAPSHOT_OK) return status;
     uint8_t *buffer = malloc(XE_SNAPSHOT_BUFFER_SIZE);
     if (!buffer) return XE_SNAPSHOT_NOMEM;
@@ -6449,9 +6855,9 @@ xe_snapshot_status xe_session_snapshot_check_prefix(xe_session *s, FILE *in,
     return status;
 }
 
-xe_snapshot_status xe_session_snapshot_load(xe_session *s, FILE *in,
-                                            const xe_tokens *expected) {
-    if (!s || !in || !expected) return XE_SNAPSHOT_INVALID_ARGUMENT;
+static xe_snapshot_status xe_session_snapshot_load_impl(xe_session *s, FILE *in,
+                                            const xe_tokens *expected, const xe_input *mixed) {
+    if (!s || s->cow || !in || !expected) return XE_SNAPSHOT_INVALID_ARGUMENT;
     xe_require_owner(s->engine);
     if (!xe_snapshot_expected_valid(expected) || expected->len > s->engine->context)
         return expected->len == 0 ? XE_SNAPSHOT_EMPTY
@@ -6461,7 +6867,7 @@ xe_snapshot_status xe_session_snapshot_load(xe_session *s, FILE *in,
     uint8_t directory[XE_SNAPSHOT_MAX_SECTIONS * XE_SNAPSHOT_ENTRY_SIZE];
     xe_snapshot_layout layout;
     xe_snapshot_status status = xe_snapshot_parse_header(
-        s->engine, in, expected, &layout, header, directory);
+        s->engine, in, expected, mixed, &layout, header, directory);
     if (status != XE_SNAPSHOT_OK) return status;
     uint8_t *buffer = malloc(XE_SNAPSHOT_BUFFER_SIZE);
     if (!buffer) return XE_SNAPSHOT_NOMEM;
@@ -6484,7 +6890,7 @@ xe_snapshot_status xe_session_snapshot_load(xe_session *s, FILE *in,
     free(buffer);
     status = xe_snapshot_gpu_sync(s->engine);
     if (status != XE_SNAPSHOT_OK) return status;
-    s->n_tokens = 0;
+    xe_session_reset(s);
     status = xe_snapshot_read_raw(
         in, &layout.sections[layout.known[XE_SNAPSHOT_LOGITS - 1]], s->logits);
     if (status == XE_SNAPSHOT_OK)
@@ -6509,6 +6915,25 @@ xe_snapshot_status xe_session_snapshot_load(xe_session *s, FILE *in,
     s->n_tokens = expected->len;
     if (s->swa_spare_k && s->swa_spare_v)
         memset(s->swa_dirty, 1, sizeof s->swa_dirty);
+    return XE_SNAPSHOT_OK;
+}
+
+xe_snapshot_status xe_session_snapshot_load(xe_session *s, FILE *in,
+                                            const xe_tokens *expected) {
+    return xe_session_snapshot_load_impl(s,in,expected,NULL);
+}
+
+xe_snapshot_status xe_session_snapshot_load_input(xe_session *s,FILE *file,const xe_input *in) {
+    if(!s||!xe_input_valid(in,s->engine->context)||s->cow||s->prefill_pending)
+        return XE_SNAPSHOT_INVALID_ARGUMENT;
+    xe_visual_context *next=in->visual_count?xe_visual_context_new(in):NULL;
+    if(in->visual_count&&!next)return XE_SNAPSHOT_NOMEM;
+    if(next)in=&next->owned.input;
+    xe_tokens expected={(int32_t *)in->tokens,in->count,in->count};
+    xe_snapshot_status status=xe_session_snapshot_load_impl(s,file,&expected,in);
+    if(status!=XE_SNAPSHOT_OK){xe_visual_context_release(next);return status;}
+    s->visual_context=next;
+    if(next){s->visual_prompt_end=in->count;xe_input_hash(in,s->visual_prompt_hash);}
     return XE_SNAPSHOT_OK;
 }
 

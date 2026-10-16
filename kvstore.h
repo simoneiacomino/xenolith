@@ -53,6 +53,9 @@ kvstore_status kvstore_save(kvstore *store, xe_session *session,
 kvstore_status kvstore_load(kvstore *store, const kvstore_id *id,
                             xe_session *session, const xe_tokens *expected,
                             xe_snapshot_status *snapshot_status);
+kvstore_status kvstore_load_input(kvstore *store, const kvstore_id *id,
+                                  xe_session *session, const xe_input *expected,
+                                  xe_snapshot_status *snapshot_status);
 kvstore_status kvstore_find(kvstore *store, const uint8_t key[32],
                             kvstore_id *id);
 kvstore_status kvstore_contains(kvstore *store, const kvstore_id *id);

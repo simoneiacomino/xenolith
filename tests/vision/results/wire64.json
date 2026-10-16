@@ -1,0 +1,385 @@
+{
+  "context": 65536,
+  "checks": [
+    "vision capabilities",
+    "invalid images leave history unchanged",
+    "image history and source retrieval",
+    "durable response and checkpoint",
+    "second image changes answer with existing KV",
+    "rewind across second image",
+    "restart resumes visual snapshot",
+    "evicted embeddings rebuilt from persisted media",
+    "ephemeral image preserves durable history",
+    "rebuild by media ID with variable visual length",
+    "tool-result image",
+    "failed visual rebuild rolls back the transcript",
+    "reasoning cancellation and projection replay retain the image",
+    "synthetic OCR response",
+    "text service rejects visual sessions and requests"
+  ],
+  "generations": [
+    {
+      "request": "generate",
+      "text": "Red",
+      "done": {
+        "event": "done",
+        "stop": "stop",
+        "usage": {
+          "input": 110,
+          "cache_read": 0,
+          "output": 2,
+          "reasoning": 0,
+          "replayed": 0,
+          "shadow_prefilled": 0,
+          "shadow_background": 0,
+          "shadow_remaining": 0,
+          "shadow_kv_bytes": 0,
+          "shadow_wait_us": 0,
+          "total": 112
+        },
+        "inference": {
+          "prefill": {
+            "tokens": 110,
+            "total": 110,
+            "elapsed_ms": 2364
+          },
+          "decode": {
+            "tokens": 2,
+            "elapsed_ms": 64
+          }
+        },
+        "marker": 4
+      }
+    },
+    {
+      "request": "generate",
+      "text": "Yellow",
+      "done": {
+        "event": "done",
+        "stop": "stop",
+        "usage": {
+          "input": 102,
+          "cache_read": 112,
+          "output": 2,
+          "reasoning": 0,
+          "replayed": 0,
+          "shadow_prefilled": 0,
+          "shadow_background": 0,
+          "shadow_remaining": 0,
+          "shadow_kv_bytes": 0,
+          "shadow_wait_us": 0,
+          "total": 216
+        },
+        "inference": {
+          "prefill": {
+            "tokens": 102,
+            "total": 102,
+            "elapsed_ms": 1815
+          },
+          "decode": {
+            "tokens": 2,
+            "elapsed_ms": 58
+          }
+        },
+        "marker": 8
+      }
+    },
+    {
+      "request": "generate",
+      "text": "Red",
+      "done": {
+        "event": "done",
+        "stop": "stop",
+        "usage": {
+          "input": 110,
+          "cache_read": 0,
+          "output": 2,
+          "reasoning": 0,
+          "replayed": 0,
+          "shadow_prefilled": 0,
+          "shadow_background": 0,
+          "shadow_remaining": 0,
+          "shadow_kv_bytes": 0,
+          "shadow_wait_us": 0,
+          "total": 112
+        },
+        "inference": {
+          "prefill": {
+            "tokens": 110,
+            "total": 110,
+            "elapsed_ms": 1849
+          },
+          "decode": {
+            "tokens": 2,
+            "elapsed_ms": 42
+          }
+        },
+        "marker": 11
+      }
+    },
+    {
+      "request": "generate",
+      "text": "Red",
+      "done": {
+        "event": "done",
+        "stop": "stop",
+        "usage": {
+          "input": 23,
+          "cache_read": 112,
+          "output": 2,
+          "reasoning": 0,
+          "replayed": 0,
+          "shadow_prefilled": 0,
+          "shadow_background": 0,
+          "shadow_remaining": 0,
+          "shadow_kv_bytes": 0,
+          "shadow_wait_us": 0,
+          "total": 137
+        },
+        "inference": {
+          "prefill": {
+            "tokens": 23,
+            "total": 23,
+            "elapsed_ms": 610
+          },
+          "decode": {
+            "tokens": 2,
+            "elapsed_ms": 53
+          }
+        },
+        "marker": 15,
+        "resume": {
+          "loaded": true,
+          "tokens": 112
+        }
+      }
+    },
+    {
+      "request": "generate",
+      "text": "Red",
+      "done": {
+        "event": "done",
+        "stop": "stop",
+        "usage": {
+          "input": 110,
+          "cache_read": 0,
+          "output": 2,
+          "reasoning": 0,
+          "replayed": 0,
+          "shadow_prefilled": 0,
+          "shadow_background": 0,
+          "shadow_remaining": 0,
+          "shadow_kv_bytes": 0,
+          "shadow_wait_us": 0,
+          "total": 112
+        },
+        "inference": {
+          "prefill": {
+            "tokens": 110,
+            "total": 110,
+            "elapsed_ms": 2231
+          },
+          "decode": {
+            "tokens": 2,
+            "elapsed_ms": 83
+          }
+        },
+        "marker": 18
+      }
+    },
+    {
+      "request": "ephemeral",
+      "text": "yellow",
+      "done": {
+        "event": "done",
+        "stop": "stop",
+        "usage": {
+          "input": 102,
+          "cache_read": 0,
+          "output": 2,
+          "reasoning": 0,
+          "replayed": 0,
+          "shadow_prefilled": 0,
+          "shadow_background": 0,
+          "shadow_remaining": 0,
+          "shadow_kv_bytes": 0,
+          "shadow_wait_us": 0,
+          "total": 104
+        },
+        "inference": {
+          "prefill": {
+            "tokens": 102,
+            "total": 102,
+            "elapsed_ms": 1733
+          },
+          "decode": {
+            "tokens": 2,
+            "elapsed_ms": 39
+          }
+        },
+        "marker": null
+      }
+    },
+    {
+      "request": "generate",
+      "text": "Red",
+      "done": {
+        "event": "done",
+        "stop": "stop",
+        "usage": {
+          "input": 166,
+          "cache_read": 0,
+          "output": 2,
+          "reasoning": 0,
+          "replayed": 0,
+          "shadow_prefilled": 0,
+          "shadow_background": 0,
+          "shadow_remaining": 0,
+          "shadow_kv_bytes": 0,
+          "shadow_wait_us": 0,
+          "total": 168
+        },
+        "inference": {
+          "prefill": {
+            "tokens": 166,
+            "total": 166,
+            "elapsed_ms": 1572
+          },
+          "decode": {
+            "tokens": 2,
+            "elapsed_ms": 36
+          }
+        },
+        "marker": 24
+      }
+    },
+    {
+      "request": "generate",
+      "text": "Yellow",
+      "done": {
+        "event": "done",
+        "stop": "stop",
+        "usage": {
+          "input": 164,
+          "cache_read": 0,
+          "output": 6,
+          "reasoning": 0,
+          "replayed": 1,
+          "shadow_prefilled": 0,
+          "shadow_background": 0,
+          "shadow_remaining": 0,
+          "shadow_kv_bytes": 0,
+          "shadow_wait_us": 0,
+          "total": 169
+        },
+        "inference": {
+          "prefill": {
+            "tokens": 163,
+            "total": 163,
+            "elapsed_ms": 2667
+          },
+          "decode": {
+            "tokens": 6,
+            "elapsed_ms": 247
+          }
+        },
+        "marker": 33,
+        "reasoning_close": "natural"
+      }
+    },
+    {
+      "request": "generate",
+      "text": "The upper-left color is yellow.",
+      "done": {
+        "event": "done",
+        "stop": "stop",
+        "usage": {
+          "input": 173,
+          "cache_read": 0,
+          "output": 13,
+          "reasoning": 0,
+          "replayed": 0,
+          "shadow_prefilled": 0,
+          "shadow_background": 0,
+          "shadow_remaining": 0,
+          "shadow_kv_bytes": 0,
+          "shadow_wait_us": 0,
+          "total": 186
+        },
+        "inference": {
+          "prefill": {
+            "tokens": 173,
+            "total": 173,
+            "elapsed_ms": 2746
+          },
+          "decode": {
+            "tokens": 13,
+            "elapsed_ms": 570
+          }
+        },
+        "marker": 41,
+        "reasoning_close": "natural"
+      }
+    },
+    {
+      "request": "ephemeral",
+      "text": "7318",
+      "done": {
+        "event": "done",
+        "stop": "stop",
+        "usage": {
+          "input": 158,
+          "cache_read": 0,
+          "output": 5,
+          "reasoning": 0,
+          "replayed": 0,
+          "shadow_prefilled": 0,
+          "shadow_background": 0,
+          "shadow_remaining": 0,
+          "shadow_kv_bytes": 0,
+          "shadow_wait_us": 0,
+          "total": 163
+        },
+        "inference": {
+          "prefill": {
+            "tokens": 158,
+            "total": 158,
+            "elapsed_ms": 1715
+          },
+          "decode": {
+            "tokens": 5,
+            "elapsed_ms": 269
+          }
+        },
+        "marker": null
+      }
+    }
+  ],
+  "server_memory": [
+    {
+      "VmPeak": "31591904 kB",
+      "VmHWM": "26880556 kB",
+      "VmRSS": "25632188 kB",
+      "VmSwap": "0 kB"
+    },
+    {
+      "VmPeak": "31536048 kB",
+      "VmHWM": "26829520 kB",
+      "VmRSS": "25768256 kB",
+      "VmSwap": "0 kB"
+    },
+    {
+      "VmPeak": "33496256 kB",
+      "VmHWM": "26885660 kB",
+      "VmRSS": "23638032 kB",
+      "VmSwap": "0 kB"
+    },
+    {
+      "VmPeak": "28405568 kB",
+      "VmHWM": "14425444 kB",
+      "VmRSS": "14000968 kB",
+      "VmSwap": "0 kB"
+    }
+  ],
+  "status": "PASS"
+}

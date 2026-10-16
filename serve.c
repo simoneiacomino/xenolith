@@ -2,6 +2,8 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "serve.h"
+#include "format.h"
+#include <math.h>
 #include "runtime.h"
 #include "json.h"
 
@@ -75,6 +77,7 @@ typedef struct {
     int stop;
     int accept_paused;
     int64_t idle_ms;
+    int protocol;
     size_t max_frame;        /* context_window * SERVE_FRAME_BYTES_PER_TOKEN */
     int64_t active_at;
     json_writer out;
@@ -465,6 +468,111 @@ static int serve_own(char ***owned, size_t *count, char *text) {
     return 1;
 }
 
+/* Optional protocol v2 image transport. Media IDs never name server paths. */
+static int serve_image_hex(const char *text,size_t length,uint8_t out[32]) {
+    if(!text||length!=64)return 0;
+    for(size_t i=0;i<32;i++) {
+        int value=0;
+        for(int j=0;j<2;j++) {
+            unsigned char c=(unsigned char)text[2*i+j];int n;
+            if(c>='0'&&c<='9')n=c-'0';else if(c>='a'&&c<='f')n=c-'a'+10;
+            else if(c>='A'&&c<='F')n=c-'A'+10;else return 0;
+            value=value*16+n;
+        }
+        out[i]=(uint8_t)value;
+    }
+    return 1;
+}
+
+static int serve_image_digit(unsigned char c) {
+    if(c>='A'&&c<='Z')return c-'A';
+    if(c>='a'&&c<='z')return c-'a'+26;
+    if(c>='0'&&c<='9')return c-'0'+52;
+    if(c=='+')return 62;
+    if(c=='/')return 63;
+    return -1;
+}
+
+static uint8_t *serve_image_decode(const char *text,size_t length,size_t *size) {
+    if(!text||!length||length%4||length>UINT64_C(64)*1024*1024)return NULL;
+    size_t padding=(text[length-1]=='=')+(text[length-2]=='=');
+    size_t bytes=length/4*3-padding;if(bytes<8||bytes>XE_IMAGE_RECORD_LIMIT)return NULL;
+    uint8_t *out=malloc(bytes);if(!out)return NULL;
+    size_t written=0;
+    for(size_t i=0;i<length;i+=4) {
+        int a=serve_image_digit(text[i]),b=serve_image_digit(text[i+1]);
+        int c=serve_image_digit(text[i+2]),d=serve_image_digit(text[i+3]);
+        int final=i+4==length;
+        if(a<0||b<0||(!final&&(c<0||d<0)))goto bad;
+        if(text[i+2]=='=') {
+            if(!final||text[i+3]!='='||(b&15))goto bad;
+            out[written++]=(uint8_t)(a<<2|b>>4);
+        } else if(text[i+3]=='=') {
+            if(!final||c<0||(c&3))goto bad;
+            out[written++]=(uint8_t)(a<<2|b>>4);out[written++]=(uint8_t)(b<<4|c>>2);
+        } else {
+            if(c<0||d<0||written+3>bytes)goto bad;
+            out[written++]=(uint8_t)(a<<2|b>>4);out[written++]=(uint8_t)(b<<4|c>>2);
+            out[written++]=(uint8_t)(c<<6|d);
+        }
+    }
+    if(written!=bytes)goto bad;
+    *size=bytes;return out;
+bad:
+    free(out);return NULL;
+}
+
+static int serve_image_encode(json_writer *out,const uint8_t *bytes,size_t size) {
+    static const char alphabet[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    if(!json_raw(out,"\""))return 0;
+    char chunk[4096];size_t used=0;
+    for(size_t i=0;i<size;i+=3) {
+        size_t n=size-i;if(n>3)n=3;
+        uint32_t v=(uint32_t)bytes[i]<<16;if(n>1)v|=(uint32_t)bytes[i+1]<<8;if(n>2)v|=bytes[i+2];
+        chunk[used++]=alphabet[v>>18];chunk[used++]=alphabet[(v>>12)&63];
+        chunk[used++]=n>1?alphabet[(v>>6)&63]:'=';chunk[used++]=n>2?alphabet[v&63]:'=';
+        if(used==sizeof chunk){if(!json_rawn(out,chunk,used))return 0;used=0;}
+    }
+    if(used&&!json_rawn(out,chunk,used))return 0;
+    return json_raw(out,"\"");
+}
+
+static int serve_image_parse(serve *s,const json_value *message,runtime_message *out,
+                             uint8_t **owned) {
+    *owned=NULL;
+    const json_value *image=json_member(message,"image");if(!image)return 1;
+    if(image->type!=JSON_OBJECT||s->protocol!=2)return 0;
+    const json_value *data=json_member(image,"data"),*id=json_member(image,"id");
+    if(!!data==!!id)return 0;
+    out->image_budget=280;
+    const json_value *budget=json_member(image,"budget");
+    if(budget) {
+        if(budget->type!=JSON_NUMBER || !(budget->number==70||budget->number==140||budget->number==280||
+            budget->number==560||budget->number==1120))return 0;
+        out->image_budget=(int)budget->number;
+    }
+    if(data) {
+        if(data->type!=JSON_STRING)return 0;
+        *owned=serve_image_decode(data->text,data->text_length,&out->image_length);if(!*owned)return 0;
+    } else {
+        uint8_t hash[32];const uint8_t *media;size_t size;
+        if(id->type!=JSON_STRING||!serve_image_hex(id->text,id->text_length,hash)||
+           runtime_media(s->w,hash,&media,&size)!=RUNTIME_OK||size>XE_IMAGE_RECORD_LIMIT)return 0;
+        *owned=malloc(size);if(!*owned)return 0;memcpy(*owned,media,size);out->image_length=size;
+    }
+    out->image=*owned;return 1;
+}
+
+static void serve_image_description(json_writer *out,const runtime_history_entry *entry) {
+    uint8_t hash[32];char hex[65];format_sha256_bytes(entry->image,entry->image_length,hash);
+    static const char digits[]="0123456789abcdef";
+    for(int i=0;i<32;i++){hex[2*i]=digits[hash[i]>>4];hex[2*i+1]=digits[hash[i]&15];}hex[64]=0;
+    json_raw(out,",\"image\":{\"id\":");json_string(out,hex,64);
+    json_raw(out,",\"bytes\":");json_u64(out,entry->image_length);
+    json_raw(out,",\"budget\":");json_i64(out,entry->image_budget);
+    json_raw(out,",\"rows\":");json_i64(out,entry->image_rows);json_raw(out,"}");
+}
+
 static int serve_tools_parse(const json_value *request, serve_tools *out) {
     memset(out, 0, sizeof *out);
     const json_value *array = json_member(request, "tools");
@@ -493,7 +601,7 @@ static int serve_tools_parse(const json_value *request, serve_tools *out) {
     return 1;
 }
 
-static int serve_messages_parse(const json_value *request,
+static int serve_messages_parse(serve *s,const json_value *request,
                                 serve_messages *out) {
     memset(out, 0, sizeof *out);
     const json_value *array = json_member(request, "messages");
@@ -516,6 +624,10 @@ static int serve_messages_parse(const json_value *request,
         const char *role = serve_str(v, "role");
         if (!role) return 0;
         m->text = serve_str(v, "text");
+        uint8_t *media;
+        if(!serve_image_parse(s,v,m,&media))return 0;
+        if(media&&!serve_own(&out->owned,&out->owned_count,(char *)media))return 0;
+        if(m->image&&(strcmp(role,"user")&&strcmp(role,"tool")&&strcmp(role,"tool_result")))return 0;
         if (!strcmp(role, "user")) {
             m->kind = RUNTIME_MESSAGE_USER;
         } else if (!strcmp(role, "assistant")) {
@@ -825,7 +937,7 @@ static int serve_dispatch(serve *s, serve_conn *c,
         }
         serve_ok_begin(s);
         json_raw(out, ",\"protocol\":");
-        json_i64(out, SERVE_PROTOCOL);
+        json_i64(out, s->protocol);
         json_raw(out, ",\"model\":");
         json_string(out, info.model, strlen(info.model));
         json_raw(out, ",\"context_window\":");
@@ -834,6 +946,7 @@ static int serve_dispatch(serve *s, serve_conn *c,
         json_i64(out, info.max_output);
         json_raw(out, ",\"max_frame\":");
         json_u64(out, (uint64_t)s->max_frame);
+        if(s->protocol==2)json_raw(out,",\"vision\":{\"formats\":[\"png\",\"jpeg\"],\"budgets\":[70,140,280,560,1120],\"default_budget\":280,\"max_bytes\":50331648,\"max_context_media_bytes\":268435456,\"media_refs\":true}");
         json_raw(out, ",\"kvstore\":");
         json_raw(out, info.kvstore ? "true" : "false");
         json_raw(out, ",\"reasoning\":{\"efforts\":[\"low\","
@@ -1007,8 +1120,13 @@ static int serve_dispatch(serve *s, serve_conn *c,
             serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "invalid role");
             return 0;
         }
+        uint8_t *media;
+        if(!serve_image_parse(s,request,&message,&media)) {
+            serve_error(s,c,RUNTIME_INVALID_ARGUMENT,"invalid image data or reference");return 0;
+        }
         runtime_marker marker;
         status = runtime_append(s->w, &message, &marker);
+        free(media);
         if (status != RUNTIME_OK) {
             serve_runtime_error(s, c, status);
             return 0;
@@ -1042,7 +1160,7 @@ static int serve_dispatch(serve *s, serve_conn *c,
             serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "invalid tools");
             return 0;
         }
-        if (!serve_messages_parse(request, &messages)) {
+        if (!serve_messages_parse(s,request, &messages)) {
             serve_tools_free(&tools);
             serve_messages_free(&messages);
             serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "invalid messages");
@@ -1076,7 +1194,7 @@ static int serve_dispatch(serve *s, serve_conn *c,
             serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "invalid tools");
             return 0;
         }
-        if (!serve_messages_parse(request, &messages)) {
+        if (!serve_messages_parse(s,request, &messages)) {
             serve_tools_free(&tools);
             serve_messages_free(&messages);
             serve_error(s, c, RUNTIME_INVALID_ARGUMENT, "invalid messages");
@@ -1165,6 +1283,25 @@ static int serve_dispatch(serve *s, serve_conn *c,
         serve_emit(s, c);
         return 0;
     }
+    if(!strcmp(op,"media")) {
+        const json_value *id=json_member(request,"image_id");uint8_t hash[32];const uint8_t *media;size_t size;
+        if(!id||id->type!=JSON_STRING||!serve_image_hex(id->text,id->text_length,hash)) {
+            serve_error(s,c,RUNTIME_INVALID_ARGUMENT,"invalid image reference");return 0;
+        }
+        status=runtime_media(s->w,hash,&media,&size);
+        if(status!=RUNTIME_OK){serve_runtime_error(s,c,status);return 0;}
+        size_t offset=0,limit=256*1024;
+        const json_value *v=json_member(request,"offset");
+        if(v){if(v->type!=JSON_NUMBER||!isfinite(v->number)||v->number<0||v->number>size||v->number!=floor(v->number)) {
+            serve_error(s,c,RUNTIME_INVALID_ARGUMENT,"invalid media offset");return 0;}offset=(size_t)v->number;}
+        v=json_member(request,"limit");
+        if(v){if(v->type!=JSON_NUMBER||!isfinite(v->number)||v->number<1||v->number>XE_IMAGE_RECORD_LIMIT||v->number!=floor(v->number)) {
+            serve_error(s,c,RUNTIME_INVALID_ARGUMENT,"invalid media limit");return 0;}limit=(size_t)v->number;}
+        if(limit>size-offset)limit=size-offset;
+        serve_ok_begin(s);json_raw(out,",\"offset\":");json_u64(out,offset);
+        json_raw(out,",\"total\":");json_u64(out,size);json_raw(out,",\"data\":");
+        serve_image_encode(out,media+offset,limit);json_raw(out,"}");serve_emit(s,c);return 0;
+    }
     if (!strcmp(op, "history")) {
         uint64_t count = runtime_history_count(s->w);
         serve_ok_begin(s);
@@ -1183,6 +1320,7 @@ static int serve_dispatch(serve *s, serve_conn *c,
             json_raw(out, ",\"text\":");
             json_string(out, entry.text ? entry.text : "",
                         entry.text_length);
+            if(entry.image)serve_image_description(out,&entry);
             if (entry.reasoning) {
                 json_raw(out, ",\"reasoning\":");
                 json_string(out, entry.reasoning,
@@ -1304,7 +1442,7 @@ static int serve_needs_session(const char *op) {
     return !strcmp(op, "append") || !strcmp(op, "generate") ||
            !strcmp(op, "rewind") || !strcmp(op, "rewind_cost") ||
            !strcmp(op, "rebuild") || !strcmp(op, "checkpoint") ||
-           !strcmp(op, "history") || !strcmp(op, "pending");
+           !strcmp(op, "history") || !strcmp(op, "pending") || !strcmp(op,"media");
 }
 
 static int serve_execute(serve *s, serve_conn *c,
@@ -1730,6 +1868,10 @@ static void serve_init(serve *s, const xe_engine *engine) {
     s->listen_fd = -1;
     s->max_frame = (size_t)xe_context_size(engine) *
                    SERVE_FRAME_BYTES_PER_TOKEN;
+    s->protocol=SERVE_PROTOCOL;
+    if(xe_engine_vision_fingerprint(engine) && (xe_context_size(engine)==65536||xe_context_size(engine)==131072)) {
+        s->protocol=2;s->max_frame=96*1024*1024;
+    }
     s->gen_owner = -1;
     for (int i = 0; i < SERVE_MAX_CONNECTIONS; i++) {
         s->conns[i].in_fd = -1;

@@ -4,6 +4,7 @@ __kernel void xe_probe(__global uint *value) {
 
 #pragma OPENCL EXTENSION cl_khr_fp16 : enable
 #pragma OPENCL EXTENSION cl_intel_subgroups : enable
+#include "vision.cl"
 
 #define XE_PREFILL_TM 32
 #define XE_PREFILL_KB 64
@@ -1103,6 +1104,77 @@ __kernel void xe_prefill_attn_online_b8_swa(__global const float *q,
 }
 
 __attribute__((intel_reqd_sub_group_size(16)))
+__kernel void xe_prefill_attn_online_b8_swa_visual(__global const float *q,
+                                            __global const half *k,
+                                            __global const half *v,
+                                            __global float *out,
+                                            int m_count,
+                                            int n_count,
+                                            int dimension,
+                                            int heads,
+                                            int kv_heads,
+                                            int query_offset,
+                                            int window) {
+    int query_head = get_group_id(0) * 8 + get_sub_group_id();
+    int lane = get_sub_group_local_id();
+    int query = query_head % m_count;
+    int head = query_head / m_count;
+    if (head >= heads) return;
+    int kv_head = head * kv_heads / heads;
+    int position = query_offset + query;
+    int first = window > 0 ? max(0, position - window + 1) : 0;
+    float maximum = -INFINITY;
+    float denominator = 0.0f;
+    float8 acc0 = (float8)(0.0f);
+    float8 acc1 = (float8)(0.0f);
+    __global const uint *q_source = (__global const uint *)(
+        q + ((size_t)head * m_count + query) * 256);
+    float8 q0 = as_float8(intel_sub_group_block_read8(q_source));
+    float8 q1 = as_float8(intel_sub_group_block_read8(q_source + 128));
+    int last = min(n_count - 1, query_offset + m_count - 1);
+    for (int key0 = first; key0 <= last; key0 += 8) {
+        int keys = min(8, last - key0 + 1);
+        float score[8];
+        float block_maximum = -INFINITY;
+        for (int local_key = 0; local_key < keys; local_key++) {
+            int key = key0 + local_key;
+            score[local_key] = xe_prefill_attn_swa_block_score(
+                q0, q1,
+                k + ((size_t)kv_head * n_count + key) * 256);
+            block_maximum = fmax(block_maximum, score[local_key]);
+        }
+        float next_maximum = fmax(maximum, block_maximum);
+        float alpha = maximum == -INFINITY ? 0.0f
+                      : exp(maximum - next_maximum);
+        float beta[8];
+        float block_denominator = 0.0f;
+        for (int local_key = 0; local_key < keys; local_key++) {
+            beta[local_key] = exp(score[local_key] - next_maximum);
+            block_denominator += beta[local_key];
+        }
+        denominator = denominator * alpha + block_denominator;
+        acc0 *= alpha;
+        acc1 *= alpha;
+        for (int local_key = 0; local_key < keys; local_key++) {
+            __global const ushort *source = (__global const ushort *)(
+                v + ((size_t)kv_head * n_count + key0 + local_key) * 256);
+            float weight = beta[local_key];
+            acc0 += weight * convert_float8(as_half8(
+                intel_sub_group_block_read_us8(source)));
+            acc1 += weight * convert_float8(as_half8(
+                intel_sub_group_block_read_us8(source + 128)));
+        }
+        maximum = next_maximum;
+    }
+    __global uint *target = (__global uint *)(
+        out + ((size_t)head * m_count + query) * 256);
+    intel_sub_group_block_write8(target,
+                                 as_uint8(acc0 / denominator));
+    intel_sub_group_block_write8(target + 128,
+                                 as_uint8(acc1 / denominator));
+}
+
+__attribute__((intel_reqd_sub_group_size(16)))
 __kernel void xe_prefill_heads_q8(__global const float *heads,
                                   __global char *quantized,
                                   __global half *scale,
@@ -1215,6 +1287,7 @@ __kernel void xe_prefill_swa_commit(__global half *ring_k,
     int d = index % dimension;
     size_t row = index / dimension;
     int query = row % m_count;
+    if (query < max(0, m_count - capacity)) return;
     int kv_head = row / m_count;
     size_t target = ((size_t)kv_head * capacity
                      + ((batch_start + query) & (capacity - 1))) * dimension + d;

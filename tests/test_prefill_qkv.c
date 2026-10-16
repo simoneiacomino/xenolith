@@ -211,7 +211,7 @@ static int qkv_run(xe_engine *e, int layer_index, int rows) {
                           rows, dimension, kv_heads, !global);
     xe_prefill_attention_online_append(e, q, k, v, attention, rows, rows,
                                         dimension, kv_heads, 0,
-                                        global ? 0 : XE_SWA_WINDOW);
+                                        global ? 0 : XE_SWA_WINDOW, XE_ATTENTION_CAUSAL);
     xe_prefill_heads_q8_append(e, attention, &attention_q8, rows, dimension);
     xe_prefill_projection_append(e, &layer->attn_o, &attention_q8,
                                  attention_projection, rows, XE_EMBD,
@@ -239,7 +239,7 @@ static int qkv_run(xe_engine *e, int layer_index, int rows) {
     for (int repetition = 0; repetition < attention_repetitions; repetition++)
         xe_prefill_attention_online_append(e, q, k, v, attention, rows, rows,
                                             dimension, kv_heads, 0,
-                                            global ? 0 : XE_SWA_WINDOW);
+                                            global ? 0 : XE_SWA_WINDOW, XE_ATTENTION_CAUSAL);
     xe_ze_check("zeCommandListHostSynchronize prefill attention timing",
                 zeCommandListHostSynchronize(e->gpu.commands, UINT64_MAX));
     clock_gettime(CLOCK_MONOTONIC, &finish);

@@ -98,13 +98,95 @@ make
 Run `./xenolith --help` for commands and options. For client integration, see
 the [protocol](PROTOCOL.md) and the [C API](xenolith.h).
 
+## Experimental image input
+
+The native CLI can answer questions about a PNG or JPEG using the pinned Gemma
+4 26B-A4B QAT model and its F16 mmproj. Artifact versions and SHA-256 values are
+in [tests/vision/manifest.json](tests/vision/manifest.json). The loader rejects incompatible
+weights. Use 65536 or 131072 context elements for initial validation:
+
+```sh
+python3 tools/vision_artifacts.py --help
+./xenolith run /path/to/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf \
+  --ctx 65536 --mmproj /path/to/mmproj-F16.gguf \
+  --image screenshot.png --image-tokens 280 \
+  -p "What is shown in this screenshot?" -n 128
+```
+
+For an interactive conversation about one image, use `chat` with the same
+image/mmproj options:
+
+```sh
+./xenolith chat /path/to/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf \
+  --ctx 65536 --mmproj /path/to/mmproj-F16.gguf --image photo.jpg
+```
+
+The image is attached to your first message and remains available for follow-up
+questions. Type `/exit` to leave. This chat command accepts one initial image;
+use protocol v2 for images in additional turns or durable sessions. The encoder
+runs once at startup; follow-up questions reuse the visual prefix.
+
+Image budgets are 70, 140, 280, 560 and 1120 (default 280); the actual number of projected
+rows depends on aspect ratio. EXIF orientation is applied and alpha is
+composited on white. Limits are 64 MiB encoded and 32 million decoded pixels
+per image. The first CLI implementation releases encoder allocations before
+loading the language model. High budgets still have substantial encoder cost.
+Startup computes complete model and projector SHA-256 hashes using the in-tree
+implementation, with Intel SHA acceleration when available. The loader checks
+architecture, required metadata and tensor types/shapes. Compatible weight
+variants can load; reference hashes are diagnostic, and full content identities
+isolate their computed caches. Persisted media can be replayed after a weight
+change. Encoder and prefill timings are separate from verification and loading.
+
+Visual sessions use shared global-KV checkpoint segments and visual snapshot
+format v3 alongside upstream's text snapshot v2. Earlier visual snapshots replay
+retained media. `wire`/`serve --cache-budget SIZE` bounds KV checkpoints (default
+16 GiB); projected embeddings have a separate 2 GiB limit. A zero budget disables
+both disk caches without deleting existing files or transcript media.
+
+`--prefill 512|1024` selects the text batch size for `run` and `bench`; 512
+remains the default. Visual spans are processed whole regardless of that text
+setting. Compute padding adds no context elements.
+
+For numerical dumps, create a directory and pass `--vision-dump DIR` to `run`,
+or use `vision-encode` with the same model/image/mmproj options. Add
+`--final-only` to save only the projected embeddings, without
+intermediate tracing; the output directory must already exist. Run
+`make check-vision` for portable input checks and the target GPU mask/ring tests.
+See [the visual input contract](VISION.md) for identity and session primitives.
+`wire` and `serve` accept `--mmproj FILE` to expose the opt-in image protocol v2,
+with durable media,
+visual snapshots, replay, rewind, rebuild and ephemeral messages. Without that
+option they retain text protocol v1. See [PROTOCOL.md](PROTOCOL.md) for image
+transport and media retrieval. Xenopi needs a client update to use this protocol.
+Validation fixtures, pinned reference metadata and historical reports are in
+[tests/vision](tests/vision). These files support tests and reference tools;
+the engine does not load them at runtime. Reports in
+[tests/vision/results](tests/vision/results) describe their recorded revisions
+and environments, including superseded implementations, rather than the current
+checkout.
+
 ## Testing
 
 - `make check-unit check-context`: host and CLI checks, without a GPU or model.
   Requires Python 3 and a C compiler with AddressSanitizer support.
 - `make check-gpu`: numerical GPU regressions, requiring a supported GPU but no model.
-- `make check-all MODEL=/path/to/model.gguf`: the full suite, including model,
+- `make check-all MODEL=/path/to/model.gguf`: the standard suite, including model,
   persistence, prefill, runtime and server checks; requires a supported GPU and model.
+
+Vision input checks are included in `check-unit`, and vision attention/ring
+checks in `check-gpu`. `make check-vision` runs those two focused checks together.
+Checks requiring a projector or projected image fixtures are explicit opt-in
+commands; see [vision validation](VISION.md#validation).
+
+Development utilities live in `tools/`, executable checks and fixtures in
+`tests/`, and performance experiments in `bench/`. The text regression matrix
+is `bench/text_regression.py`; it compares separately built executables and
+also supports candidate-only measurements. `bench/bench_prefill_gemm.c` and
+its OpenCL companion are an experimental kernel lab pinned to device `a7a0`,
+including candidate kernels that are not used by the engine. They are not a
+portable regression suite. The end-to-end benchmark procedure remains in
+[bench/compare_pp_tg.md](bench/compare_pp_tg.md).
 
 <details>
 <summary>KV regression checks and kernel optimization guidance</summary>

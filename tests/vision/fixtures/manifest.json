@@ -1,0 +1,151 @@
+{
+  "pillow_version": "11.3.0",
+  "resize_source_sha256": "5d280d5448b1c219183a27e95b6aa7178b350275772d07881c91c65f13fa815e",
+  "cases": [
+    {
+      "image": "quadrants.png",
+      "budget": 70,
+      "width": 480,
+      "height": 336,
+      "rows": 70,
+      "prepared": "quadrants-70.rgb",
+      "sha256": "1ca605d157ed44185a45c5b19266c362201e9b4a594f43c1a776ee70bf4f879a"
+    },
+    {
+      "image": "quadrants.png",
+      "budget": 140,
+      "width": 672,
+      "height": 432,
+      "rows": 126,
+      "prepared": "quadrants-140.rgb",
+      "sha256": "d392729d4d52e4e5d936252cb43ef84b3e1bb77c870fa8e3408e115484eed410"
+    },
+    {
+      "image": "quadrants.png",
+      "budget": 280,
+      "width": 960,
+      "height": 672,
+      "rows": 280,
+      "prepared": "quadrants-280.rgb",
+      "sha256": "182a657da64263c231ee87d4e71f971f1a8f061932375dedb4f92f8b42dd9782"
+    },
+    {
+      "image": "quadrants.png",
+      "budget": 560,
+      "width": 1344,
+      "height": 912,
+      "rows": 532,
+      "prepared": "quadrants-560.rgb",
+      "sha256": "b5f7a9fdde2c56ab84d06fc79d58b44ba347e8a350d9179785e45b020db74366"
+    },
+    {
+      "image": "quadrants.png",
+      "budget": 1120,
+      "width": 1920,
+      "height": 1344,
+      "rows": 1120,
+      "prepared": "quadrants-1120.rgb",
+      "sha256": "c260a1a39222b1c7f7e6b876538395399a9880f77e694216910a8ac7257ffb96"
+    },
+    {
+      "image": "wide.png",
+      "budget": 70,
+      "width": 960,
+      "height": 144,
+      "rows": 60,
+      "prepared": "wide-70.rgb",
+      "sha256": "1d533a9b22852cece08e83692d10b69d19870c7db56f42c5faf2fcc8fb9e5b5e"
+    },
+    {
+      "image": "wide.png",
+      "budget": 140,
+      "width": 1344,
+      "height": 192,
+      "rows": 112,
+      "prepared": "wide-140.rgb",
+      "sha256": "ffc8a18232fcc808400c2305474e9164c42cee49bd51461cf4b7c590023d52e5"
+    },
+    {
+      "image": "wide.png",
+      "budget": 280,
+      "width": 1920,
+      "height": 288,
+      "rows": 240,
+      "prepared": "wide-280.rgb",
+      "sha256": "f013c71a3f06dc75a9d9f35082411abde6a5dedb86b08a2c26f9449dc5eadd81"
+    },
+    {
+      "image": "wide.png",
+      "budget": 560,
+      "width": 2736,
+      "height": 432,
+      "rows": 513,
+      "prepared": "wide-560.rgb",
+      "sha256": "c8e751f125c52e298e5858ac0b304e4fa9145709d1510a7ce4062d8174604691"
+    },
+    {
+      "image": "wide.png",
+      "budget": 1120,
+      "width": 3888,
+      "height": 624,
+      "rows": 1053,
+      "prepared": "wide-1120.rgb",
+      "sha256": "d119df88dfbea983c7677c8e5d7a9ab1116b39689332451ab8fc6511880a236b"
+    },
+    {
+      "image": "portrait.png",
+      "budget": 70,
+      "width": 144,
+      "height": 960,
+      "rows": 60,
+      "prepared": "portrait-70.rgb",
+      "sha256": "cd8ccfb2f0b8dab96b8fc8378baf59c84cf691bf74a6ea8ac1587582a55d6ba0"
+    },
+    {
+      "image": "portrait.png",
+      "budget": 140,
+      "width": 192,
+      "height": 1344,
+      "rows": 112,
+      "prepared": "portrait-140.rgb",
+      "sha256": "213dcd99623c12f48f013b098ea56c7c2b60ab00ef1f433d1c220b31595c523d"
+    },
+    {
+      "image": "portrait.png",
+      "budget": 280,
+      "width": 288,
+      "height": 1920,
+      "rows": 240,
+      "prepared": "portrait-280.rgb",
+      "sha256": "d61d35d8002f686813b5a31c0198de5418feb8e48b7833836e279bb80d79259a"
+    },
+    {
+      "image": "portrait.png",
+      "budget": 560,
+      "width": 432,
+      "height": 2736,
+      "rows": 513,
+      "prepared": "portrait-560.rgb",
+      "sha256": "e9aa8e219315e6f4dee2166d41106224ed84b8568bbd057857df7502711ff807"
+    },
+    {
+      "image": "portrait.png",
+      "budget": 1120,
+      "width": 624,
+      "height": 3888,
+      "rows": 1053,
+      "prepared": "portrait-1120.rgb",
+      "sha256": "6b97a0b3dbb135181cda6e52cef9ca99d7987ea440e1e77a0c2ddff7f22fb025"
+    }
+  ],
+  "text_fixture": {
+    "image": "code.png",
+    "sha256": "04c29153069fc2e6055bd206128532a027afac1323917777a7f947a8afacf79f",
+    "expected": "7318"
+  },
+  "rotated_fixture": {
+    "image": "quadrants-rotated.png",
+    "sha256": "87ffd98a72d249be7fac7b1b8448c58daa72fa72c9b725be3dd286f8bf07ca3b",
+    "expected_upper_left": "yellow"
+  }
+}

@@ -65,6 +65,12 @@ profile_status profile_render_system(profile *p, const char *text,
                                      profile_render *out);
 profile_status profile_render_user(profile *p, const char *text,
                                    uint32_t turn, profile_render *out);
+profile_status profile_render_user_image(profile *p, const char *text,
+                                         uint32_t image_rows, uint32_t turn,
+                                         profile_render *out, uint32_t *image_offset);
+profile_status profile_render_tool_image(profile *p, const char *name, const char *text,
+                                          uint32_t rows, profile_render *out,
+                                          uint32_t *image_offset);
 profile_status profile_render_tool_result(profile *p, const char *name,
                                           const char *value,
                                           profile_render *out);

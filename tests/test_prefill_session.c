@@ -526,7 +526,8 @@ static int session_kv_indexing_test(const char *model, int context) {
                             w.hidden[0] + (size_t)row * XE_EMBD);
         xe_prefill_rope_prepare_batch(e, &w, rows, start, 1);
         size_t allocations = xe_test_allocations;
-        xe_prefill_attention_batch_append(s, layer, &w, rows, start);
+        xe_prefill_attention_batch_append(s, layer, &w, rows, start,
+                                          XE_ATTENTION_CAUSAL);
         xe_ze_check("prefill KV indexing test synchronize",
                     zeCommandListHostSynchronize(e->gpu.commands, UINT64_MAX));
         int batch_ok = allocations == xe_test_allocations;

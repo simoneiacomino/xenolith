@@ -1,0 +1,117 @@
+{
+  "sample_seconds": 5,
+  "samples": [
+    {
+      "pid": 813,
+      "monotonic": 1145.068555631,
+      "status": {
+        "VmHWM": "26977408 kB",
+        "VmRSS": "22770648 kB",
+        "VmSwap": "0 kB"
+      },
+      "system": {
+        "MemTotal": "28741300 kB",
+        "MemAvailable": "9567916 kB",
+        "SwapFree": "4188284 kB"
+      }
+    },
+    {
+      "pid": 813,
+      "monotonic": 1150.069883016,
+      "status": {
+        "VmHWM": "26977408 kB",
+        "VmRSS": "22695484 kB",
+        "VmSwap": "0 kB"
+      },
+      "system": {
+        "MemTotal": "28741300 kB",
+        "MemAvailable": "9573724 kB",
+        "SwapFree": "4188284 kB"
+      }
+    },
+    {
+      "pid": 813,
+      "monotonic": 1155.077340757,
+      "status": {
+        "VmHWM": "26977408 kB",
+        "VmRSS": "22695484 kB",
+        "VmSwap": "0 kB"
+      },
+      "system": {
+        "MemTotal": "28741300 kB",
+        "MemAvailable": "9592864 kB",
+        "SwapFree": "4188284 kB"
+      }
+    },
+    {
+      "pid": 813,
+      "monotonic": 1160.079044523,
+      "status": {
+        "VmHWM": "26977408 kB",
+        "VmRSS": "22755536 kB",
+        "VmSwap": "0 kB"
+      },
+      "system": {
+        "MemTotal": "28741300 kB",
+        "MemAvailable": "9540232 kB",
+        "SwapFree": "4188284 kB"
+      }
+    },
+    {
+      "pid": 813,
+      "monotonic": 1165.080800068,
+      "status": {
+        "VmHWM": "26977408 kB",
+        "VmRSS": "23254964 kB",
+        "VmSwap": "0 kB"
+      },
+      "system": {
+        "MemTotal": "28741300 kB",
+        "MemAvailable": "9013252 kB",
+        "SwapFree": "4188284 kB"
+      }
+    },
+    {
+      "pid": 1016,
+      "monotonic": 1170.082239087,
+      "status": {
+        "VmHWM": "246144 kB",
+        "VmRSS": "246144 kB",
+        "VmSwap": "0 kB"
+      },
+      "system": {
+        "MemTotal": "28741300 kB",
+        "MemAvailable": "27872796 kB",
+        "SwapFree": "4188284 kB"
+      }
+    },
+    {
+      "pid": 1016,
+      "monotonic": 1175.08404772,
+      "status": {
+        "VmHWM": "6376144 kB",
+        "VmRSS": "6376144 kB",
+        "VmSwap": "0 kB"
+      },
+      "system": {
+        "MemTotal": "28741300 kB",
+        "MemAvailable": "21556312 kB",
+        "SwapFree": "4188284 kB"
+      }
+    },
+    {
+      "pid": 1016,
+      "monotonic": 1180.085104882,
+      "status": {
+        "VmHWM": "14425484 kB",
+        "VmRSS": "14000832 kB",
+        "VmSwap": "0 kB"
+      },
+      "system": {
+        "MemTotal": "28741300 kB",
+        "MemAvailable": "13472752 kB",
+        "SwapFree": "4188284 kB"
+      }
+    }
+  ]
+}

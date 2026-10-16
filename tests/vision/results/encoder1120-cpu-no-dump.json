@@ -1,0 +1,19 @@
+{
+  "limits": {
+    "relative_rms": 0.005,
+    "cosine": 0.99998
+  },
+  "pass": true,
+  "stages": [
+    {
+      "stage": "embedding",
+      "relative_rms": 0.004072722665581168,
+      "cosine": 0.9999917064487236,
+      "max_abs": 0.19086837768554688,
+      "pass": true,
+      "elements": 3153920,
+      "reference_sha256": "1a9b8ae5c1e5b8432171ffb45071103b6a8305a3c6b25e1b98db30e4306a7f35",
+      "candidate_sha256": "d24fd32943010e43cae2aa53e4a4771d117d02690c8e1d3f6a015634baa1d489"
+    }
+  ]
+}

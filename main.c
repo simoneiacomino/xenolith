@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "xenolith.h"
+#include "format.h"
 #include "profile.h"
 #include "conversation.h"
 #include "serve.h"
@@ -24,11 +25,15 @@ static void usage(void) {
 "  info     print model metadata\n"
 "  tokenize -p \"text\" | -f file [--pieces]\n"
 "  run      -p \"prompt\" [-n max] [--temp F] [--top-k N] [--top-p F] [--seed S]\n"
+"  vision-encode --mmproj FILE --image FILE [--image-tokens N] --vision-dump DIR [--final-only]\n"
+"  run      image options: --mmproj FILE --image FILE [--image-tokens N] [--vision-dump DIR]\n"
+"  chat     image options: --mmproj FILE --image FILE [--image-tokens N] (first message)\n"
+"  run/bench --prefill 512|1024 (default 512)\n"
 "  chat     [-n max] [--temp F] [--top-k N] [--top-p F] [--seed S]\n"
 "  oracle   -t \"id,id,id\" [-o logits.bin] [--layers dir] [--q8]\n"
 "  bench    [-p N] [-n N] [-d N] [-r N] [--delay S] [--no-warmup] [--progress] [-o md|jsonl]\n"
-"  wire     [--state DIR] [--cache DIR] [--cache-budget SIZE]\n"
-"  serve    [--state DIR] [--cache DIR] [--cache-budget SIZE] [--socket PATH] [--idle-shutdown MIN]\n"
+"  wire     [--state DIR] [--cache DIR] [--cache-budget SIZE] [--mmproj FILE]\n"
+"  serve    [--state DIR] [--cache DIR] [--cache-budget SIZE] [--socket PATH] [--idle-shutdown MIN] [--mmproj FILE]\n"
 "           SIZE: bytes, kB/MB/GB or KiB/MiB/GiB; default 16GiB; 0 disables disk cache\n");
     exit(1);
 }
@@ -262,9 +267,78 @@ static int cmd_tokenize(const char *model, int argc, char **argv) {
     return 0;
 }
 
+static uint64_t bench_now_ns(void);
+
+static int cli_visual_budget(const char *arg) {
+    char *end;
+    errno = 0;
+    long n = strtol(arg, &end, 10);
+    if (errno || *end || !(n == 70 || n == 140 || n == 280 || n == 560 || n == 1120)) usage();
+    return (int)n;
+}
+
+static float *cli_encode_image(const char *model, const char *mmproj, const char *path,
+                               int budget, const char *dump, xe_image *image, uint8_t hash[32], uint8_t model_hash[32]) {
+    char error[256];uint64_t started=bench_now_ns();
+    if (!xe_image_load(image, path, budget, error, sizeof error)) {
+        fprintf(stderr, "xenolith: %s\n", error); exit(1);
+    }
+    uint64_t prepared=bench_now_ns();
+    xe_engine *encoder = xe_engine_open_vocab(model);
+    memcpy(model_hash,xe_engine_model_fingerprint(encoder),32);
+    uint64_t hashed=bench_now_ns();
+    if (!xe_engine_enable_vision(encoder, mmproj, error, sizeof error)) {
+        fprintf(stderr, "xenolith: %s\n", error); exit(1);
+    }
+    uint64_t loaded=bench_now_ns();
+    float *out = malloc((size_t)image->rows * XE_VISUAL_WIDTH * sizeof(float));
+    if (!out || !xe_engine_encode_image(encoder, image, out, dump)) {
+        fprintf(stderr, "xenolith: image encoding failed\n"); exit(1);
+    }
+    uint64_t encoded=bench_now_ns();
+    fprintf(stderr,"vision: budget=%d rows=%d preprocess_ms=%.3f model_hash_ms=%.3f mmproj_load_ms=%.3f encoder_ms=%.3f\n",
+            image->budget,image->rows,(prepared-started)/1e6,(hashed-prepared)/1e6,(loaded-hashed)/1e6,(encoded-loaded)/1e6);
+    memcpy(hash, xe_engine_vision_fingerprint(encoder), 32);
+    xe_engine_close(encoder);
+    return out;
+}
+
+static int cmd_vision_encode(const char *model, int argc, char **argv) {
+    const char *mmproj = NULL, *path = NULL, *dump = NULL;
+    int budget = 280;
+    int final_only = 0;
+    for (int i = 3; i < argc; i++) {
+        if (!strcmp(argv[i], "--final-only")) { final_only = 1; continue; }
+        if (++i >= argc) usage();
+        if (!strcmp(argv[i-1], "--mmproj")) mmproj = argv[i];
+        else if (!strcmp(argv[i-1], "--image")) path = argv[i];
+        else if (!strcmp(argv[i-1], "--vision-dump")) dump = argv[i];
+        else if (!strcmp(argv[i-1], "--image-tokens")) budget = cli_visual_budget(argv[i]);
+        else usage();
+    }
+    if (!mmproj || !path || !dump) usage();
+    cli_lock(NULL);
+    xe_image image; uint8_t hash[32], model_hash[32];
+    float *out = cli_encode_image(model, mmproj, path, budget, final_only ? NULL : dump, &image, hash, model_hash);
+    if (final_only) {
+        char output_path[4096];
+        int length = snprintf(output_path, sizeof output_path, "%s/embedding.f32", dump);
+        if (length < 0 || (size_t)length >= sizeof output_path) { fprintf(stderr,"xenolith: vision dump path too long\n"); exit(1); }
+        FILE *file = fopen(output_path, "wb");
+        if (!file) { fprintf(stderr,"xenolith: cannot open final vision dump\n"); exit(1); }
+        int ok = format_write(file, out, (size_t)image.rows * XE_VISUAL_WIDTH * sizeof(float));
+        if (fclose(file)) ok = 0;
+        if (!ok) { fprintf(stderr,"xenolith: cannot write final vision dump\n"); exit(1); }
+    }
+    printf("vision rows %d width %d\n", image.rows, XE_VISUAL_WIDTH);
+    free(out); xe_image_free(&image); cli_unlock(); return 0;
+}
+
 static int cmd_run(const char *model, int argc, char **argv) {
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     const char *prompt = NULL;
+    const char *mmproj = NULL, *image_path = NULL, *vision_dump = NULL;
+    int image_budget = 280, prefill_rows = 512;
     int max_n = 512;
     float temp = 1.0f;
     int top_k = 64;
@@ -273,7 +347,18 @@ static int cmd_run(const char *model, int argc, char **argv) {
 
     for (int i = 3; i < argc; i++) {
         if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
-        if (!strcmp(argv[i], "-p")) {
+        if (!strcmp(argv[i], "--image") || !strcmp(argv[i], "--mmproj") || !strcmp(argv[i], "--vision-dump")) {
+            const char *key = argv[i]; if (++i >= argc) usage();
+            if (!strcmp(key, "--image")) image_path = argv[i];
+            else if (!strcmp(key, "--mmproj")) mmproj = argv[i];
+            else vision_dump = argv[i];
+        } else if (!strcmp(argv[i], "--image-tokens")) {
+            if (++i >= argc) usage();
+            image_budget = cli_visual_budget(argv[i]);
+        } else if (!strcmp(argv[i], "--prefill")) {
+            if (++i >= argc || (strcmp(argv[i], "512") && strcmp(argv[i], "1024"))) usage();
+            prefill_rows = atoi(argv[i]);
+        } else if (!strcmp(argv[i], "-p")) {
             if (++i >= argc) usage();
             prompt = argv[i];
         } else if (!strcmp(argv[i], "-n")) {
@@ -316,10 +401,16 @@ static int cmd_run(const char *model, int argc, char **argv) {
             usage();
         }
     }
-    if (!prompt) usage();
+    if (!prompt || (!!image_path != !!mmproj) || (vision_dump && !image_path)) usage();
+    if (image_path && !context_seen) context = 65536;
+    if (image_path && context!=65536 && context!=131072) {
+        fprintf(stderr,"xenolith: initial vision support requires --ctx 65536 or 131072\n");return 1;
+    }
 
     cli_lock(NULL);
 
+    xe_image image = {0}; uint8_t projector_hash[32], model_hash[32]; float *image_embeddings = NULL;
+    if (image_path) image_embeddings = cli_encode_image(model, mmproj, image_path, image_budget, vision_dump, &image, projector_hash, model_hash);
     xe_engine *e = xe_engine_open_with_context(model, context);
     int ctx = xe_context_size(e);
     int vocab = xe_vocab_size(e);
@@ -343,6 +434,30 @@ static int cmd_run(const char *model, int argc, char **argv) {
         return 1;
     }
     int n = 1 + encoded;
+    xe_visual_span visual = {0};
+    profile *visual_profile = NULL;
+    if (image_embeddings) {
+        if (profile_open(&visual_profile,e) != PROFILE_OK) {
+            fprintf(stderr,"xenolith: visual profile mismatch\n"); exit(1);
+        }
+        profile_render render;
+        if (profile_render_system(visual_profile,NULL,NULL,0,0,&render) != PROFILE_OK ||
+            render.token_count >= (uint32_t)ctx) exit(1);
+        n = (int)render.token_count;
+        memcpy(toks,render.tokens,(size_t)n*sizeof(*toks));
+        uint32_t offset;
+        if (profile_render_user_image(visual_profile,prompt,image.rows,PROFILE_TURN_PADDED,&render,&offset) != PROFILE_OK ||
+            render.token_count > (uint32_t)(ctx-n)) exit(1);
+        visual.start=n+(int)offset; visual.rows=image.rows; visual.embeddings=image_embeddings;
+        visual.media=image.encoded;visual.media_size=image.encoded_size;visual.budget=image.budget;
+        memcpy(toks+n,render.tokens,(size_t)render.token_count*sizeof(*toks));n+=(int)render.token_count;
+        if (profile_render_reply_open(visual_profile,PROFILE_TURN_PADDED,0,0,&render) != PROFILE_OK ||
+            render.token_count > (uint32_t)(ctx-n)) exit(1);
+        memcpy(toks+n,render.tokens,(size_t)render.token_count*sizeof(*toks));n+=(int)render.token_count;
+        profile_parser_reset(visual_profile,0);
+        xe_visual_identity(&image, model_hash, projector_hash,
+                           image_embeddings, XE_VISION_NUMERIC_REVISION, visual.identity);
+    }
     if (max_n > 0 && n >= ctx) {
         fprintf(stderr, "xenolith: run: prompt leaves no room for generation\n");
         exit(1);
@@ -350,24 +465,57 @@ static int cmd_run(const char *model, int argc, char **argv) {
 
     xe_tokens tokens = { toks, n, ctx };
     xe_session *s = xe_session_new(e);
+    if (!xe_session_set_text_prefill(s, prefill_rows)) { fprintf(stderr,"xenolith: cannot set prefill size\n"); exit(1); }
+    xe_input input = {toks,n,image_embeddings ? &visual : NULL,image_embeddings ? 1 : 0};
+    uint64_t prefill_started=bench_now_ns();
+    if (image_embeddings && !xe_session_sync_input(s, &input)) { fprintf(stderr,"xenolith: invalid visual prompt\n"); exit(1); }
 
+    if (image_embeddings) fprintf(stderr,"vision: llm_prefill_ms=%.3f context=%d text_batch=%d\n",(bench_now_ns()-prefill_started)/1e6,ctx,prefill_rows);
+
+    if (vision_dump && image_embeddings) {
+        char path[4096];
+        if (strlen(vision_dump)>sizeof path-32) { fprintf(stderr,"xenolith: vision dump path too long\n");exit(1); }
+        snprintf(path,sizeof path,"%s/logits.f32",vision_dump);
+        FILE *f=fopen(path,"wb");
+        if (!f || fwrite(xe_session_logits(s),sizeof(float),(size_t)vocab,f)!=(size_t)vocab || fclose(f)) {
+            fprintf(stderr,"xenolith: logits dump failed\n"); exit(1);
+        }
+        snprintf(path,sizeof path,"%s/prompt.ids",vision_dump);
+        f=fopen(path,"w");if(!f)exit(1);
+        for(int j=0;j<n;j++)fprintf(f,"%s%d",j?",":"",toks[j]);
+        fputs("\n",f);fclose(f);
+        snprintf(path,sizeof path,"%s/span.json",vision_dump);
+        f=fopen(path,"w");if(!f)exit(1);
+        fprintf(f,"{\"start\":%d,\"rows\":%d,\"count\":%d}\n",visual.start,visual.rows,n);fclose(f);
+    }
     int32_t eot = xe_eot_id(e);
     int32_t eos = xe_eos_id(e);
 
     xe_sampler sp = { temp, top_k, top_p, seed };
 
     for (int i = 0; i < max_n && tokens.len < ctx; i++) {
-        xe_session_sync(s, &tokens);
+        if (image_embeddings) {
+            input.count = tokens.len;
+            if (!xe_session_sync_continuation(s, &tokens, NULL)) { fprintf(stderr,"xenolith: visual sync failed\n"); exit(1); }
+        } else xe_session_sync(s, &tokens);
         int32_t t = xe_session_next(s, &sp);
         if (t == eot || t == eos) break;
-        char buf[256];
-        int nb = xe_detokenize(e, t, buf, sizeof buf);
-        fwrite(buf, 1, (size_t)nb, stdout);
+        if (visual_profile) {
+            profile_parse_event event;
+            if (profile_parser_feed(visual_profile,t,&event) != PROFILE_OK) exit(1);
+            if (event.kind == PROFILE_PARSE_TEXT) fwrite(event.text,1,event.text_length,stdout);
+        } else {
+            char buf[256];
+            int nb = xe_detokenize(e, t, buf, sizeof buf);
+            fwrite(buf, 1, (size_t)nb, stdout);
+        }
         fflush(stdout);
         xe_tokens_push(&tokens, t);
     }
     putchar('\n');
 
+    profile_close(visual_profile);
+    free(image_embeddings); xe_image_free(&image);
     xe_tokens_free(&tokens);
     xe_session_free(s);
     xe_engine_close(e);
@@ -416,6 +564,8 @@ static void chat_print_stats(int n_gen, double avg_tps) {
 
 static int cmd_chat(const char *model, int argc, char **argv) {
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
+    const char *mmproj = NULL, *image_path = NULL;
+    int image_budget = 280;
     int max_n = 512;
     float temp = 1.0f;
     int top_k = 64;
@@ -424,7 +574,15 @@ static int cmd_chat(const char *model, int argc, char **argv) {
 
     for (int i = 3; i < argc; i++) {
         if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
-        if (!strcmp(argv[i], "-n")) {
+        if (!strcmp(argv[i], "--image") || !strcmp(argv[i], "--mmproj")) {
+            const char *key = argv[i];
+            if (++i >= argc) usage();
+            if (!strcmp(key, "--image")) image_path = argv[i];
+            else mmproj = argv[i];
+        } else if (!strcmp(argv[i], "--image-tokens")) {
+            if (++i >= argc) usage();
+            image_budget = cli_visual_budget(argv[i]);
+        } else if (!strcmp(argv[i], "-n")) {
             if (++i >= argc) usage();
             errno = 0;
             char *end;
@@ -464,7 +622,30 @@ static int cmd_chat(const char *model, int argc, char **argv) {
         }
     }
 
+    if (!!image_path != !!mmproj) usage();
+    if (image_path && !context_seen) context = 65536;
+    if (image_path && context != 65536 && context != 131072) {
+        fprintf(stderr, "xenolith: vision chat requires --ctx 65536 or 131072\n");
+        return 1;
+    }
     cli_lock(NULL);
+
+    xe_image image = {0};
+    float *image_embeddings = NULL;
+    uint8_t projector_hash[32], model_hash[32];
+    xe_visual_span visual = {0};
+    int visual_added = 0, visual_synced = 0;
+    if (image_path) {
+        image_embeddings = cli_encode_image(model, mmproj, image_path, image_budget,
+                                             NULL, &image, projector_hash, model_hash);
+        visual.rows = image.rows;
+        visual.embeddings = image_embeddings;
+        visual.media = image.encoded;
+        visual.media_size = image.encoded_size;
+        visual.budget = image.budget;
+        xe_visual_identity(&image, model_hash, projector_hash, image_embeddings,
+                           XE_VISION_NUMERIC_REVISION, visual.identity);
+    }
 
     xe_engine *e = xe_engine_open_with_context(model, context);
     int ctx = xe_context_size(e);
@@ -498,6 +679,8 @@ static int cmd_chat(const char *model, int argc, char **argv) {
     for (uint32_t i = 0; i < render.token_count; i++)
         xe_tokens_push(&transcript, render.tokens[i]);
 
+    if (image_embeddings) fputs("Image ready. Ask your first question.\n", stdout);
+
     while (!stop) {
         fputs("you> ", stdout);
         fflush(stdout);
@@ -506,7 +689,17 @@ static int cmd_chat(const char *model, int argc, char **argv) {
         while (nread > 0 && (line[nread - 1] == '\n' || line[nread - 1] == '\r'))
             line[--nread] = '\0';
         if (!strcmp(line, "/exit")) break;
-        if (profile_render_user(pf, line, turn, &render) != PROFILE_OK) {
+        profile_status user_status;
+        if (image_embeddings && !visual_added) {
+            uint32_t offset;
+            user_status = profile_render_user_image(pf, line, image.rows, turn,
+                                                    &render, &offset);
+            if (user_status == PROFILE_OK) {
+                visual.start = transcript.len + (int)offset;
+                visual_added = 1;
+            }
+        } else user_status = profile_render_user(pf, line, turn, &render);
+        if (user_status != PROFILE_OK) {
             fprintf(stderr, "xenolith: chat: render failed\n");
             break;
         }
@@ -527,6 +720,7 @@ static int cmd_chat(const char *model, int argc, char **argv) {
             xe_tokens_push(&transcript, render.tokens[i]);
         turn = PROFILE_TURN_OPEN;
 
+        if (image_embeddings) profile_parser_reset(pf, 0);
         fputs("assistant> ", stdout);
         fflush(stdout);
         uint64_t t_start = 0, t_prev = 0;
@@ -534,7 +728,19 @@ static int cmd_chat(const char *model, int argc, char **argv) {
         int tty = isatty(fileno(stdout));
         int term_cols = tty ? term_width() : INT_MAX;
         for (int i = 0; i < max_n && transcript.len < ctx - 1; i++) {
-            xe_session_sync(s, &transcript);
+            if (image_embeddings) {
+                int synced;
+                if (!visual_synced) {
+                    xe_input input = {transcript.v, transcript.len, &visual, 1};
+                    synced = xe_session_sync_input(s, &input);
+                    if (synced) visual_synced = 1;
+                } else synced = xe_session_sync_continuation(s, &transcript, NULL);
+                if (!synced) {
+                    fprintf(stderr, "xenolith: visual chat sync failed\n");
+                    stop = 1;
+                    break;
+                }
+            } else xe_session_sync(s, &transcript);
             if (i == 0) {
                 t_start = bench_now_ns();
                 t_prev = t_start;
@@ -550,16 +756,27 @@ static int cmd_chat(const char *model, int argc, char **argv) {
                 break;
             }
             char buf[256];
-            int nb = xe_detokenize(e, t, buf, sizeof buf);
+            const char *visible = buf;
+            int nb;
+            if (image_embeddings) {
+                profile_parse_event event;
+                if (profile_parser_feed(pf, t, &event) != PROFILE_OK) {
+                    fprintf(stderr, "xenolith: visual chat parse failed\n");
+                    stop = 1;
+                    break;
+                }
+                nb = event.kind == PROFILE_PARSE_TEXT ? (int)event.text_length : 0;
+                visible = (const char *)event.text;
+            } else nb = xe_detokenize(e, t, buf, sizeof buf);
             if (nb > 0) {
                 if (tty && live) {
                     if (col > 0) printf("\r\033[J\033[A\r\033[%dC", col);
                     else printf("\r\033[J\033[A\r");
                 }
                 if (tty) {
-                    chat_put_token(buf, nb, &col, term_cols);
+                    chat_put_token(visible, nb, &col, term_cols);
                 } else {
-                    fwrite(buf, 1, (size_t)nb, stdout);
+                    fwrite(visible, 1, (size_t)nb, stdout);
                 }
                 n_gen++;
                 uint64_t now = bench_now_ns();
@@ -583,6 +800,8 @@ static int cmd_chat(const char *model, int argc, char **argv) {
         putchar('\n');
     }
 
+    free(image_embeddings);
+    xe_image_free(&image);
     free(line);
     xe_tokens_free(&transcript);
     xe_session_free(s);
@@ -666,6 +885,7 @@ typedef struct {
     int warmup;
     int progress;
     int jsonl;
+    int prefill_rows;
 } bench_params;
 
 typedef struct {
@@ -731,6 +951,7 @@ static bench_result bench_run(xe_engine *e, const bench_params *params,
     }
 
     xe_session *s = xe_session_new(e);
+    if (!xe_session_set_text_prefill(s, params->prefill_rows)) exit(1);
     if (params->delay) sleep((unsigned)params->delay);
     if (params->warmup) {
         if (params->progress)
@@ -839,7 +1060,7 @@ static void bench_cpu_mask(const xe_engine *e, char *out, size_t cap) {
 }
 
 static void bench_print_jsonl(const char *model, const xe_engine *e,
-                              const bench_result *result) {
+                              const bench_result *result, int prefill_rows) {
     char mask[128];
     bench_cpu_mask(e, mask, sizeof mask);
     printf("{\"engine\":\"xenolith\",\"build_commit\":\"%s\",\"build_number\":0,\"model_filename\":",
@@ -848,6 +1069,7 @@ static void bench_print_jsonl(const char *model, const xe_engine *e,
     const char *backends = !strcmp(result->backend, "CPU")
                            || !strcmp(result->backend, "CPU serial")
                            ? "CPU" : "Level Zero,CPU";
+    printf(",\"context_window\":%d,\"text_prefill_rows\":%d",xe_context_size(e),prefill_rows);
     printf(",\"model_size\":%" PRIu64 ",\"backends\":",
            xe_engine_model_size(e));
     bench_json_string(backends);
@@ -891,7 +1113,7 @@ static void bench_print_md(const char *model, const xe_engine *e,
 
 static int cmd_bench(const char *model, int argc, char **argv) {
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
-    bench_params params = { 512, 128, 0, 5, 0, 1, 0, 0 };
+    bench_params params = { 512, 128, 0, 5, 0, 1, 0, 0, 512 };
     for (int i = 3; i < argc; i++) {
         if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
         if (!strcmp(argv[i], "-p") || !strcmp(argv[i], "--n-prompt")) {
@@ -906,6 +1128,9 @@ static int cmd_bench(const char *model, int argc, char **argv) {
         } else if (!strcmp(argv[i], "-r") || !strcmp(argv[i], "--repetitions")) {
             if (++i >= argc) usage();
             params.reps = bench_int(argv[i], 1, 1000);
+        } else if (!strcmp(argv[i], "--prefill")) {
+            if (++i >= argc || (strcmp(argv[i], "512") && strcmp(argv[i], "1024"))) usage();
+            params.prefill_rows = atoi(argv[i]);
         } else if (!strcmp(argv[i], "--delay")) {
             if (++i >= argc) usage();
             params.delay = bench_int(argv[i], 0, 3600);
@@ -948,7 +1173,7 @@ static int cmd_bench(const char *model, int argc, char **argv) {
         bench_result result = bench_run(e, &params, params.n_prompt, 0,
                                         "Level Zero+CPU");
         if (params.jsonl)
-            bench_print_jsonl(model, e, &result);
+            bench_print_jsonl(model, e, &result, params.prefill_rows);
         else
             bench_print_md(model, e, &result);
         free(result.samples_ns);
@@ -956,7 +1181,7 @@ static int cmd_bench(const char *model, int argc, char **argv) {
     if (params.n_gen) {
         bench_result result = bench_run(e, &params, 0, params.n_gen, "CPU");
         if (params.jsonl)
-            bench_print_jsonl(model, e, &result);
+            bench_print_jsonl(model, e, &result, params.prefill_rows);
         else
             bench_print_md(model, e, &result);
         free(result.samples_ns);
@@ -971,11 +1196,15 @@ static int cmd_bench(const char *model, int argc, char **argv) {
 static int cmd_wire(const char *model, int argc, char **argv) {
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     const char *state_option = NULL;
+    const char *mmproj = NULL;
     const char *cache_dir = NULL;
     uint64_t cache_budget = KVSTORE_DEFAULT_BUDGET;
     for (int i = 3; i < argc; i++) {
         if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
-        if (!strcmp(argv[i], "--state")) {
+        if (!strcmp(argv[i],"--mmproj")) {
+            if(++i>=argc)usage();
+            mmproj=argv[i];
+        } else if (!strcmp(argv[i], "--state")) {
             if (++i >= argc) usage();
             state_option = argv[i];
         } else if (!strcmp(argv[i], "--cache")) {
@@ -987,12 +1216,15 @@ static int cmd_wire(const char *model, int argc, char **argv) {
             usage();
         }
     }
+    if(mmproj&&!context_seen)context=65536;
+    if(mmproj&&context!=65536&&context!=131072){fprintf(stderr,"xenolith: vision requires --ctx 65536 or 131072\n");return 1;}
     char state_dir[4096];
     cli_state_dir(state_option, state_dir, sizeof state_dir);
     cli_lock(NULL);
 
-    xe_engine *e = cache_budget ? xe_engine_open_cached(model, context)
-                                : xe_engine_open_with_context(model, context);
+    xe_engine *e = (cache_budget || mmproj) ? xe_engine_open_cached(model, context)
+                                          : xe_engine_open_with_context(model, context);
+    if(mmproj){char error[256];if(!xe_engine_enable_vision(e,mmproj,error,sizeof error)){fprintf(stderr,"xenolith: %s\n",error);xe_engine_close(e);cli_unlock();return 1;}}
     int status = serve_stdio_with_budget(e, state_dir, cache_dir, cache_budget);
     xe_engine_close(e);
     cli_unlock();
@@ -1002,13 +1234,17 @@ static int cmd_wire(const char *model, int argc, char **argv) {
 static int cmd_serve(const char *model, int argc, char **argv) {
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     const char *state_option = NULL;
+    const char *mmproj = NULL;
     const char *cache_dir = NULL;
     uint64_t cache_budget = KVSTORE_DEFAULT_BUDGET;
     const char *socket_option = NULL;
     double idle_minutes = 0.0;
     for (int i = 3; i < argc; i++) {
         if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
-        if (!strcmp(argv[i], "--state")) {
+        if (!strcmp(argv[i],"--mmproj")) {
+            if(++i>=argc)usage();
+            mmproj=argv[i];
+        } else if (!strcmp(argv[i], "--state")) {
             if (++i >= argc) usage();
             state_option = argv[i];
         } else if (!strcmp(argv[i], "--cache")) {
@@ -1030,6 +1266,8 @@ static int cmd_serve(const char *model, int argc, char **argv) {
             usage();
         }
     }
+    if(mmproj&&!context_seen)context=65536;
+    if(mmproj&&context!=65536&&context!=131072){fprintf(stderr,"xenolith: vision requires --ctx 65536 or 131072\n");return 1;}
     char state_dir[4096];
     cli_state_dir(state_option, state_dir, sizeof state_dir);
     char socket_path[4096];
@@ -1040,8 +1278,9 @@ static int cmd_serve(const char *model, int argc, char **argv) {
     }
     cli_lock(socket_path);
 
-    xe_engine *e = cache_budget ? xe_engine_open_cached(model, context)
-                                : xe_engine_open_with_context(model, context);
+    xe_engine *e = (cache_budget || mmproj) ? xe_engine_open_cached(model, context)
+                                          : xe_engine_open_with_context(model, context);
+    if(mmproj){char error[256];if(!xe_engine_enable_vision(e,mmproj,error,sizeof error)){fprintf(stderr,"xenolith: %s\n",error);xe_engine_close(e);cli_unlock();return 1;}}
     int status = serve_run_with_budget(e, state_dir, cache_dir, socket_path,
                            idle_minutes, cache_budget);
     xe_engine_close(e);
@@ -1058,6 +1297,7 @@ int main(int argc, char **argv) {
     if (!strcmp(cmd, "info")) return cmd_info(model, argc, argv);
     if (!strcmp(cmd, "tokenize")) return cmd_tokenize(model, argc, argv);
     if (!strcmp(cmd, "run")) return cmd_run(model, argc, argv);
+    if (!strcmp(cmd, "vision-encode")) return cmd_vision_encode(model, argc, argv);
     if (!strcmp(cmd, "chat")) return cmd_chat(model, argc, argv);
     if (!strcmp(cmd, "oracle")) return cmd_oracle(model, argc, argv);
     if (!strcmp(cmd, "bench")) return cmd_bench(model, argc, argv);

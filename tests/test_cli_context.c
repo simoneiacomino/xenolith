@@ -82,6 +82,13 @@ int main(void) {
         char *defaults[] = { NULL };
         ok &= check(commands[c], model, defaults, model);
     }
+    char *visual_small[] = { "--ctx", "4097", "--mmproj", "missing-mmproj.gguf",
+                             "--image", "missing.jpg", NULL };
+    ok &= check("chat", model, visual_small, "vision chat requires");
+    char *visual_no_image[] = { "--mmproj", "missing-mmproj.gguf", NULL };
+    ok &= check("chat", model, visual_no_image, "Usage:");
+    char *visual_no_projector[] = { "--image", "missing.jpg", NULL };
+    ok &= check("chat", model, visual_no_projector, "Usage:");
     const char *cache_commands[] = {"wire", "serve"};
     char *budgets[] = {"0", "1", "16GiB", "12000MB", "512KiB", "42B", "18446744073709551615"};
     char *bad_budgets[] = {"", "-1", "+1", "1.5GiB", " 1", "1 ", "1GBx", "18446744073709551616", "18446744073709551615GiB"};

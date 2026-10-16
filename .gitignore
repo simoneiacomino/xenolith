@@ -13,6 +13,7 @@
 /tests/prefill_kernel_trials.jsonl
 
 *.o
+__pycache__/
 *.spv
 /tests/.golden.*/
 /bench/bench_attention
@@ -53,11 +54,11 @@
 /tests/test_model_decode
 /tests/test_prefill_dense
 /tests/test_prefill_layer
+/tests/test_prefill_host
 /tests/test_prefill_projection
 /tests/test_prefill_qkv
 /tests/test_prefill_session
 /tests/test_prefill_session_drop
-/tests/test_prefill_session_safe
 /tests/test_prefill_swa
 /tests/test_profile
 /tests/test_serve
@@ -79,5 +80,23 @@
 
 /tests/test_inference
 
+/.vision-cache/
+/vision-runs/
+/tests/vision/fixtures/*.rgb
+/tools/vision_prepare
+/tools/vision_reference
+/tests/test_vision_input
+/tests/test_vision_gpu
+
+tests/test_vision_session
+
+/tests/test_text_batch_model
+
+/tests/test_weights_identity
 /tests/test_cache_policy
 /tests/test_cache_model
+/tests/test_visual_cache
+
+/tests/test_visual_replay
+
+/tools/vision_decode_reference

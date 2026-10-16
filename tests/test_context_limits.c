@@ -9,6 +9,7 @@
 
 static xe_engine fixture_engine;
 static int fixture_expected_cache;
+static int fixture_expected_vision;
 static xe_engine *fixture_open(const char *path, int context) {
     (void)path;
     if (fixture_expected_cache) _exit(2);
@@ -24,13 +25,17 @@ static xe_engine *fixture_open_cached(const char *path, int context) {
 static int fixture_serve_stdio(xe_engine *e, const char *state, const char *cache,
                                uint64_t budget) {
     (void)state; (void)cache;
-    return e != &fixture_engine || e->context != 64 ||
-           (budget != 0) != fixture_expected_cache;
+    return e != &fixture_engine || e->context != (fixture_expected_vision ? 65536 : 64) ||
+           ((budget != 0) || fixture_expected_vision) != fixture_expected_cache;
 }
 static int fixture_serve_run(xe_engine *e, const char *state, const char *cache,
                              const char *socket, double idle, uint64_t budget) {
     (void)socket; (void)idle;
     return fixture_serve_stdio(e, state, cache, budget);
+}
+static int fixture_enable_vision(xe_engine *e,const char *path,char *error,size_t cap) {
+    (void)path;(void)error;(void)cap;
+    return e == &fixture_engine && fixture_expected_vision && fixture_expected_cache;
 }
 static void fixture_close(xe_engine *e) { (void)e; }
 static xe_session *fixture_session(xe_engine *e) { (void)e; _exit(0); }
@@ -40,6 +45,7 @@ static profile_status fixture_profile(profile **out, xe_engine *e) {
 #define main cli_main
 #define xe_engine_open_with_context fixture_open
 #define xe_engine_open_cached fixture_open_cached
+#define xe_engine_enable_vision fixture_enable_vision
 #define serve_stdio_with_budget fixture_serve_stdio
 #define serve_run_with_budget fixture_serve_run
 #define xe_engine_close fixture_close
@@ -49,6 +55,7 @@ static profile_status fixture_profile(profile **out, xe_engine *e) {
 #undef main
 #undef xe_engine_open_with_context
 #undef xe_engine_open_cached
+#undef xe_engine_enable_vision
 #undef serve_stdio_with_budget
 #undef serve_run_with_budget
 #undef xe_engine_close
@@ -61,17 +68,19 @@ static int failures;
 static void cli_cache_startup(void) {
     const char *commands[] = {"wire", "serve"};
     const char *budgets[] = {NULL, "0", "0GiB", "1", "16GiB"};
-    for (size_t c = 0; c < 2; c++) {
+    for (size_t c = 0; c < 2; c++) for (int vision = 0; vision < 2; vision++) {
         for (size_t b = 0; b < sizeof budgets / sizeof *budgets; b++) {
-            char *args[] = {"xenolith", (char *)commands[c], "fixture.gguf",
-                           "--ctx", "64", "--cache-budget", (char *)budgets[b], NULL};
+            char *args[10] = {"xenolith", (char *)commands[c], "fixture.gguf",
+                           "--ctx", vision ? "65536" : "64", "--cache-budget", (char *)budgets[b], NULL};
             int argc = budgets[b] ? 7 : 5;
+            if (vision) { args[argc++] = "--mmproj"; args[argc++] = "fixture-projector.gguf"; }
             args[argc] = NULL;
             fflush(NULL);
             pid_t child = fork();
             assert(child >= 0);
             if (!child) {
-                fixture_expected_cache = b != 1 && b != 2;
+                fixture_expected_cache = vision || (b != 1 && b != 2);
+                fixture_expected_vision = vision;
                 _exit(cli_main(argc, args));
             }
             int status;

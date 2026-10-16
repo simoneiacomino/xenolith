@@ -1,0 +1,108 @@
+{
+  "cli280_default": {
+    "response": "Red\n",
+    "log": "vision: budget=280 rows=280 preprocess_ms=67.832 model_hash_ms=36106.935 mmproj_load_ms=3735.632 encoder_ms=18567.378\nvision: llm_prefill_ms=2903.336 context=65536 text_batch=512\n\tCommand being timed: \"./xenolith run /home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf --ctx 65536 --mmproj /home/simo/dev/xenolith-vision-20261014/reference/mmproj-F16.gguf --image vision/fixtures/quadrants.png -p Which color is the upper left quadrant? Answer with one color word. -n 12 --top-k 1 --seed 0\"\n\tUser time (seconds): 58.79\n\tSystem time (seconds): 7.33\n\tPercent of CPU this job got: 99%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 1:06.23\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 16337452\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 55\n\tMinor (reclaiming a frame) page faults: 4334915\n\tVoluntary context switches: 3271\n\tInvoluntary context switches: 283\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+  },
+  "text1024": [
+    {
+      "context": 65536,
+      "samples": [
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "context_window": 65536,
+          "text_prefill_rows": 1024,
+          "model_size": 14233222264,
+          "backends": "Level Zero,CPU",
+          "implementation": "Level Zero+CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 2048,
+          "n_gen": 0,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:28:02Z",
+          "avg_ns": 12117422347,
+          "stddev_ns": 263388095,
+          "avg_ts": 169.065734,
+          "stddev_ts": 3.650182,
+          "samples_ns": [
+            12405280120,
+            12058503551,
+            11888483369
+          ],
+          "samples_ts": [
+            165.090992,
+            169.838653,
+            172.267558
+          ]
+        }
+      ],
+      "median_ts": 169.838653
+    },
+    {
+      "context": 131072,
+      "samples": [
+        {
+          "engine": "xenolith",
+          "build_commit": "unknown",
+          "build_number": 0,
+          "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "context_window": 131072,
+          "text_prefill_rows": 1024,
+          "model_size": 14233222264,
+          "backends": "Level Zero,CPU",
+          "implementation": "Level Zero+CPU",
+          "n_threads": 6,
+          "cpu_mask": "unbound",
+          "n_prompt": 2048,
+          "n_gen": 0,
+          "n_depth": 0,
+          "test_time": "2026-10-14T09:29:03Z",
+          "avg_ns": 12212399271,
+          "stddev_ns": 223801152,
+          "avg_ts": 167.735705,
+          "stddev_ts": 3.052374,
+          "samples_ns": [
+            12460988445,
+            12026953048,
+            12149256321
+          ],
+          "samples_ts": [
+            164.352933,
+            170.284193,
+            168.569989
+          ]
+        }
+      ],
+      "median_ts": 168.569989
+    }
+  ],
+  "cpu_encoder": [
+    {
+      "rows": 70,
+      "encoder_ms": 7765.83,
+      "threads": 8,
+      "dumps": false,
+      "embedding_sha256": "2aab08f9ebcb4f1fd1357b9bc4a721e4332edf91dc45955cde8b00ff389cce43",
+      "time_log": "reference encoder_ms=7765.83 threads=8 dumps=0\nrows 70 width 2816\n\tCommand being timed: \"./vision_reference_f32 mmproj-F16.gguf fixtures/quadrants-70.rgb timing70 --no-dump\"\n\tUser time (seconds): 59.98\n\tSystem time (seconds): 1.11\n\tPercent of CPU this job got: 712%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:08.58\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 1230984\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 4\n\tMinor (reclaiming a frame) page faults: 334493\n\tVoluntary context switches: 27\n\tInvoluntary context switches: 9813\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "rows": 280,
+      "encoder_ms": 23981.6,
+      "threads": 8,
+      "dumps": false,
+      "embedding_sha256": "efc77fff5d66e153f2b4a6fc64d113ae7d558d8075ac4f9308766eb62d9c452e",
+      "time_log": "reference encoder_ms=23981.6 threads=8 dumps=0\nrows 280 width 2816\n\tCommand being timed: \"./vision_reference_f32 mmproj-F16.gguf fixtures/quadrants-280.rgb timing280 --no-dump\"\n\tUser time (seconds): 186.40\n\tSystem time (seconds): 2.10\n\tPercent of CPU this job got: 759%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:24.81\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 1682452\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 710523\n\tVoluntary context switches: 27\n\tInvoluntary context switches: 3685\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    },
+    {
+      "rows": 1120,
+      "encoder_ms": 161735.0,
+      "threads": 8,
+      "dumps": false,
+      "embedding_sha256": "1a9b8ae5c1e5b8432171ffb45071103b6a8305a3c6b25e1b98db30e4306a7f35",
+      "time_log": "reference encoder_ms=161735 threads=8 dumps=0\nrows 1120 width 2816\n\tCommand being timed: \"./vision_reference_f32 mmproj-F16.gguf fixtures/quadrants-1120.rgb timing1120 --no-dump\"\n\tUser time (seconds): 1264.86\n\tSystem time (seconds): 18.87\n\tPercent of CPU this job got: 788%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 2:42.80\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 7958612\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 5693121\n\tVoluntary context switches: 21\n\tInvoluntary context switches: 32800\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+    }
+  ]
+}

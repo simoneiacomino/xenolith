@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "model_repository": "unsloth/gemma-4-26B-A4B-it-qat-GGUF",
+  "model_revision": "7b92b5b28818151e8669af2e45e88d6086f490dd",
+  "artifacts": [
+    {
+      "filename": "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+      "size_bytes": 14249047104,
+      "sha256": "a7c5bc715f5ff8e99a3e8901ce7d2b42b402c669bf24f7c5250747633d0f5891",
+      "url": "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF/resolve/7b92b5b28818151e8669af2e45e88d6086f490dd/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+      "header_size_bytes": 15824000,
+      "metadata_fingerprint": "d9465e49edd7e2c20035f9bdc46f659b59a5df0da9f8c4ead34acde070fd2e8d"
+    },
+    {
+      "filename": "mmproj-F16.gguf",
+      "size_bytes": 1193058784,
+      "sha256": "d00f211a7d4f7fb19bd9b75d8e9342eccffb5920b08fd9562167560fdfcc5dd1",
+      "url": "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF/resolve/7b92b5b28818151e8669af2e45e88d6086f490dd/mmproj-F16.gguf",
+      "header_size_bytes": 22816,
+      "metadata_fingerprint": "48c955df8584a25e94f0deb05c9394e3ba24784db1a34dbcba51c6fd43548d30"
+    }
+  ],
+  "references": {
+    "llama_cpp_commit": "ce7dffccee2bbef897bfc0820dc378c087a1aed7",
+    "transformers_commit": "28034545c35acac05793695bd5c878f66e6b544e",
+    "stb_image_sha256": "594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3",
+    "cmake_wheel_sha256": "f773a0544c66370408f451acd487c2c643b0dfebb48c5d64f3638bc1bb820238",
+    "cmake_version": "4.4.4",
+    "source_sha256": {
+      "modeling_gemma4.py": "d42819dd9a2e5627da35a056e44b3c4c7b778e11c2067dcdd8312ee17ddc52f3",
+      "processing_gemma4.py": "862cd450282634ec18f3b66add025870a0c98508e59419529e1e3229c835a927",
+      "image_processing_gemma4.py": "5d280d5448b1c219183a27e95b6aa7178b350275772d07881c91c65f13fa815e"
+    },
+    "encoder_adapter": {
+      "ffn_op": "FFN_GELU",
+      "reason": "Locked GGUF omits clip.use_gelu; pinned loader otherwise selects QuickGELU, while checkpoint config requires gelu_pytorch_tanh.",
+      "gelu_precision": "F32 (FP16 LUT shortcut disabled in a separate oracle source copy)",
+      "vec_h_original_sha256": "885a50e405f20f75ea70cb7fb062934812beffc9229ddb56a003aa150163d2fa",
+      "vec_h_adapted_sha256": "6b26b2d205a08347db270681cf0fa9494e581f03d58bf38101fe9db603873ff5"
+    },
+    "ggml_cpu_options": {
+      "GGML_NATIVE": false,
+      "GGML_AVX": true,
+      "GGML_AVX2": true,
+      "GGML_FMA": true,
+      "GGML_F16C": true,
+      "GGML_AVX512": false
+    },
+    "numpy_version": "2.0.2",
+    "pillow_version": "11.3.0",
+    "numpy_linux_wheel": {
+      "version": "2.0.2",
+      "filename": "numpy-2.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "sha256": "0123ffdaa88fa4ab64835dcbde75dcdf89c453c922f18dced6e27c90d1d0ec5a",
+      "url": "https://files.pythonhosted.org/packages/39/68/e9f1126d757653496dbc096cb429014347a36b228f5a991dae2c6b6cfd40/numpy-2.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+    },
+    "checkpoint_config_sha256": "313f00101241b27e19eb0698ff36198c6018cc0ddbd2b67b80eb7c5b15c2a480"
+  },
+  "contexts": [
+    65536,
+    131072
+  ],
+  "visual_token_budgets": [
+    70,
+    140,
+    280,
+    560,
+    1120
+  ],
+  "text_prefill_default": 512,
+  "text_prefill_comparison": 1024,
+  "native_encoder_revision": "xe-gemma4v-f16gpu/v2-striped32",
+  "metadata_fingerprint_scheme": "xenolith-model-v2: domain + LE64(file size) + LE64(header size) + complete GGUF header and tensor directory"
+}

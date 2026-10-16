@@ -1,0 +1,9 @@
+{
+  "phase": "after dispatch synchronization and 128-query tiles",
+  "budget": "CLI default 280",
+  "rows": 280,
+  "embedding_equal_to_validated_trace": true,
+  "embedding_sha256": "77f476f652f59f5163a3ea1e5c504b7dd00f5328717751447b146255dc53a441",
+  "log_sha256": "3f656cea90e1c4c8e8b1184c641b56ce6acdb532123e7a7d5030cae36e15d9da",
+  "log": "vision: budget=280 rows=280 preprocess_ms=73.751 model_hash_ms=39342.062 mmproj_load_ms=3980.991 encoder_ms=18612.122\n\tCommand being timed: \"./xenolith vision-encode /home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf --mmproj /home/simo/dev/xenolith-vision-20261014/reference/mmproj-F16.gguf --image vision/fixtures/quadrants.png --vision-dump /home/simo/dev/xenolith-vision-20261014/runs/encoder280-final-only --final-only\"\n\tUser time (seconds): 57.70\n\tSystem time (seconds): 5.83\n\tPercent of CPU this job got: 99%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 1:03.72\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 16337708\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 15\n\tMinor (reclaiming a frame) page faults: 362753\n\tVoluntary context switches: 1067\n\tInvoluntary context switches: 249\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+}

@@ -1,0 +1,29 @@
+{
+  "kernel": {
+    "stdout": "Linux WIN-AKCQ98P2HGE 6.18.54.1-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Tue Oct  6 19:13:07 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux\n",
+    "stderr": "",
+    "returncode": 0
+  },
+  "cpu": {
+    "stdout": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           42 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  8\nOn-line CPU(s) list:                     0-7\nVendor ID:                               GenuineIntel\nModel name:                              Intel(R) Core(TM) Ultra 7 268V\nCPU family:                              6\nModel:                                   189\nThread(s) per core:                      1\nCore(s) per socket:                      8\nSocket(s):                               1\nStepping:                                1\nBogoMIPS:                                6604.79\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology tsc_reliable nonstop_tsc cpuid tsc_known_freq pni pclmulqdq vmx ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 xsaves avx_vnni vnmi umip waitpkg gfni vaes vpclmulqdq rdpid movdiri movdir64b fsrm md_clear serialize ibt flush_l1d arch_capabilities\nVirtualization:                          VT-x\nHypervisor vendor:                       Microsoft\nVirtualization type:                     full\nL1d cache:                               384 KiB (8 instances)\nL1i cache:                               512 KiB (8 instances)\nL2 cache:                                20 MiB (8 instances)\nL3 cache:                                12 MiB (1 instance)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0-7\nVulnerability Gather data sampling:      Not affected\nVulnerability Ghostwrite:                Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Old microcode:             Not affected\nVulnerability Reg file data sampling:    Not affected\nVulnerability Retbleed:                  Mitigation; Enhanced IBRS\nVulnerability Spec rstack overflow:      Not affected\nVulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; PBRSB-eIBRS SW sequence; BHI BHI_DIS_S\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Not affected\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Not affected\n",
+    "stderr": "",
+    "returncode": 0
+  },
+  "compiler": {
+    "stdout": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+    "stderr": "",
+    "returncode": 0
+  },
+  "packages": {
+    "stdout": "intel-level-zero-gpu\t\nintel-opencl-icd\t26.31.39395.14-1~24.04~ppa1\nlibigc1\t\nlibigdfcl1\t\nlibze1:amd64\t1.32.0-1~24.04~ppa1\n",
+    "stderr": "dpkg-query: no packages found matching libze-loader1\n",
+    "returncode": 1
+  },
+  "meminfo": "MemTotal:       28741284 kB\nMemAvailable:   10595164 kB\nSwapTotal:       4194304 kB\nSwapFree:        4193540 kB",
+  "baseline_commit": "36a4c12cdf75bbfb05426233dae54037ba1d6641",
+  "baseline_sources": {
+    "xenolith.c": "ccbd8a56bad97d65df5fa8c20e709a7e0b9d77563c39a1c7741758e5a27eb1e5",
+    "xenolith.cl": "cbc49e691b8abd5d50f62d10158f39bbbc891340fea3abdf6f239b5fe26b0b5b",
+    "main.c": "b93f58728faea246af13cba67bcbcfc33589c9222beb1011aa9d0179bbd7b42c"
+  }
+}

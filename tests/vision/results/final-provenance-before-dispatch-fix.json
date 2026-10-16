@@ -1,0 +1,29 @@
+{
+  "baseline_commit": "36a4c12cdf75bbfb05426233dae54037ba1d6641",
+  "variants": {
+    "base": {
+      "xenolith": "c13ec666a08a6b994ba042b13205b95a0b137bc412ef9b98d10465f3c89a7e74",
+      "xenolith.c": "ccbd8a56bad97d65df5fa8c20e709a7e0b9d77563c39a1c7741758e5a27eb1e5",
+      "xenolith.cl": "cbc49e691b8abd5d50f62d10158f39bbbc891340fea3abdf6f239b5fe26b0b5b",
+      "main.c": "b93f58728faea246af13cba67bcbcfc33589c9222beb1011aa9d0179bbd7b42c"
+    },
+    "candidate": {
+      "xenolith": "4773f754ca1a0e09ac16085bc0516fc42b5581acccefc9b437cd3901c8240256",
+      "xenolith.c": "4faac1e6ac5781cf4db47e9b43eabf858f807184b755e3d953798b0c2fdc4e23",
+      "xenolith.cl": "dccd027598ce8f2cab3a683f2a96cbcf8f496a8417d6bffc9f4dc9c24e58a2b6",
+      "main.c": "f64de026b244827fa08ffa8a29e0ecb939bb5b9fe8990860f8d01de2e59199f7",
+      "vision.c": "0afb1e11e3bfa1b388e2bf9f676f6aae7838ffba5ba69a921b1c15ada43e3e13",
+      "vision.h": "091d2cf0a8de9202fe9dfc8ea4390eac13ed8b921a8f76a2bc663568ec0dfe79",
+      "vision.cl": "0c712dd3701eefbbfb6f539fcbf9c0346f8fe42dda841d6c2a0614f52a0a0056",
+      "vision_gpu.inc": "607c5e2539607d66760d77a3c569d3c882f1e723fa94741f85ea10fc557121ea",
+      "runtime.c": "ded7d19ead0cb0513470eec2581923439afad46e338e113fe97ceca6384f9d44",
+      "vision_runtime.inc": "bfd756ccde00b4b926fe9af647787bb9a015b262dc860b3efe5e80abdc59d71d",
+      "serve.c": "01484b2042933402f283190755dd1cfca7d7ae794df362714842fae25e13f656",
+      "vision_serve.inc": "3bac5195c88586b75399f8b2fc5e956aab9a37142c418f454fb2fd3b4fd6f05c",
+      "conversation.c": "ee678753e2e10dbe7e7d1500b7cd5d8c6e12827ddbb20acda873114d5702cf54",
+      "kvstore.c": "e32158fdf92a9363685dea386bfa5ceb0d048da1fc0422735c84af2377230b43",
+      "profile.c": "ab9374c9410b2d348fc4e66bf42c24ad5e8e0b1b689fec825aa8b09319de576b",
+      "Makefile": "46c8955dc3291fbd82ac1fb40adb2ce5bb58c433f27b6cabdd8b8b1bbf78c998"
+    }
+  }
+}

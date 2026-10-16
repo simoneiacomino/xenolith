@@ -20,6 +20,9 @@ enum {
     PROFILE_ID_CHANNEL_END = 101,
     PROFILE_ID_TURN_BEGIN = 105,
     PROFILE_ID_TURN_END = 106,
+    PROFILE_ID_IMAGE_BEGIN = 255999,
+    PROFILE_ID_IMAGE = 258880,
+    PROFILE_ID_IMAGE_END = 258882,
     PROFILE_MAX_DEPTH = 64,
     PROFILE_DETOK_MAX = 512
 };
@@ -92,6 +95,9 @@ static const char *profile_piece(int32_t id) {
     case PROFILE_ID_CHANNEL_BEGIN: return "<|channel>";
     case PROFILE_ID_CHANNEL_END: return "<channel|>";
     case PROFILE_ID_TURN_BEGIN: return "<|turn>";
+    case PROFILE_ID_IMAGE_BEGIN: return "<|image>";
+    case PROFILE_ID_IMAGE: return "<|image|>";
+    case PROFILE_ID_IMAGE_END: return "<image|>";
     case PROFILE_ID_TURN_END: return "<turn|>";
     default: return "";
     }
@@ -657,6 +663,32 @@ static profile_status prof_prefix(profile *p, uint32_t turn) {
     }
 }
 
+profile_status profile_render_user_image(profile *p, const char *text,
+                                         uint32_t rows, uint32_t turn,
+                                         profile_render *out, uint32_t *image_offset) {
+    if (!p || !text || !out || !image_offset || rows < 1 || rows > XE_VISUAL_MAX)
+        return PROFILE_INVALID_ARGUMENT;
+    if (xe_token_id(p->engine, "<|image>") != PROFILE_ID_IMAGE_BEGIN ||
+        xe_token_id(p->engine, "<|image|>") != PROFILE_ID_IMAGE ||
+        xe_token_id(p->engine, "<image|>") != PROFILE_ID_IMAGE_END)
+        return PROFILE_TEMPLATE_MISMATCH;
+    prof_begin(p);
+    profile_status status = prof_prefix(p, turn);
+    if (status != PROFILE_OK) return status;
+    if (!prof_marker(p, PROFILE_ID_TURN_BEGIN) || !prof_run_text(p, "user\n") ||
+        !prof_marker(p, PROFILE_ID_IMAGE_BEGIN)) return PROFILE_NOMEM;
+    *image_offset = p->token_count;
+    for (uint32_t i = 0; i < rows; i++)
+        if (!prof_marker(p, PROFILE_ID_IMAGE)) return PROFILE_NOMEM;
+    const char *begin;
+    size_t length;
+    prof_trim(text, &begin, &length);
+    if (!prof_marker(p, PROFILE_ID_IMAGE_END) || !prof_run_text(p, "\n") ||
+        !prof_run_put(p, begin, length) || !prof_marker(p, PROFILE_ID_TURN_END) ||
+        !prof_run_text(p, "\n")) return PROFILE_NOMEM;
+    return prof_finish(p, out);
+}
+
 profile_status profile_render_user(profile *p, const char *text,
                                    uint32_t turn, profile_render *out) {
     if (!p || !out || !text) return PROFILE_INVALID_ARGUMENT;
@@ -689,6 +721,20 @@ profile_status profile_render_tool_result(profile *p, const char *name,
         !prof_marker(p, PROFILE_ID_RESPONSE_END))
         return PROFILE_NOMEM;
     return prof_finish(p, out);
+}
+
+profile_status profile_render_tool_image(profile *p,const char *name,const char *text,
+                                         uint32_t rows,profile_render *out,uint32_t *offset) {
+    if(!p||!name||!text||!out||!offset||rows<1||rows>XE_VISUAL_MAX)return PROFILE_INVALID_ARGUMENT;
+    prof_begin(p);
+    if(!prof_marker(p,PROFILE_ID_RESPONSE_BEGIN)||!prof_run_text(p,"response:")||
+       !prof_run_text(p,name)||!prof_run_text(p,"{value:")||!prof_quoted(p,text,strlen(text))||
+       !prof_run_text(p,",image:")||!prof_marker(p,PROFILE_ID_IMAGE_BEGIN))return PROFILE_NOMEM;
+    *offset=p->token_count;
+    for(uint32_t i=0;i<rows;i++)if(!prof_marker(p,PROFILE_ID_IMAGE))return PROFILE_NOMEM;
+    if(!prof_marker(p,PROFILE_ID_IMAGE_END)||!prof_run_text(p,"}")||
+       !prof_marker(p,PROFILE_ID_RESPONSE_END))return PROFILE_NOMEM;
+    return prof_finish(p,out);
 }
 
 static profile_status prof_model_open(profile *p, uint32_t turn) {

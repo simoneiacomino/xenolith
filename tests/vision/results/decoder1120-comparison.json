@@ -1,0 +1,45 @@
+{
+  "rows": 1120,
+  "context": 131072,
+  "reference": {
+    "llama_cpp_commit": "ce7dffccee2bbef897bfc0820dc378c087a1aed7",
+    "swa_full": false,
+    "n_batch": 1120,
+    "n_ubatch": 1120,
+    "flash_attn": "disabled",
+    "threads": 6,
+    "batch_threads": 8
+  },
+  "relative_rms": 0.013916406254705728,
+  "cosine": 0.9999183027793626,
+  "native_top10": [
+    1192,
+    9264,
+    12648,
+    174994,
+    500,
+    238905,
+    242249,
+    2604,
+    95545,
+    66157
+  ],
+  "reference_top10": [
+    1192,
+    9264,
+    12648,
+    174994,
+    500,
+    238905,
+    95545,
+    242249,
+    66157,
+    2604
+  ],
+  "same_argmax": true,
+  "same_top10_set": true,
+  "native_logits_sha256": "4324a30671a1f2a80ddc03db6176646ddf87b5e41a6cd84f73692ba7f83315d5",
+  "reference_logits_sha256": "730c87d7568615167809a248a8e7441d070576dd7ff3b0cd1b5ec18c49e569fa",
+  "reference_ids": "1192\n106\n",
+  "time_log": "    attn_inp_v_idxs' [i64, ne = { 2293760,     1,     1,     1 }] is used by node 'cache_v_l5 (reshaped) (view)' (SET_ROWS)\nllama_graph_n_input_tensors: input tensor '                 attn_inp_v_idxs' [i64, ne = { 2293760,     1,     1,     1 }] is used by node 'cache_v_l11 (reshaped) (view)' (SET_ROWS)\nllama_graph_n_input_tensors: input tensor '                 attn_inp_v_idxs' [i64, ne = { 2293760,     1,     1,     1 }] is used by node 'cache_v_l17 (reshaped) (view)' (SET_ROWS)\nllama_graph_n_input_tensors: input tensor '                 attn_inp_v_idxs' [i64, ne = { 2293760,     1,     1,     1 }] is used by node 'cache_v_l23 (reshaped) (view)' (SET_ROWS)\nllama_graph_n_input_tensors: input tensor '                 attn_inp_v_idxs' [i64, ne = { 2293760,     1,     1,     1 }] is used by node 'cache_v_l29 (reshaped) (view)' (SET_ROWS)\nllama_graph_n_input_tensors: input tensor '                      inp_tokens' [i32, ne = {  1120,     1,     1,     1 }] is used by node 'node_0' (GET_ROWS)\nsched_reserve:        CPU compute buffer size =  9707.08 MiB\nsched_reserve: graph: nodes = 2803, splits = 1, input objects = 4, input tensors = 13\nsched_reserve: reserve took 5.28 ms, sched copies = 1\nset_causal_attn: value = 1\nset_causal_attn: value = 0\nset_causal_attn: value = 1\nset_causal_attn: value = 1\n~llama_context:        CPU compute buffer size is 9707.0782 MiB, matches expectation of 9707.0782 MiB\nred\n\tCommand being timed: \"/home/simo/dev/xenolith-vision-20261014/reference/vision_decode_reference /home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf /home/simo/dev/xenolith-vision-20261014/runs/cli1120-v2/prompt.ids /home/simo/dev/xenolith-vision-20261014/runs/cli1120-v2/embedding.f32 5 1120 131072 /home/simo/dev/xenolith-vision-20261014/runs/decoder1120-reference\"\n\tUser time (seconds): 220.42\n\tSystem time (seconds): 13.63\n\tPercent of CPU this job got: 527%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:44.39\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 26877564\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 236\n\tMinor (reclaiming a frame) page faults: 4901247\n\tVoluntary context switches: 195\n\tInvoluntary context switches: 4317\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+}

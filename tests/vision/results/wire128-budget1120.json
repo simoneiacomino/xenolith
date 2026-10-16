@@ -1,0 +1,178 @@
+{
+  "status": "PASS",
+  "context": 131072,
+  "budget": 1120,
+  "response": "Red",
+  "checkpoint": {
+    "ok": true,
+    "saved": false,
+    "reason": "nothing_new",
+    "tokens": 1162
+  },
+  "image": {
+    "id": "40d05c136af244815d92d190d8d82da68c3f3eefc29b271789430ab57aa86468",
+    "bytes": 10688,
+    "budget": 1120,
+    "rows": 1120
+  },
+  "events": [
+    {
+      "event": "start"
+    },
+    {
+      "event": "inference_progress",
+      "phase": "prefill",
+      "state": "running",
+      "tokens": 0,
+      "total": 1160,
+      "elapsed_ms": 0
+    },
+    {
+      "event": "inference_progress",
+      "phase": "prefill",
+      "state": "running",
+      "tokens": 1133,
+      "total": 1160,
+      "elapsed_ms": 9133
+    },
+    {
+      "event": "inference_progress",
+      "phase": "prefill",
+      "state": "finished",
+      "tokens": 1160,
+      "total": 1160,
+      "elapsed_ms": 9607
+    },
+    {
+      "event": "inference_progress",
+      "phase": "decode",
+      "state": "running",
+      "tokens": 0,
+      "elapsed_ms": 0
+    },
+    {
+      "event": "text_delta",
+      "text": "Red"
+    },
+    {
+      "event": "inference_progress",
+      "phase": "decode",
+      "state": "finished",
+      "tokens": 2,
+      "elapsed_ms": 64
+    },
+    {
+      "event": "done",
+      "stop": "stop",
+      "usage": {
+        "input": 1160,
+        "cache_read": 0,
+        "output": 2,
+        "reasoning": 0,
+        "replayed": 0,
+        "shadow_prefilled": 0,
+        "shadow_background": 0,
+        "shadow_remaining": 0,
+        "shadow_kv_bytes": 0,
+        "shadow_wait_us": 0,
+        "total": 1162
+      },
+      "inference": {
+        "prefill": {
+          "tokens": 1160,
+          "total": 1160,
+          "elapsed_ms": 9607
+        },
+        "decode": {
+          "tokens": 2,
+          "elapsed_ms": 64
+        }
+      },
+      "marker": 4,
+      "checkpoint": {
+        "saved": true,
+        "tokens": 1162
+      }
+    }
+  ],
+  "memory": {
+    "VmHWM": "26858560 kB",
+    "VmRSS": "25469020 kB",
+    "VmSwap": "0 kB"
+  },
+  "restart": {
+    "response": "Red",
+    "events": [
+      {
+        "event": "start"
+      },
+      {
+        "event": "inference_progress",
+        "phase": "prefill",
+        "state": "running",
+        "tokens": 0,
+        "total": 23,
+        "elapsed_ms": 0
+      },
+      {
+        "event": "inference_progress",
+        "phase": "prefill",
+        "state": "finished",
+        "tokens": 23,
+        "total": 23,
+        "elapsed_ms": 746
+      },
+      {
+        "event": "inference_progress",
+        "phase": "decode",
+        "state": "running",
+        "tokens": 0,
+        "elapsed_ms": 0
+      },
+      {
+        "event": "text_delta",
+        "text": "Red"
+      },
+      {
+        "event": "inference_progress",
+        "phase": "decode",
+        "state": "finished",
+        "tokens": 2,
+        "elapsed_ms": 52
+      },
+      {
+        "event": "done",
+        "stop": "stop",
+        "usage": {
+          "input": 23,
+          "cache_read": 1162,
+          "output": 2,
+          "reasoning": 0,
+          "replayed": 0,
+          "shadow_prefilled": 0,
+          "shadow_background": 0,
+          "shadow_remaining": 0,
+          "shadow_kv_bytes": 0,
+          "shadow_wait_us": 0,
+          "total": 1187
+        },
+        "inference": {
+          "prefill": {
+            "tokens": 23,
+            "total": 23,
+            "elapsed_ms": 746
+          },
+          "decode": {
+            "tokens": 2,
+            "elapsed_ms": 52
+          }
+        },
+        "marker": 8,
+        "resume": {
+          "loaded": true,
+          "tokens": 1162
+        }
+      }
+    ]
+  }
+}

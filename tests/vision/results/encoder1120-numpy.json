@@ -1,0 +1,29 @@
+{
+  "limits": {
+    "relative_rms": 0.005,
+    "cosine": 0.99998
+  },
+  "pass": true,
+  "stages": [
+    {
+      "stage": "layer_out-26",
+      "relative_rms": 0.004334266443348032,
+      "cosine": 0.999990607090816,
+      "max_abs": 43.42041015625,
+      "pass": true,
+      "elements": 11612160,
+      "reference_sha256": "48d8ae837f746717d27ebb06a4afc89097a0ef4367834c0a0a753c131ebf2009",
+      "candidate_sha256": "7ae41ab1ede65d38e1f4c0443d535e7fabab8b016744d492d3cca3448c3b9da6"
+    },
+    {
+      "stage": "embedding",
+      "relative_rms": 0.004355462965846345,
+      "cosine": 0.9999905149621888,
+      "max_abs": 0.19635272026062012,
+      "pass": true,
+      "elements": 3153920,
+      "reference_sha256": "b0869492bda46c0e823456498729681c908dbe9c0a0c5d2710193ddc1c1ff94d",
+      "candidate_sha256": "d24fd32943010e43cae2aa53e4a4771d117d02690c8e1d3f6a015634baa1d489"
+    }
+  ]
+}

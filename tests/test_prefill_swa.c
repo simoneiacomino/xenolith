@@ -99,7 +99,7 @@ int main(int argc, char **argv) {
                                         rows, stage_count, XE_SWA_HEAD_DIM,
                                         XE_SWA_KV_HEADS,
                                         batch_start - stage_base,
-                                        XE_SWA_WINDOW);
+                                        XE_SWA_WINDOW, XE_ATTENTION_CAUSAL);
     xe_ze_check("zeCommandListHostSynchronize prefill swa stage attention",
                 zeCommandListHostSynchronize(e->gpu.commands, UINT64_MAX));
     int stage_mismatches = 0;

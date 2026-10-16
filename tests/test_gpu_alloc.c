@@ -107,6 +107,55 @@ static void failure(xe_engine *e, size_t size, const char *message) {
     assert(strstr(error, message));
 }
 
+static void prefill_reserve(xe_engine *e) {
+    xe_prefill_workspace workspace;
+    xe_session source = {
+        .engine = e, .prefill_capacity = 512, .n_tokens = 1,
+        .swa_spare_k = (_Float16 *)&storage,
+        .swa_spare_v = (_Float16 *)&storage
+    };
+    source.prefill_workspace_size = xe_prefill_workspace_layout_rows(
+        &workspace, NULL, source.prefill_capacity);
+    source.prefill_workspace = xe_alloc(e, source.prefill_workspace_size,
+                                        XE_MEM_SHARED);
+    /* Match shadow_new's workspace borrow and transfer of the SWA spares. */
+    xe_session shadow = {
+        .engine = e, .cow = 1, .prefill_capacity = source.prefill_capacity,
+        .prefill_workspace = source.prefill_workspace,
+        .prefill_workspace_size = source.prefill_workspace_size
+    };
+    source.swa_spare_k = source.swa_spare_v = NULL;
+    unsigned before = calls, before_free = frees;
+    size_t old_size = source.prefill_workspace_size;
+    assert(xe_session_prefill_reserve(&source, 512));
+    assert(!xe_session_prefill_reserve(&source, 1120));
+    assert(!xe_session_prefill_reserve(&shadow, 1120));
+    assert(calls == before && frees == before_free);
+    assert(source.prefill_capacity == 512 && source.prefill_workspace_size == old_size);
+    assert(source.prefill_workspace == shadow.prefill_workspace);
+
+    source.swa_spare_k = (_Float16 *)&storage;
+    assert(!xe_session_prefill_reserve(&source, 1120));
+    source.swa_spare_v = source.swa_spare_k;
+    source.swa_spare_k = NULL;
+    assert(!xe_session_prefill_reserve(&source, 1120));
+    source.swa_spare_k = source.swa_spare_v;
+    source.prefill_pending = 1;
+    assert(!xe_session_prefill_reserve(&source, 1120));
+    source.prefill_pending = 0;
+    assert(!xe_session_prefill_reserve(&source, XE_VISUAL_MAX + 1));
+    assert(calls == before && frees == before_free);
+
+    /* Once the borrow ends, growth replaces and frees exactly one block. */
+    assert(xe_session_prefill_reserve(&source, 1120));
+    assert(calls == before + 1 && frees == before_free + 1);
+    assert(source.prefill_capacity == 1120);
+    assert(source.prefill_workspace_size == xe_prefill_workspace_layout_rows(
+        &workspace, NULL, 1120));
+    assert(allocated_size == source.prefill_workspace_size);
+    xe_free(e, source.prefill_workspace, XE_MEM_SHARED);
+}
+
 int main(void) {
     const size_t gib = (size_t)1024 * 1024 * 1024, cache = 5 * gib / 2;
     ze_driver_handle_t driver = (ze_driver_handle_t)(uintptr_t)1;
@@ -149,6 +198,7 @@ int main(void) {
     allocate(&e, cache, 0);
     e.gpu.max_mem_alloc_size = limit = gib;
     allocate(&e, 100 * 1024 * 1024, 0);
+    prefill_reserve(&e);
     failure(&e, cache, "driver does not support relaxed allocation limits");
     e.gpu.relaxed_limits = XE_RELAXED_EXP;
     allocation_result = ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY;

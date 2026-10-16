@@ -396,7 +396,11 @@ static int conversation_blocks_parse(const conversation_field *field,
         if (format_get_u32le(p + 4) != 0 || length > remaining - 16) return 0;
         uint32_t block_format = format_get_u32le(p);
         if (block_format < CONVERSATION_BLOCK_TEXT ||
-            block_format > CONVERSATION_BLOCK_BINARY) return 0;
+            block_format > CONVERSATION_BLOCK_IMAGE) return 0;
+        if(block_format==CONVERSATION_BLOCK_IMAGE) {
+            xe_image meta;int offset;const uint8_t *media;size_t size;
+            if(length>SIZE_MAX||!xe_image_record_parse(p+16,(size_t)length,&meta,&offset,&media,&size))return 0;
+        }
         p += 16 + length;
         remaining -= 16 + length;
         total++;

@@ -1,0 +1,51 @@
+{
+  "70": {
+    "response": "Red",
+    "time": "Elapsed (wall clock) time (h:mm:ss or m:ss): 0:19.41\nMaximum resident set size (kbytes): 15972360\nSwaps: 0"
+  },
+  "140": {
+    "response": "Red",
+    "time": "Elapsed (wall clock) time (h:mm:ss or m:ss): 0:22.29\nMaximum resident set size (kbytes): 15991152\nSwaps: 0"
+  },
+  "280": {
+    "response": "Red",
+    "time": "Elapsed (wall clock) time (h:mm:ss or m:ss): 0:46.99\nMaximum resident set size (kbytes): 15965164\nSwaps: 0"
+  },
+  "560": {
+    "response": "red",
+    "time": "Elapsed (wall clock) time (h:mm:ss or m:ss): 1:12.91\nMaximum resident set size (kbytes): 16231204\nSwaps: 0"
+  },
+  "1120": {
+    "response": "red",
+    "time": "Elapsed (wall clock) time (h:mm:ss or m:ss): 3:44.60\nMaximum resident set size (kbytes): 16579308\nSwaps: 0"
+  },
+  "decoder70": {
+    "relative_rms": 0.013302081096906003,
+    "cosine": 0.9999355841171568,
+    "xenolith_top10": [
+      9264,
+      1192,
+      12648,
+      174994,
+      238905,
+      2604,
+      95545,
+      239559,
+      500,
+      66157
+    ],
+    "llama_top10": [
+      9264,
+      1192,
+      12648,
+      174994,
+      2604,
+      238905,
+      95545,
+      239559,
+      500,
+      66157
+    ],
+    "reference_ids": "9264\n106\n"
+  }
+}

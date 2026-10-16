@@ -1,0 +1,38 @@
+[
+  {
+    "context": 65536,
+    "tokens": 2048,
+    "relative_rms": 0,
+    "cosine": 1,
+    "argmax_512": 107,
+    "argmax_1024": 107,
+    "pass": true
+  },
+  {
+    "context": 65536,
+    "tokens": 8192,
+    "relative_rms": 0,
+    "cosine": 1,
+    "argmax_512": 107,
+    "argmax_1024": 107,
+    "pass": true
+  },
+  {
+    "context": 131072,
+    "tokens": 2048,
+    "relative_rms": 0,
+    "cosine": 1,
+    "argmax_512": 107,
+    "argmax_1024": 107,
+    "pass": true
+  },
+  {
+    "context": 131072,
+    "tokens": 8192,
+    "relative_rms": 0,
+    "cosine": 1,
+    "argmax_512": 107,
+    "argmax_1024": 107,
+    "pass": true
+  }
+]

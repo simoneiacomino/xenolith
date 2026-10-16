@@ -1,0 +1,3081 @@
+{
+  "checks": {
+    "commands": [
+      {
+        "name": "unit-context",
+        "command": [
+          "make",
+          "-j4",
+          "BUILD_COMMIT=5622dc8-integration",
+          "xenolith",
+          "check-unit",
+          "check-context",
+          "tests/test_vision_session",
+          "tests/test_cache_model",
+          "tests/test_weights_identity"
+        ],
+        "exit": 0,
+        "seconds": 40.96923050700025,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-unit-context.log"
+      },
+      {
+        "name": "gpu",
+        "command": [
+          "make",
+          "BUILD_COMMIT=5622dc8-integration",
+          "check-gpu",
+          "check-vision"
+        ],
+        "exit": 0,
+        "seconds": 28.67066506499941,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-gpu.log"
+      },
+      {
+        "name": "snapshot-compat",
+        "command": [
+          "make",
+          "BUILD_COMMIT=5622dc8-integration",
+          "check-snapshot-compat-model",
+          "MODEL=/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "LEGACY_SOURCE=legacy-baseline"
+        ],
+        "exit": 0,
+        "seconds": 96.0598535019999,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-snapshot-compat.log"
+      },
+      {
+        "name": "persistence",
+        "command": [
+          "make",
+          "-j3",
+          "BUILD_COMMIT=5622dc8-integration",
+          "check-persistence",
+          "MODEL=/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf"
+        ],
+        "exit": 0,
+        "seconds": 84.6668414099986,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-persistence.log"
+      }
+    ],
+    "upstream": "4521185b381bf9f48e5a12ff9abb05eb5a3a164b",
+    "status": "PASS",
+    "exe_sha256": "df1bab0c9f85625da242b0eecca0dae4ed79924c10f487d056c79f708db70b21"
+  },
+  "e2e": {
+    "commands": [
+      {
+        "name": "build-model-tests",
+        "command": [
+          "make",
+          "-j3",
+          "BUILD_COMMIT=5622dc8-integration",
+          "tests/test_visual_cache",
+          "tests/test_kv_model",
+          "tests/test_runtime",
+          "tests/test_runtime_model",
+          "tests/test_serve",
+          "tests/test_serve_model"
+        ],
+        "exit": 0,
+        "seconds": 3.5512765739986207,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-build-model-tests.log"
+      },
+      {
+        "name": "visual-cache-host",
+        "command": [
+          "./tests/test_visual_cache"
+        ],
+        "exit": 0,
+        "seconds": 2.8655952560002333,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-visual-cache-host.log"
+      },
+      {
+        "name": "cache-large",
+        "command": [
+          "make",
+          "check-cache-large"
+        ],
+        "exit": 0,
+        "seconds": 41.270778607000466,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-cache-large.log"
+      },
+      {
+        "name": "runtime",
+        "command": [
+          "make",
+          "check-runtime",
+          "MODEL=/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf"
+        ],
+        "exit": 0,
+        "seconds": 49.14554791699993,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-runtime.log"
+      },
+      {
+        "name": "serve",
+        "command": [
+          "make",
+          "check-serve",
+          "MODEL=/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf"
+        ],
+        "exit": 0,
+        "seconds": 58.89608101699923,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-serve.log"
+      },
+      {
+        "name": "migration65536",
+        "command": [
+          "python3",
+          "tools/vision_cache_integration_check.py",
+          "--engine",
+          "./xenolith",
+          "--previous-engine",
+          "/home/simo/dev/xenolith-vision-20261014/candidate/xenolith",
+          "--model",
+          "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "--mmproj",
+          "/home/simo/dev/xenolith-vision-20261014/reference/mmproj-F16.gguf",
+          "--image",
+          "vision/fixtures/quadrants.png",
+          "--ctx",
+          "65536",
+          "--output",
+          "/home/simo/dev/xenolith-vision-20261014/runs/integration-migration65536"
+        ],
+        "exit": 0,
+        "seconds": 203.6455159770012,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-migration65536.log"
+      },
+      {
+        "name": "wire65536",
+        "command": [
+          "python3",
+          "tools/vision_wire_check.py",
+          "--engine",
+          "./xenolith",
+          "--model",
+          "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "--mmproj",
+          "/home/simo/dev/xenolith-vision-20261014/reference/mmproj-F16.gguf",
+          "--fixtures",
+          "vision/fixtures",
+          "--ctx",
+          "65536",
+          "--output",
+          "/home/simo/dev/xenolith-vision-20261014/runs/integration-wire65536"
+        ],
+        "exit": 0,
+        "seconds": 237.09437637500014,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-wire65536.log"
+      },
+      {
+        "name": "decode65536",
+        "command": [
+          "./tests/test_kv_model",
+          "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "decode-dump",
+          "/home/simo/dev/xenolith-vision-20261014/runs/integration-decode65536",
+          "--ctx",
+          "65536"
+        ],
+        "exit": 0,
+        "seconds": 29.468369309999616,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-decode65536.log"
+      },
+      {
+        "name": "migration131072",
+        "command": [
+          "python3",
+          "tools/vision_cache_integration_check.py",
+          "--engine",
+          "./xenolith",
+          "--previous-engine",
+          "/home/simo/dev/xenolith-vision-20261014/candidate/xenolith",
+          "--model",
+          "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "--mmproj",
+          "/home/simo/dev/xenolith-vision-20261014/reference/mmproj-F16.gguf",
+          "--image",
+          "vision/fixtures/quadrants.png",
+          "--ctx",
+          "131072",
+          "--output",
+          "/home/simo/dev/xenolith-vision-20261014/runs/integration-migration131072"
+        ],
+        "exit": 0,
+        "seconds": 207.9147434630013,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-migration131072.log"
+      },
+      {
+        "name": "wire131072",
+        "command": [
+          "python3",
+          "tools/vision_wire_check.py",
+          "--engine",
+          "./xenolith",
+          "--model",
+          "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "--mmproj",
+          "/home/simo/dev/xenolith-vision-20261014/reference/mmproj-F16.gguf",
+          "--fixtures",
+          "vision/fixtures",
+          "--ctx",
+          "131072",
+          "--output",
+          "/home/simo/dev/xenolith-vision-20261014/runs/integration-wire131072"
+        ],
+        "exit": 0,
+        "seconds": 139.85014696800135,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-wire131072.log"
+      },
+      {
+        "name": "decode131072",
+        "command": [
+          "./tests/test_kv_model",
+          "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "decode-dump",
+          "/home/simo/dev/xenolith-vision-20261014/runs/integration-decode131072",
+          "--ctx",
+          "131072"
+        ],
+        "exit": 0,
+        "seconds": 31.7831253330005,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-decode131072.log"
+      },
+      {
+        "name": "weights-mode",
+        "command": [
+          "python3",
+          "tools/vision_weights_mode_check.py",
+          "--engine",
+          "./xenolith",
+          "--model",
+          "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "--mmproj",
+          "/home/simo/dev/xenolith-vision-20261014/reference/mmproj-F16.gguf",
+          "--image",
+          "vision/fixtures/quadrants.png",
+          "--output",
+          "/home/simo/dev/xenolith-vision-20261014/runs/integration-weights-mode"
+        ],
+        "exit": 0,
+        "seconds": 90.05964796199987,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-weights-mode.log"
+      },
+      {
+        "name": "kitten-chat",
+        "command": [
+          "python3",
+          "tools/vision_chat_check.py",
+          "--engine",
+          "./xenolith",
+          "--model",
+          "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "--mmproj",
+          "/home/simo/dev/xenolith-vision-20261014/reference/mmproj-F16.gguf",
+          "--image",
+          "/home/simo/dev/xenolith-vision-20261014/candidate/gattino.jpg",
+          "--output",
+          "/home/simo/dev/xenolith-vision-20261014/runs/integration-chat"
+        ],
+        "exit": 0,
+        "seconds": 68.62062532600066,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-kitten-chat.log"
+      },
+      {
+        "name": "encoder70",
+        "command": [
+          "./xenolith",
+          "vision-encode",
+          "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "--mmproj",
+          "/home/simo/dev/xenolith-vision-20261014/reference/mmproj-F16.gguf",
+          "--image",
+          "vision/fixtures/quadrants.png",
+          "--image-tokens",
+          "70",
+          "--vision-dump",
+          "/home/simo/dev/xenolith-vision-20261014/runs/integration-encoder70",
+          "--final-only"
+        ],
+        "exit": 0,
+        "seconds": 13.463483817999077,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-encoder70.log"
+      },
+      {
+        "name": "wire1120",
+        "command": [
+          "python3",
+          "tools/vision_large_session_check.py",
+          "--engine",
+          "./xenolith",
+          "--model",
+          "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "--mmproj",
+          "/home/simo/dev/xenolith-vision-20261014/reference/mmproj-F16.gguf",
+          "--fixtures",
+          "vision/fixtures",
+          "--output",
+          "/home/simo/dev/xenolith-vision-20261014/runs/integration-wire1120"
+        ],
+        "exit": 0,
+        "seconds": 271.27303790299993,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-wire1120.log"
+      },
+      {
+        "name": "bench",
+        "command": [
+          "python3",
+          "tools/vision_bench.py",
+          "--model",
+          "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+          "--baseline",
+          "/home/simo/dev/xenolith-vision-20261014/candidate/xenolith",
+          "--candidate",
+          "./xenolith",
+          "--paired",
+          "--repetitions",
+          "3",
+          "--output",
+          "/home/simo/dev/xenolith-vision-20261014/runs/integration-bench"
+        ],
+        "exit": 0,
+        "seconds": 536.7783302459993,
+        "log": "/home/simo/dev/xenolith-vision-20261014/runs/integration-bench.log"
+      }
+    ],
+    "upstream": "4521185b381bf9f48e5a12ff9abb05eb5a3a164b",
+    "text_regression": [
+      {
+        "context": 65536,
+        "file": "depth2048.f32",
+        "sha256": "f4301818159050903b376d422c51b33429271413bca480437831e0c0e5ff4cda",
+        "baseline_equal": true
+      },
+      {
+        "context": 65536,
+        "file": "depth512.f32",
+        "sha256": "436ebad15e1a8865bc82badb3683e536999cfe2e238f368744c21faec0212390",
+        "baseline_equal": true
+      },
+      {
+        "context": 131072,
+        "file": "depth2048.f32",
+        "sha256": "f4301818159050903b376d422c51b33429271413bca480437831e0c0e5ff4cda",
+        "baseline_equal": true
+      },
+      {
+        "context": 131072,
+        "file": "depth512.f32",
+        "sha256": "436ebad15e1a8865bc82badb3683e536999cfe2e238f368744c21faec0212390",
+        "baseline_equal": true
+      }
+    ],
+    "encoder70_sha256": "7872f946040c3872034f57d54a15cfda858df35ddbc0fc07ba1423b41fa56587",
+    "status": "PASS",
+    "exe_sha256": "df1bab0c9f85625da242b0eecca0dae4ed79924c10f487d056c79f708db70b21",
+    "sources": {
+      "xenolith.c": "5371a65e7ee172521a1d4d9721c5fc252cc51a004eef462b9300fb3854130d32",
+      "xenolith.cl": "dccd027598ce8f2cab3a683f2a96cbcf8f496a8417d6bffc9f4dc9c24e58a2b6",
+      "vision.cl": "8a91565341f4584318b65593e2e0e2f4ef7e6cf3ad10319b62606ee8195053f8",
+      "vision.c": "fe47e2199be1cc7cef34950227952ea92242bc0c2078ff087406a47be776114d",
+      "vision_gpu.inc": "01e86742b16f0924522c1fb991be43ad1de646433a4f9e97dd960140fe21bbd6",
+      "runtime.c": "5cea0eaf81a34077ed869ae5c5034cc64629f25ce144d2c9affc3a3bc319f32a",
+      "vision_runtime.inc": "8ded8a20d0a6c3c19f88c074bde53391f50dd3ef6768a957432569bf428fd5ca",
+      "kvstore.c": "78c6d9c92c496962d6167ea1b0db99c5aa210ba28081f41d722265805bac4127",
+      "conversation.c": "f308978dd9a6bdf6ad1229458585a11f58b8527931418ca06c3e4ad2ce8c3e50",
+      "main.c": "8986f8b33b49442252078204672f7620518d213f0100bd9f04ffa416fb71564a",
+      "Makefile": "6a9b0fec14185b7e67b3da43e269fb105306e491ba7a89b0c0eb120ad19b6c0b",
+      "tools/vision_cache_integration_check.py": "f42e82433825b872872d321533b155f9b237c06a00c60cf1c70dae6c0f3f341c",
+      "tests/test_visual_cache.c": "41e91ded36a3c5c575c6160e442d53056b245a973bbd58027818ba193a1dbf36"
+    }
+  },
+  "results": {
+    "integration-migration65536": {
+      "context": 65536,
+      "checks": [
+        "pre-integration visual-v2 session created",
+        "legacy visual-v2 replays retained media and writes shared visual-v3",
+        "shared visual-v3 restores after process restart",
+        "corrupt newest checkpoint falls back to compatible visual predecessor",
+        "cache budget zero replays media without disk cache reads/writes",
+        "budget eviction removes checkpoints/chunks and preserves source media"
+      ],
+      "generations": [
+        {
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 106,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 108
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 106,
+                "total": 106,
+                "elapsed_ms": 2046
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 51
+              }
+            },
+            "marker": 4
+          }
+        },
+        {
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 131,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 133
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 131,
+                "total": 131,
+                "elapsed_ms": 2739
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 69
+              }
+            },
+            "marker": 8,
+            "resume": {
+              "loaded": false,
+              "reason": "rejected",
+              "tokens": 108
+            }
+          }
+        },
+        {
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 20,
+              "cache_read": 133,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 155
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 20,
+                "total": 20,
+                "elapsed_ms": 5540
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 378
+              }
+            },
+            "marker": 12,
+            "resume": {
+              "loaded": true,
+              "tokens": 133
+            }
+          }
+        },
+        {
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 43,
+              "cache_read": 133,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 178
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 43,
+                "total": 43,
+                "elapsed_ms": 1049
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 144
+              }
+            },
+            "marker": 16,
+            "resume": {
+              "loaded": true,
+              "tokens": 133
+            }
+          }
+        },
+        {
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 198,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 200
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 198,
+                "total": 198,
+                "elapsed_ms": 2855
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 213
+              }
+            },
+            "marker": 20
+          }
+        },
+        {
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 220,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 222
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 220,
+                "total": 220,
+                "elapsed_ms": 3179
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 255
+              }
+            },
+            "marker": 23,
+            "resume": {
+              "loaded": false,
+              "reason": "evicted",
+              "tokens": 108
+            }
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "reply": {
+            "ok": true,
+            "saved": true,
+            "tokens": 108
+          },
+          "elapsed_seconds": 0.1455355950001831
+        },
+        {
+          "reply": {
+            "ok": true,
+            "saved": true,
+            "tokens": 133
+          },
+          "elapsed_seconds": 0.35211954199985485
+        },
+        {
+          "reply": {
+            "ok": true,
+            "saved": true,
+            "tokens": 155
+          },
+          "elapsed_seconds": 0.39658832600071037
+        },
+        {
+          "reply": {
+            "ok": true,
+            "saved": true,
+            "tokens": 178
+          },
+          "elapsed_seconds": 0.3960770399989997
+        }
+      ],
+      "storage": {
+        "standalone_snapshot_bytes": 31012032,
+        "checkpoint_disk_bytes": 31013056
+      },
+      "status": "PASS"
+    },
+    "integration-migration131072": {
+      "context": 131072,
+      "checks": [
+        "pre-integration visual-v2 session created",
+        "legacy visual-v2 replays retained media and writes shared visual-v3",
+        "shared visual-v3 restores after process restart",
+        "corrupt newest checkpoint falls back to compatible visual predecessor",
+        "cache budget zero replays media without disk cache reads/writes",
+        "budget eviction removes checkpoints/chunks and preserves source media"
+      ],
+      "generations": [
+        {
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 106,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 108
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 106,
+                "total": 106,
+                "elapsed_ms": 2274
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 125
+              }
+            },
+            "marker": 4
+          }
+        },
+        {
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 131,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 133
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 131,
+                "total": 131,
+                "elapsed_ms": 5333
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 248
+              }
+            },
+            "marker": 8,
+            "resume": {
+              "loaded": false,
+              "reason": "rejected",
+              "tokens": 108
+            }
+          }
+        },
+        {
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 20,
+              "cache_read": 133,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 155
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 20,
+                "total": 20,
+                "elapsed_ms": 862
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 176
+              }
+            },
+            "marker": 12,
+            "resume": {
+              "loaded": true,
+              "tokens": 133
+            }
+          }
+        },
+        {
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 43,
+              "cache_read": 133,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 178
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 43,
+                "total": 43,
+                "elapsed_ms": 1047
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 71
+              }
+            },
+            "marker": 16,
+            "resume": {
+              "loaded": true,
+              "tokens": 133
+            }
+          }
+        },
+        {
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 198,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 200
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 198,
+                "total": 198,
+                "elapsed_ms": 2620
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 71
+              }
+            },
+            "marker": 20
+          }
+        },
+        {
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 220,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 222
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 220,
+                "total": 220,
+                "elapsed_ms": 2997
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 92
+              }
+            },
+            "marker": 23,
+            "resume": {
+              "loaded": false,
+              "reason": "evicted",
+              "tokens": 108
+            }
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "reply": {
+            "ok": true,
+            "saved": true,
+            "tokens": 108
+          },
+          "elapsed_seconds": 0.16397595099988393
+        },
+        {
+          "reply": {
+            "ok": true,
+            "saved": true,
+            "tokens": 133
+          },
+          "elapsed_seconds": 0.4245177800003148
+        },
+        {
+          "reply": {
+            "ok": true,
+            "saved": true,
+            "tokens": 155
+          },
+          "elapsed_seconds": 0.3455456009996851
+        },
+        {
+          "reply": {
+            "ok": true,
+            "saved": true,
+            "tokens": 178
+          },
+          "elapsed_seconds": 0.34786108000116656
+        }
+      ],
+      "storage": {
+        "standalone_snapshot_bytes": 31012032,
+        "checkpoint_disk_bytes": 31013056
+      },
+      "status": "PASS"
+    },
+    "integration-wire65536": {
+      "context": 65536,
+      "checks": [
+        "vision capabilities",
+        "invalid images leave history unchanged",
+        "image history and source retrieval",
+        "durable response and checkpoint",
+        "second image changes answer with existing KV",
+        "rewind across second image",
+        "restart resumes visual snapshot",
+        "evicted embeddings rebuilt from persisted media",
+        "ephemeral image preserves durable history",
+        "rebuild by media ID with variable visual length",
+        "tool-result image",
+        "failed visual rebuild rolls back the transcript",
+        "reasoning cancellation and projection replay retain the image",
+        "synthetic OCR response",
+        "text service rejects visual sessions and requests"
+      ],
+      "generations": [
+        {
+          "request": "generate",
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 110,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 112
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 110,
+                "total": 110,
+                "elapsed_ms": 11662
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 870
+              }
+            },
+            "marker": 4
+          }
+        },
+        {
+          "request": "generate",
+          "text": "Yellow",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 102,
+              "cache_read": 112,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 216
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 102,
+                "total": 102,
+                "elapsed_ms": 1675
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 217
+              }
+            },
+            "marker": 8
+          }
+        },
+        {
+          "request": "generate",
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 110,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 112
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 110,
+                "total": 110,
+                "elapsed_ms": 1749
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 36
+              }
+            },
+            "marker": 11
+          }
+        },
+        {
+          "request": "generate",
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 23,
+              "cache_read": 112,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 137
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 23,
+                "total": 23,
+                "elapsed_ms": 4172
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 821
+              }
+            },
+            "marker": 15,
+            "resume": {
+              "loaded": true,
+              "tokens": 112
+            }
+          }
+        },
+        {
+          "request": "generate",
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 110,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 112
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 110,
+                "total": 110,
+                "elapsed_ms": 5688
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 471
+              }
+            },
+            "marker": 18
+          }
+        },
+        {
+          "request": "ephemeral",
+          "text": "yellow",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 102,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 104
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 102,
+                "total": 102,
+                "elapsed_ms": 1671
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 71
+              }
+            },
+            "marker": null
+          }
+        },
+        {
+          "request": "generate",
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 166,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 168
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 166,
+                "total": 166,
+                "elapsed_ms": 1552
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 46
+              }
+            },
+            "marker": 24
+          }
+        },
+        {
+          "request": "generate",
+          "text": "Yellow",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 164,
+              "cache_read": 0,
+              "output": 6,
+              "reasoning": 0,
+              "replayed": 1,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 169
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 163,
+                "total": 163,
+                "elapsed_ms": 2575
+              },
+              "decode": {
+                "tokens": 6,
+                "elapsed_ms": 649
+              }
+            },
+            "marker": 33,
+            "reasoning_close": "natural"
+          }
+        },
+        {
+          "request": "generate",
+          "text": "The upper-left color is yellow.",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 173,
+              "cache_read": 0,
+              "output": 13,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 186
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 173,
+                "total": 173,
+                "elapsed_ms": 2658
+              },
+              "decode": {
+                "tokens": 13,
+                "elapsed_ms": 1131
+              }
+            },
+            "marker": 41,
+            "reasoning_close": "natural"
+          }
+        },
+        {
+          "request": "ephemeral",
+          "text": "7318",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 158,
+              "cache_read": 0,
+              "output": 5,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 163
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 158,
+                "total": 158,
+                "elapsed_ms": 1657
+              },
+              "decode": {
+                "tokens": 5,
+                "elapsed_ms": 348
+              }
+            },
+            "marker": null
+          }
+        }
+      ],
+      "server_memory": [
+        {
+          "VmPeak": "31597264 kB",
+          "VmHWM": "27724996 kB",
+          "VmRSS": "26534820 kB",
+          "VmSwap": "0 kB"
+        },
+        {
+          "VmPeak": "31541408 kB",
+          "VmHWM": "27677212 kB",
+          "VmRSS": "26593624 kB",
+          "VmSwap": "0 kB"
+        },
+        {
+          "VmPeak": "33501620 kB",
+          "VmHWM": "27611716 kB",
+          "VmRSS": "24469380 kB",
+          "VmSwap": "0 kB"
+        },
+        {
+          "VmPeak": "28405460 kB",
+          "VmHWM": "14425428 kB",
+          "VmRSS": "14000992 kB",
+          "VmSwap": "0 kB"
+        }
+      ],
+      "status": "PASS"
+    },
+    "integration-wire131072": {
+      "context": 131072,
+      "checks": [
+        "vision capabilities",
+        "invalid images leave history unchanged",
+        "image history and source retrieval",
+        "durable response and checkpoint",
+        "second image changes answer with existing KV",
+        "rewind across second image",
+        "restart resumes visual snapshot",
+        "evicted embeddings rebuilt from persisted media",
+        "ephemeral image preserves durable history",
+        "rebuild by media ID with variable visual length",
+        "tool-result image",
+        "failed visual rebuild rolls back the transcript",
+        "reasoning cancellation and projection replay retain the image",
+        "synthetic OCR response",
+        "text service rejects visual sessions and requests"
+      ],
+      "generations": [
+        {
+          "request": "generate",
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 110,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 112
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 110,
+                "total": 110,
+                "elapsed_ms": 2293
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 57
+              }
+            },
+            "marker": 4
+          }
+        },
+        {
+          "request": "generate",
+          "text": "Yellow",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 102,
+              "cache_read": 112,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 216
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 102,
+                "total": 102,
+                "elapsed_ms": 1629
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 43
+              }
+            },
+            "marker": 8
+          }
+        },
+        {
+          "request": "generate",
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 110,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 112
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 110,
+                "total": 110,
+                "elapsed_ms": 1587
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 32
+              }
+            },
+            "marker": 11
+          }
+        },
+        {
+          "request": "generate",
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 23,
+              "cache_read": 112,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 137
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 23,
+                "total": 23,
+                "elapsed_ms": 862
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 70
+              }
+            },
+            "marker": 15,
+            "resume": {
+              "loaded": true,
+              "tokens": 112
+            }
+          }
+        },
+        {
+          "request": "generate",
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 110,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 112
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 110,
+                "total": 110,
+                "elapsed_ms": 2349
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 63
+              }
+            },
+            "marker": 18
+          }
+        },
+        {
+          "request": "ephemeral",
+          "text": "yellow",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 102,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 104
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 102,
+                "total": 102,
+                "elapsed_ms": 1813
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 51
+              }
+            },
+            "marker": null
+          }
+        },
+        {
+          "request": "generate",
+          "text": "Red",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 166,
+              "cache_read": 0,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 168
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 166,
+                "total": 166,
+                "elapsed_ms": 1826
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 48
+              }
+            },
+            "marker": 24
+          }
+        },
+        {
+          "request": "generate",
+          "text": "Yellow",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 164,
+              "cache_read": 0,
+              "output": 6,
+              "reasoning": 0,
+              "replayed": 1,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 169
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 163,
+                "total": 163,
+                "elapsed_ms": 2874
+              },
+              "decode": {
+                "tokens": 6,
+                "elapsed_ms": 259
+              }
+            },
+            "marker": 33,
+            "reasoning_close": "natural"
+          }
+        },
+        {
+          "request": "generate",
+          "text": "The upper-left color is yellow.",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 173,
+              "cache_read": 0,
+              "output": 13,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 186
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 173,
+                "total": 173,
+                "elapsed_ms": 3017
+              },
+              "decode": {
+                "tokens": 13,
+                "elapsed_ms": 603
+              }
+            },
+            "marker": 41,
+            "reasoning_close": "natural"
+          }
+        },
+        {
+          "request": "ephemeral",
+          "text": "7318",
+          "done": {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 158,
+              "cache_read": 0,
+              "output": 5,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 163
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 158,
+                "total": 158,
+                "elapsed_ms": 1780
+              },
+              "decode": {
+                "tokens": 5,
+                "elapsed_ms": 231
+              }
+            },
+            "marker": null
+          }
+        }
+      ],
+      "server_memory": [
+        {
+          "VmPeak": "32912084 kB",
+          "VmHWM": "27597192 kB",
+          "VmRSS": "26542332 kB",
+          "VmSwap": "0 kB"
+        },
+        {
+          "VmPeak": "32856912 kB",
+          "VmHWM": "27503592 kB",
+          "VmRSS": "26596136 kB",
+          "VmSwap": "0 kB"
+        },
+        {
+          "VmPeak": "36139076 kB",
+          "VmHWM": "27643112 kB",
+          "VmRSS": "22786200 kB",
+          "VmSwap": "0 kB"
+        },
+        {
+          "VmPeak": "28405460 kB",
+          "VmHWM": "14425456 kB",
+          "VmRSS": "14001076 kB",
+          "VmSwap": "0 kB"
+        }
+      ],
+      "status": "PASS"
+    },
+    "integration-weights-mode": {
+      "checks": [
+        {
+          "mode": "full",
+          "response": "Red",
+          "resume": null,
+          "events": [
+            {
+              "event": "start"
+            },
+            {
+              "event": "inference_progress",
+              "phase": "prefill",
+              "state": "running",
+              "tokens": 0,
+              "total": 108,
+              "elapsed_ms": 0
+            },
+            {
+              "event": "inference_progress",
+              "phase": "prefill",
+              "state": "finished",
+              "tokens": 108,
+              "total": 108,
+              "elapsed_ms": 2309
+            },
+            {
+              "event": "inference_progress",
+              "phase": "decode",
+              "state": "running",
+              "tokens": 0,
+              "elapsed_ms": 0
+            },
+            {
+              "event": "text_delta",
+              "text": "Red"
+            },
+            {
+              "event": "inference_progress",
+              "phase": "decode",
+              "state": "running",
+              "tokens": 1,
+              "elapsed_ms": 266
+            },
+            {
+              "event": "inference_progress",
+              "phase": "decode",
+              "state": "finished",
+              "tokens": 2,
+              "elapsed_ms": 267
+            },
+            {
+              "event": "done",
+              "stop": "stop",
+              "usage": {
+                "input": 108,
+                "cache_read": 0,
+                "output": 2,
+                "reasoning": 0,
+                "replayed": 0,
+                "shadow_prefilled": 0,
+                "shadow_background": 0,
+                "shadow_remaining": 0,
+                "shadow_kv_bytes": 0,
+                "shadow_wait_us": 0,
+                "total": 110
+              },
+              "inference": {
+                "prefill": {
+                  "tokens": 108,
+                  "total": 108,
+                  "elapsed_ms": 2309
+                },
+                "decode": {
+                  "tokens": 2,
+                  "elapsed_ms": 267
+                }
+              },
+              "marker": 4
+            }
+          ]
+        },
+        {
+          "mode": "metadata",
+          "response": "Red",
+          "resume": {
+            "loaded": false,
+            "reason": "model_mismatch",
+            "tokens": 110
+          },
+          "events": [
+            {
+              "event": "start"
+            },
+            {
+              "event": "inference_progress",
+              "phase": "prefill",
+              "state": "running",
+              "tokens": 0,
+              "total": 133,
+              "elapsed_ms": 0
+            },
+            {
+              "event": "inference_progress",
+              "phase": "prefill",
+              "state": "finished",
+              "tokens": 133,
+              "total": 133,
+              "elapsed_ms": 3020
+            },
+            {
+              "event": "inference_progress",
+              "phase": "decode",
+              "state": "running",
+              "tokens": 0,
+              "elapsed_ms": 0
+            },
+            {
+              "event": "text_delta",
+              "text": "Red"
+            },
+            {
+              "event": "inference_progress",
+              "phase": "decode",
+              "state": "finished",
+              "tokens": 2,
+              "elapsed_ms": 46
+            },
+            {
+              "event": "done",
+              "stop": "stop",
+              "usage": {
+                "input": 133,
+                "cache_read": 0,
+                "output": 2,
+                "reasoning": 0,
+                "replayed": 0,
+                "shadow_prefilled": 0,
+                "shadow_background": 0,
+                "shadow_remaining": 0,
+                "shadow_kv_bytes": 0,
+                "shadow_wait_us": 0,
+                "total": 135
+              },
+              "inference": {
+                "prefill": {
+                  "tokens": 133,
+                  "total": 133,
+                  "elapsed_ms": 3020
+                },
+                "decode": {
+                  "tokens": 2,
+                  "elapsed_ms": 46
+                }
+              },
+              "marker": 8,
+              "resume": {
+                "loaded": false,
+                "reason": "model_mismatch",
+                "tokens": 110
+              }
+            }
+          ]
+        },
+        {
+          "mode": "metadata",
+          "response": "Red",
+          "resume": {
+            "loaded": true,
+            "tokens": 135
+          },
+          "events": [
+            {
+              "event": "start"
+            },
+            {
+              "event": "inference_progress",
+              "phase": "prefill",
+              "state": "running",
+              "tokens": 0,
+              "total": 23,
+              "elapsed_ms": 0
+            },
+            {
+              "event": "inference_progress",
+              "phase": "prefill",
+              "state": "finished",
+              "tokens": 23,
+              "total": 23,
+              "elapsed_ms": 903
+            },
+            {
+              "event": "inference_progress",
+              "phase": "decode",
+              "state": "running",
+              "tokens": 0,
+              "elapsed_ms": 0
+            },
+            {
+              "event": "text_delta",
+              "text": "Red"
+            },
+            {
+              "event": "inference_progress",
+              "phase": "decode",
+              "state": "finished",
+              "tokens": 2,
+              "elapsed_ms": 182
+            },
+            {
+              "event": "done",
+              "stop": "stop",
+              "usage": {
+                "input": 23,
+                "cache_read": 135,
+                "output": 2,
+                "reasoning": 0,
+                "replayed": 0,
+                "shadow_prefilled": 0,
+                "shadow_background": 0,
+                "shadow_remaining": 0,
+                "shadow_kv_bytes": 0,
+                "shadow_wait_us": 0,
+                "total": 160
+              },
+              "inference": {
+                "prefill": {
+                  "tokens": 23,
+                  "total": 23,
+                  "elapsed_ms": 903
+                },
+                "decode": {
+                  "tokens": 2,
+                  "elapsed_ms": 182
+                }
+              },
+              "marker": 12,
+              "resume": {
+                "loaded": true,
+                "tokens": 135
+              }
+            }
+          ]
+        },
+        {
+          "mode": "full",
+          "response": "Red",
+          "resume": {
+            "loaded": false,
+            "reason": "evicted",
+            "tokens": 110
+          },
+          "events": [
+            {
+              "event": "start"
+            },
+            {
+              "event": "inference_progress",
+              "phase": "prefill",
+              "state": "running",
+              "tokens": 0,
+              "total": 183,
+              "elapsed_ms": 0
+            },
+            {
+              "event": "inference_progress",
+              "phase": "prefill",
+              "state": "finished",
+              "tokens": 183,
+              "total": 183,
+              "elapsed_ms": 2566
+            },
+            {
+              "event": "inference_progress",
+              "phase": "decode",
+              "state": "running",
+              "tokens": 0,
+              "elapsed_ms": 0
+            },
+            {
+              "event": "text_delta",
+              "text": "Red"
+            },
+            {
+              "event": "inference_progress",
+              "phase": "decode",
+              "state": "finished",
+              "tokens": 2,
+              "elapsed_ms": 102
+            },
+            {
+              "event": "done",
+              "stop": "stop",
+              "usage": {
+                "input": 183,
+                "cache_read": 0,
+                "output": 2,
+                "reasoning": 0,
+                "replayed": 0,
+                "shadow_prefilled": 0,
+                "shadow_background": 0,
+                "shadow_remaining": 0,
+                "shadow_kv_bytes": 0,
+                "shadow_wait_us": 0,
+                "total": 185
+              },
+              "inference": {
+                "prefill": {
+                  "tokens": 183,
+                  "total": 183,
+                  "elapsed_ms": 2566
+                },
+                "decode": {
+                  "tokens": 2,
+                  "elapsed_ms": 102
+                }
+              },
+              "marker": 16,
+              "resume": {
+                "loaded": false,
+                "reason": "evicted",
+                "tokens": 110
+              }
+            }
+          ]
+        }
+      ],
+      "status": "PASS"
+    },
+    "integration-chat": {
+      "context": 65536,
+      "image_sha256": "3f136dfff89d27442fb82250bc847c99613ed7e1895033075f8ab4289316020f",
+      "executable_sha256": "df1bab0c9f85625da242b0eecca0dae4ed79924c10f487d056c79f708db70b21",
+      "cases": [
+        {
+          "kind": "image",
+          "command": [
+            "/home/simo/dev/xenolith-vision-20261014/integration/xenolith",
+            "chat",
+            "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+            "--ctx",
+            "65536",
+            "--top-k",
+            "1",
+            "-n",
+            "64",
+            "--mmproj",
+            "/home/simo/dev/xenolith-vision-20261014/reference/mmproj-F16.gguf",
+            "--image",
+            "/home/simo/dev/xenolith-vision-20261014/candidate/gattino.jpg"
+          ],
+          "prompts": [
+            "What animal is shown? Reply with just the animal name.",
+            "Describe its fur color briefly, based on the image."
+          ],
+          "answers": [
+            "cat",
+            "The kitten has tabby fur with a mix of brown, tan, and black stripes."
+          ],
+          "seconds": 44.314811182000994,
+          "status": "PASS"
+        },
+        {
+          "kind": "text",
+          "command": [
+            "/home/simo/dev/xenolith-vision-20261014/integration/xenolith",
+            "chat",
+            "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+            "--ctx",
+            "65536",
+            "--top-k",
+            "1",
+            "-n",
+            "64"
+          ],
+          "prompts": [
+            "Reply with only the word HELLO.",
+            "Reply with only the word WORLD."
+          ],
+          "answers": [
+            "HELLO",
+            "WORLD"
+          ],
+          "seconds": 24.26560381499985,
+          "status": "PASS"
+        }
+      ],
+      "status": "PASS"
+    },
+    "integration-wire1120": {
+      "status": "PASS",
+      "context": 131072,
+      "budget": 1120,
+      "response": "Red",
+      "checkpoint": {
+        "ok": true,
+        "saved": false,
+        "reason": "nothing_new",
+        "tokens": 1162
+      },
+      "image": {
+        "id": "40d05c136af244815d92d190d8d82da68c3f3eefc29b271789430ab57aa86468",
+        "bytes": 10688,
+        "budget": 1120,
+        "rows": 1120
+      },
+      "events": [
+        {
+          "event": "start"
+        },
+        {
+          "event": "inference_progress",
+          "phase": "prefill",
+          "state": "running",
+          "tokens": 0,
+          "total": 1160,
+          "elapsed_ms": 0
+        },
+        {
+          "event": "inference_progress",
+          "phase": "prefill",
+          "state": "running",
+          "tokens": 1133,
+          "total": 1160,
+          "elapsed_ms": 8141
+        },
+        {
+          "event": "inference_progress",
+          "phase": "prefill",
+          "state": "finished",
+          "tokens": 1160,
+          "total": 1160,
+          "elapsed_ms": 8521
+        },
+        {
+          "event": "inference_progress",
+          "phase": "decode",
+          "state": "running",
+          "tokens": 0,
+          "elapsed_ms": 0
+        },
+        {
+          "event": "text_delta",
+          "text": "Red"
+        },
+        {
+          "event": "inference_progress",
+          "phase": "decode",
+          "state": "running",
+          "tokens": 1,
+          "elapsed_ms": 259
+        },
+        {
+          "event": "inference_progress",
+          "phase": "decode",
+          "state": "finished",
+          "tokens": 2,
+          "elapsed_ms": 259
+        },
+        {
+          "event": "done",
+          "stop": "stop",
+          "usage": {
+            "input": 1160,
+            "cache_read": 0,
+            "output": 2,
+            "reasoning": 0,
+            "replayed": 0,
+            "shadow_prefilled": 0,
+            "shadow_background": 0,
+            "shadow_remaining": 0,
+            "shadow_kv_bytes": 0,
+            "shadow_wait_us": 0,
+            "total": 1162
+          },
+          "inference": {
+            "prefill": {
+              "tokens": 1160,
+              "total": 1160,
+              "elapsed_ms": 8521
+            },
+            "decode": {
+              "tokens": 2,
+              "elapsed_ms": 259
+            }
+          },
+          "marker": 4,
+          "checkpoint": {
+            "saved": true,
+            "tokens": 1162
+          }
+        }
+      ],
+      "memory": {
+        "VmHWM": "26119396 kB",
+        "VmRSS": "25525392 kB",
+        "VmSwap": "0 kB"
+      },
+      "restart": {
+        "response": "Red",
+        "events": [
+          {
+            "event": "start"
+          },
+          {
+            "event": "inference_progress",
+            "phase": "prefill",
+            "state": "running",
+            "tokens": 0,
+            "total": 23,
+            "elapsed_ms": 0
+          },
+          {
+            "event": "inference_progress",
+            "phase": "prefill",
+            "state": "finished",
+            "tokens": 23,
+            "total": 23,
+            "elapsed_ms": 786
+          },
+          {
+            "event": "inference_progress",
+            "phase": "decode",
+            "state": "running",
+            "tokens": 0,
+            "elapsed_ms": 0
+          },
+          {
+            "event": "text_delta",
+            "text": "Red"
+          },
+          {
+            "event": "inference_progress",
+            "phase": "decode",
+            "state": "finished",
+            "tokens": 2,
+            "elapsed_ms": 72
+          },
+          {
+            "event": "done",
+            "stop": "stop",
+            "usage": {
+              "input": 23,
+              "cache_read": 1162,
+              "output": 2,
+              "reasoning": 0,
+              "replayed": 0,
+              "shadow_prefilled": 0,
+              "shadow_background": 0,
+              "shadow_remaining": 0,
+              "shadow_kv_bytes": 0,
+              "shadow_wait_us": 0,
+              "total": 1187
+            },
+            "inference": {
+              "prefill": {
+                "tokens": 23,
+                "total": 23,
+                "elapsed_ms": 786
+              },
+              "decode": {
+                "tokens": 2,
+                "elapsed_ms": 72
+              }
+            },
+            "marker": 8,
+            "resume": {
+              "loaded": true,
+              "tokens": 1162
+            }
+          }
+        ]
+      }
+    }
+  },
+  "bench_provenance": {
+    "model": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+    "executables": {
+      "baseline": {
+        "path": "/home/simo/dev/xenolith-vision-20261014/candidate/xenolith",
+        "sha256": "7a38dee7b65540f57e7d02b0f51477dbcfba4d1d0ab83280a0cfc06a4cf63f96"
+      },
+      "candidate": {
+        "path": "/home/simo/dev/xenolith-vision-20261014/integration/xenolith",
+        "sha256": "df1bab0c9f85625da242b0eecca0dae4ed79924c10f487d056c79f708db70b21"
+      }
+    },
+    "repetitions": 3,
+    "contexts": [
+      65536,
+      131072
+    ],
+    "warmup": true,
+    "delay_seconds": 1,
+    "mode": "paired ABBA pp2048/tg128 text512"
+  },
+  "bench_samples": {
+    "paired-ctx131072-1-baseline.jsonl": [
+      {
+        "engine": "xenolith",
+        "build_commit": "unknown",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 131072,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "Level Zero,CPU",
+        "implementation": "Level Zero+CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 2048,
+        "n_gen": 0,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:42:21Z",
+        "avg_ns": 8790324314,
+        "stddev_ns": 74921773,
+        "avg_ts": 232.994772,
+        "stddev_ts": 1.994309,
+        "samples_ns": [
+          8846253147,
+          8819519729,
+          8705200066
+        ],
+        "samples_ts": [
+          231.510445,
+          232.212191,
+          235.261681
+        ]
+      },
+      {
+        "engine": "xenolith",
+        "build_commit": "unknown",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 131072,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "CPU",
+        "implementation": "CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 0,
+        "n_gen": 128,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:42:51Z",
+        "avg_ns": 5447009541,
+        "stddev_ns": 86650596,
+        "avg_ts": 23.503104,
+        "stddev_ts": 0.374476,
+        "samples_ns": [
+          5530889044,
+          5452308518,
+          5357831060
+        ],
+        "samples_ts": [
+          23.142753,
+          23.476294,
+          23.890264
+        ]
+      }
+    ],
+    "paired-ctx131072-2-candidate.jsonl": [
+      {
+        "engine": "xenolith",
+        "build_commit": "5622dc8-integration",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 131072,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "Level Zero,CPU",
+        "implementation": "Level Zero+CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 2048,
+        "n_gen": 0,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:43:30Z",
+        "avg_ns": 8919993240,
+        "stddev_ns": 335861300,
+        "avg_ts": 229.815516,
+        "stddev_ts": 8.723455,
+        "samples_ns": [
+          9231053114,
+          8563878835,
+          8965047770
+        ],
+        "samples_ts": [
+          221.859844,
+          239.143972,
+          228.442731
+        ]
+      },
+      {
+        "engine": "xenolith",
+        "build_commit": "5622dc8-integration",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 131072,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "CPU",
+        "implementation": "CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 0,
+        "n_gen": 128,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:44:01Z",
+        "avg_ns": 5234654204,
+        "stddev_ns": 101099283,
+        "avg_ts": 24.458471,
+        "stddev_ts": 0.469446,
+        "samples_ns": [
+          5147376857,
+          5345434992,
+          5211150763
+        ],
+        "samples_ts": [
+          24.867035,
+          23.945666,
+          24.562713
+        ]
+      }
+    ],
+    "paired-ctx131072-3-candidate.jsonl": [
+      {
+        "engine": "xenolith",
+        "build_commit": "5622dc8-integration",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 131072,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "Level Zero,CPU",
+        "implementation": "Level Zero+CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 2048,
+        "n_gen": 0,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:44:39Z",
+        "avg_ns": 8971850724,
+        "stddev_ns": 151485953,
+        "avg_ts": 228.312977,
+        "stddev_ts": 3.861412,
+        "samples_ns": [
+          8981034130,
+          9118536061,
+          8815981982
+        ],
+        "samples_ts": [
+          228.0361,
+          224.597456,
+          232.305375
+        ]
+      },
+      {
+        "engine": "xenolith",
+        "build_commit": "5622dc8-integration",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 131072,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "CPU",
+        "implementation": "CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 0,
+        "n_gen": 128,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:45:10Z",
+        "avg_ns": 5177368382,
+        "stddev_ns": 171866421,
+        "avg_ts": 24.740848,
+        "stddev_ts": 0.807183,
+        "samples_ns": [
+          5055586302,
+          5373960971,
+          5102557872
+        ],
+        "samples_ts": [
+          25.318527,
+          23.818558,
+          25.085458
+        ]
+      }
+    ],
+    "paired-ctx131072-4-baseline.jsonl": [
+      {
+        "engine": "xenolith",
+        "build_commit": "unknown",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 131072,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "Level Zero,CPU",
+        "implementation": "Level Zero+CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 2048,
+        "n_gen": 0,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:45:50Z",
+        "avg_ns": 8926718958,
+        "stddev_ns": 259824344,
+        "avg_ts": 229.55306,
+        "stddev_ts": 6.672648,
+        "samples_ns": [
+          9191574115,
+          8672236068,
+          8916346690
+        ],
+        "samples_ts": [
+          222.81276,
+          236.155933,
+          229.690485
+        ]
+      },
+      {
+        "engine": "xenolith",
+        "build_commit": "unknown",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 131072,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "CPU",
+        "implementation": "CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 0,
+        "n_gen": 128,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:46:20Z",
+        "avg_ns": 5286786824,
+        "stddev_ns": 109246898,
+        "avg_ts": 24.218216,
+        "stddev_ts": 0.501797,
+        "samples_ns": [
+          5391362029,
+          5295596723,
+          5173401721
+        ],
+        "samples_ts": [
+          23.741681,
+          24.171025,
+          24.741941
+        ]
+      }
+    ],
+    "paired-ctx65536-1-baseline.jsonl": [
+      {
+        "engine": "xenolith",
+        "build_commit": "unknown",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 65536,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "Level Zero,CPU",
+        "implementation": "Level Zero+CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 2048,
+        "n_gen": 0,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:37:42Z",
+        "avg_ns": 9615585572,
+        "stddev_ns": 409945384,
+        "avg_ts": 213.250778,
+        "stddev_ts": 9.262607,
+        "samples_ns": [
+          9743879420,
+          9946040643,
+          9156836654
+        ],
+        "samples_ts": [
+          210.183225,
+          205.911083,
+          223.658025
+        ]
+      },
+      {
+        "engine": "xenolith",
+        "build_commit": "unknown",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 65536,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "CPU",
+        "implementation": "CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 0,
+        "n_gen": 128,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:38:14Z",
+        "avg_ns": 5464825828,
+        "stddev_ns": 128217751,
+        "avg_ts": 23.431232,
+        "stddev_ts": 0.556907,
+        "samples_ns": [
+          5317661634,
+          5552437058,
+          5524378792
+        ],
+        "samples_ts": [
+          24.07073,
+          23.05294,
+          23.170026
+        ]
+      }
+    ],
+    "paired-ctx65536-2-candidate.jsonl": [
+      {
+        "engine": "xenolith",
+        "build_commit": "5622dc8-integration",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 65536,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "Level Zero,CPU",
+        "implementation": "Level Zero+CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 2048,
+        "n_gen": 0,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:38:51Z",
+        "avg_ns": 9127751905,
+        "stddev_ns": 354794023,
+        "avg_ts": 224.59719,
+        "stddev_ts": 8.742869,
+        "samples_ns": [
+          8770809539,
+          9480357832,
+          9132088344
+        ],
+        "samples_ts": [
+          233.501821,
+          216.025601,
+          224.264147
+        ]
+      },
+      {
+        "engine": "xenolith",
+        "build_commit": "5622dc8-integration",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 65536,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "CPU",
+        "implementation": "CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 0,
+        "n_gen": 128,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:39:21Z",
+        "avg_ns": 5727793346,
+        "stddev_ns": 161992933,
+        "avg_ts": 22.358946,
+        "stddev_ts": 0.624355,
+        "samples_ns": [
+          5910424312,
+          5671494402,
+          5601461323
+        ],
+        "samples_ts": [
+          21.656652,
+          22.569008,
+          22.85118
+        ]
+      }
+    ],
+    "paired-ctx65536-3-candidate.jsonl": [
+      {
+        "engine": "xenolith",
+        "build_commit": "5622dc8-integration",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 65536,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "Level Zero,CPU",
+        "implementation": "Level Zero+CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 2048,
+        "n_gen": 0,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:40:02Z",
+        "avg_ns": 8580743198,
+        "stddev_ns": 65107310,
+        "avg_ts": 238.683126,
+        "stddev_ts": 1.81108,
+        "samples_ns": [
+          8515645122,
+          8645859739,
+          8580724733
+        ],
+        "samples_ts": [
+          240.498514,
+          236.876385,
+          238.674478
+        ]
+      },
+      {
+        "engine": "xenolith",
+        "build_commit": "5622dc8-integration",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 65536,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "CPU",
+        "implementation": "CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 0,
+        "n_gen": 128,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:40:30Z",
+        "avg_ns": 5558116867,
+        "stddev_ns": 59980769,
+        "avg_ts": 23.031165,
+        "stddev_ts": 0.247712,
+        "samples_ns": [
+          5623605060,
+          5544896221,
+          5505849321
+        ],
+        "samples_ts": [
+          22.7612,
+          23.084291,
+          23.248003
+        ]
+      }
+    ],
+    "paired-ctx65536-4-baseline.jsonl": [
+      {
+        "engine": "xenolith",
+        "build_commit": "unknown",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 65536,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "Level Zero,CPU",
+        "implementation": "Level Zero+CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 2048,
+        "n_gen": 0,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:41:11Z",
+        "avg_ns": 8784378752,
+        "stddev_ns": 181802256,
+        "avg_ts": 233.207212,
+        "stddev_ts": 4.789569,
+        "samples_ns": [
+          8985812881,
+          8734850352,
+          8632473024
+        ],
+        "samples_ts": [
+          227.914828,
+          234.46309,
+          237.243718
+        ]
+      },
+      {
+        "engine": "xenolith",
+        "build_commit": "unknown",
+        "build_number": 0,
+        "model_filename": "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "context_window": 65536,
+        "text_prefill_rows": 512,
+        "model_size": 14233222264,
+        "backends": "CPU",
+        "implementation": "CPU",
+        "n_threads": 6,
+        "cpu_mask": "unbound",
+        "n_prompt": 0,
+        "n_gen": 128,
+        "n_depth": 0,
+        "test_time": "2026-10-14T15:41:40Z",
+        "avg_ns": 5492390685,
+        "stddev_ns": 75015708,
+        "avg_ts": 23.307891,
+        "stddev_ts": 0.320851,
+        "samples_ns": [
+          5538936077,
+          5405852664,
+          5532383313
+        ],
+        "samples_ts": [
+          23.109131,
+          23.678041,
+          23.136502
+        ]
+      }
+    ]
+  },
+  "logs": {
+    "integration-bench.log": {
+      "sha256": "788db383980774484d25eff36c8d5dd152d97f161a0fca28714ec6428de16f1d",
+      "last_lines": [
+        "paired-ctx65536-1-baseline complete",
+        "paired-ctx65536-2-candidate complete",
+        "paired-ctx65536-3-candidate complete",
+        "paired-ctx65536-4-baseline complete",
+        "paired-ctx131072-1-baseline complete",
+        "paired-ctx131072-2-candidate complete",
+        "paired-ctx131072-3-candidate complete",
+        "paired-ctx131072-4-baseline complete"
+      ]
+    },
+    "integration-build-model-tests.log": {
+      "sha256": "a4ffaa1516066715b7f0972aac851f8f5c1ebec164c138ef08a1e725f0a8ca17",
+      "last_lines": [
+        "      |            ~~~~~~^~~~~~~~~~",
+        "tests/../xenolith.c:2389:1: note: in expansion of macro \u2018XE_DEFINE_Q4_Q8_DOT8\u2019",
+        " 2389 | XE_DEFINE_Q4_Q8_DOT8(xe_q4_q8_dot8_b88, 88)",
+        "      | ^~~~~~~~~~~~~~~~~~~~",
+        "/usr/bin/ld: warning: xenolith_gpu_spv.o: missing .note.GNU-stack section implies executable stack",
+        "/usr/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker",
+        "/usr/bin/ld: warning: xenolith_gpu_spv.o: missing .note.GNU-stack section implies executable stack",
+        "/usr/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker"
+      ]
+    },
+    "integration-build.log": {
+      "sha256": "cef938fafa3be028736eaec0de33dc42a7b5c85d944650fe91e087f004bc4cbb",
+      "last_lines": [
+        "conversation: rollback to durable commit PASS",
+        "conversation: reasoning variants and projection PASS",
+        "conversation: active projection survives load and rollback PASS",
+        "conversation: default state dir PASS",
+        "conversation: autosave policy PASS",
+        "conversation: unknown critical and optional events PASS",
+        "GPU allocation limits: PASS",
+        "context limits: PASS"
+      ]
+    },
+    "integration-cache-large.log": {
+      "sha256": "69c4e50fbd8dffe0af6ba508581ecfcf78c2fe3cc004fe9e144d7622f925d7c3",
+      "last_lines": [
+        "./tests/test_cache_policy --large",
+        "cache: 32k/64k standalone=2435187968 shared=1764406976 saved=670780992 peak-budget=2147483648 exact restore PASS"
+      ]
+    },
+    "integration-decode131072.log": {
+      "sha256": "70494d40a622e79ee8fecd212975e61769c4bb61e73d65258a3bd1ef053fe2f4",
+      "last_lines": [
+        "kv-model: decode depth=512 steps=8 vocab=262144 PASS",
+        "kv-model: decode depth=2048 steps=8 vocab=262144 PASS",
+        "kv-model: complete PASS"
+      ]
+    },
+    "integration-decode65536.log": {
+      "sha256": "70494d40a622e79ee8fecd212975e61769c4bb61e73d65258a3bd1ef053fe2f4",
+      "last_lines": [
+        "kv-model: decode depth=512 steps=8 vocab=262144 PASS",
+        "kv-model: decode depth=2048 steps=8 vocab=262144 PASS",
+        "kv-model: complete PASS"
+      ]
+    },
+    "integration-encoder70.log": {
+      "sha256": "c3998bbedd33d1feb908a2ffa83962f38e44db5a752a75064285a702a0e505cb",
+      "last_lines": [
+        "vision: budget=70 rows=70 preprocess_ms=73.498 model_hash_ms=9377.573 mmproj_load_ms=1182.804 encoder_ms=2739.048",
+        "vision rows 70 width 2816"
+      ]
+    },
+    "integration-gpu.log": {
+      "sha256": "62a764d1522fdd96ca8e1fc8b2216cdc51622181885f8674215430f069b1dc34",
+      "last_lines": [
+        "./tests/test_vision_input",
+        "vision input: boundaries, lengths, identity and finite rows PASS",
+        "./tests/test_vision_gpu",
+        "vision attention: rows 17 previous 7 max 3.18e-07 PASS",
+        "vision attention: rows 1120 previous 1023 max 1.98e-06 PASS",
+        "vision ring: rows 512 start 900 PASS",
+        "vision ring: rows 1024 start 23 PASS",
+        "vision ring: rows 1120 start 977 PASS"
+      ]
+    },
+    "integration-kitten-chat.log": {
+      "sha256": "3173851d3da5a193c548312f0e8d1ac7cffc2d78bad603e696737c3f54bb4672",
+      "last_lines": [
+        "image chat: two turns PASS",
+        "text chat: two turns PASS"
+      ]
+    },
+    "integration-migration131072.log": {
+      "sha256": "c9d7adf5aa9427049010d167ffe128aa904dfcb8f1b7faf0694c6c8771b162db",
+      "last_lines": [
+        "pre-integration visual-v2 session created PASS",
+        "legacy visual-v2 replays retained media and writes shared visual-v3 PASS",
+        "shared visual-v3 restores after process restart PASS",
+        "corrupt newest checkpoint falls back to compatible visual predecessor PASS",
+        "cache budget zero replays media without disk cache reads/writes PASS",
+        "budget eviction removes checkpoints/chunks and preserves source media PASS"
+      ]
+    },
+    "integration-migration65536.log": {
+      "sha256": "c9d7adf5aa9427049010d167ffe128aa904dfcb8f1b7faf0694c6c8771b162db",
+      "last_lines": [
+        "pre-integration visual-v2 session created PASS",
+        "legacy visual-v2 replays retained media and writes shared visual-v3 PASS",
+        "shared visual-v3 restores after process restart PASS",
+        "corrupt newest checkpoint falls back to compatible visual predecessor PASS",
+        "cache budget zero replays media without disk cache reads/writes PASS",
+        "budget eviction removes checkpoints/chunks and preserves source media PASS"
+      ]
+    },
+    "integration-persistence.log": {
+      "sha256": "17af207c6081d216ae5ee0fc5d814433ba0a2f21c33cf9a5705b39eba5c995ab",
+      "last_lines": [
+        "session-sync: GPU extension PASS",
+        "session-sync: long M512x2+M32 PASS",
+        "session-sync: safe SWA branch PASS",
+        "session-sync: overwritten SWA rebuild PASS",
+        "session-sync: wrapped SWA GPU extension PASS",
+        "session-sync: single-token CPU decode handoff PASS",
+        "session-sync: GPU extension decode parity PASS (rel_rms 0.0490)",
+        "session-sync: hot allocation PASS"
+      ]
+    },
+    "integration-runtime.log": {
+      "sha256": "636df29fc3f6f9dc33ae5b89b2e0fd320ca625369c7edb6825836fe4f0a8e096",
+      "last_lines": [
+        "./tests/test_json",
+        "test_json: all checks passed",
+        "./tests/test_profile \"/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf\"",
+        "test_profile: all checks passed",
+        "./tests/test_runtime \"/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf\"",
+        "test_runtime: all checks passed",
+        "./tests/test_runtime_model \"/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf\"",
+        "test_runtime_model: all checks passed"
+      ]
+    },
+    "integration-serve.log": {
+      "sha256": "898a0ca0f2096df41ee02868728079bffd6c04c6d14ef2ef72c6df21c8b67a96",
+      "last_lines": [
+        "./tests/test_serve \"/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf\"",
+        "test_serve: long session 241211 tokens, rebuild 1003380 bytes in 153 ms, history 1006418 bytes in 3 ms",
+        "test_serve: all checks passed",
+        "./tests/test_serve_model \"/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf\"",
+        "test_serve_model: all checks passed"
+      ]
+    },
+    "integration-snapshot-compat.log": {
+      "sha256": "95691b3eab01668691e8cea6a036beef6877f07b0da8c528da9842f219885770",
+      "last_lines": [
+        "snapshot model compatibility: replay N=64 exact logits, CPU decode, GPU extension PASS",
+        "snapshot model compatibility: replay N=1057 exact logits, CPU decode, GPU extension PASS",
+        "snapshot model compatibility: v1 -> v2, replay, exact continuation PASS",
+        "snapshot model compatibility: write N=64 exact logits, CPU decode, GPU extension PASS",
+        "snapshot model compatibility: write N=1057 exact logits, CPU decode, GPU extension PASS",
+        "snapshot model compatibility: read N=64 exact logits, CPU decode, GPU extension PASS",
+        "snapshot model compatibility: read N=1057 exact logits, CPU decode, GPU extension PASS",
+        "snapshot model compatibility: v2 cross-build, read, exact continuation PASS"
+      ]
+    },
+    "integration-unit-context.log": {
+      "sha256": "ddd158591103749c59045b0b4649358dda5981a0f98f11cbe290846f20974602",
+      "last_lines": [
+        "conversation: reasoning variants and projection PASS",
+        "conversation: active projection survives load and rollback PASS",
+        "conversation: default state dir PASS",
+        "conversation: autosave policy PASS",
+        "conversation: unknown critical and optional events PASS",
+        "GPU allocation limits: PASS",
+        "context limits: PASS",
+        "visual cache: v3/ABI, legacy-v2 rejection, image-safe reserves, dedup=169876512/175116544 bytes, reopen and eviction PASS"
+      ]
+    },
+    "integration-visual-cache-host.log": {
+      "sha256": "6b871d82389a75968074f76f4f90ed3a1f06725a5c2d43b35bf51b18eb7ffb8d",
+      "last_lines": [
+        "visual cache: v3/ABI, legacy-v2 rejection, image-safe reserves, dedup=169876512/175116544 bytes, reopen and eviction PASS"
+      ]
+    },
+    "integration-weights-mode.log": {
+      "sha256": "4ed378ed92f8525c2f6dae0e8b128f24454123fb798bbc4b97423039d7c80042",
+      "last_lines": [
+        "full verification: response and snapshot policy PASS",
+        "metadata verification: response and snapshot policy PASS",
+        "metadata verification: response and snapshot policy PASS",
+        "full verification: response and snapshot policy PASS"
+      ]
+    },
+    "integration-wire1120.log": {
+      "sha256": "405f0ca4642c4965702a4496554cff28142a144b24a14660d0da3941588cac59",
+      "last_lines": [
+        "runtime 1120 no tracing: response and checkpoint PASS"
+      ]
+    },
+    "integration-wire131072.log": {
+      "sha256": "fae746ac1444f7ade64de098b5185b652f804c507bd6abdf9faa1d5cd19b79e7",
+      "last_lines": [
+        "evicted embeddings rebuilt from persisted media PASS",
+        "ephemeral image preserves durable history PASS",
+        "rebuild by media ID with variable visual length PASS",
+        "tool-result image PASS",
+        "failed visual rebuild rolls back the transcript PASS",
+        "reasoning cancellation and projection replay retain the image PASS",
+        "synthetic OCR response PASS",
+        "text service rejects visual sessions and requests PASS"
+      ]
+    },
+    "integration-wire65536.log": {
+      "sha256": "fae746ac1444f7ade64de098b5185b652f804c507bd6abdf9faa1d5cd19b79e7",
+      "last_lines": [
+        "evicted embeddings rebuilt from persisted media PASS",
+        "ephemeral image preserves durable history PASS",
+        "rebuild by media ID with variable visual length PASS",
+        "tool-result image PASS",
+        "failed visual rebuild rolls back the transcript PASS",
+        "reasoning cancellation and projection replay retain the image PASS",
+        "synthetic OCR response PASS",
+        "text service rejects visual sessions and requests PASS"
+      ]
+    }
+  },
+  "bench_summary": [
+    {
+      "context": 65536,
+      "phase": "pp2048",
+      "baseline_median_tokens_per_second": 225.7864265,
+      "candidate_median_tokens_per_second": 235.189103,
+      "change_percent": 4.164411761040898,
+      "baseline_range": [
+        205.911083,
+        237.243718
+      ],
+      "candidate_range": [
+        216.025601,
+        240.498514
+      ]
+    },
+    {
+      "context": 65536,
+      "phase": "tg128",
+      "baseline_median_tokens_per_second": 23.153264,
+      "candidate_median_tokens_per_second": 22.80619,
+      "change_percent": -1.4990283875310206,
+      "baseline_range": [
+        23.05294,
+        24.07073
+      ],
+      "candidate_range": [
+        21.656652,
+        23.248003
+      ]
+    },
+    {
+      "context": 131072,
+      "phase": "pp2048",
+      "baseline_median_tokens_per_second": 231.86131799999998,
+      "candidate_median_tokens_per_second": 228.2394155,
+      "change_percent": -1.5620986420856853,
+      "baseline_range": [
+        222.81276,
+        236.155933
+      ],
+      "candidate_range": [
+        221.859844,
+        239.143972
+      ]
+    },
+    {
+      "context": 131072,
+      "phase": "tg128",
+      "baseline_median_tokens_per_second": 23.8159725,
+      "candidate_median_tokens_per_second": 24.714874000000002,
+      "change_percent": 3.774364032373656,
+      "baseline_range": [
+        23.142753,
+        24.741941
+      ],
+      "candidate_range": [
+        23.818558,
+        25.318527
+      ]
+    }
+  ]
+}

@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include "vision.h"
 
 #ifndef XE_BUILD_COMMIT
 #define XE_BUILD_COMMIT "unknown"
@@ -55,7 +56,7 @@ xe_engine *xe_engine_open(const char *gguf_path);
 xe_engine *xe_engine_open_vocab(const char *gguf_path);
 /* Prepare snapshot fingerprints during opening, with the full model hash
  * computed before repack releases source pages. Used by wire/serve when
- * --cache-budget > 0 so requests never pay the first fingerprint cost. */
+ * --cache-budget > 0 or --mmproj is set, so requests never pay that cost. */
 xe_engine *xe_engine_open_cached(const char *gguf_path, int context);
 /* SHA-256 of the complete original GGUF, owned by the engine until close.
  * Cached opening computes it eagerly. Other opening functions defer it until
@@ -66,6 +67,19 @@ xe_engine *xe_engine_open_cached(const char *gguf_path, int context);
 const uint8_t *xe_engine_model_fingerprint(xe_engine *e);
 void xe_engine_close(xe_engine *e);
 void xe_engine_info(const xe_engine *e, FILE *out);
+int xe_engine_enable_vision(xe_engine *e, const char *mmproj_path,
+                             char *error, size_t error_cap);
+int xe_engine_encode_image(xe_engine *e, const xe_image *image, float *output,
+                            const char *dump_directory);
+const uint8_t *xe_engine_vision_fingerprint(const xe_engine *e);
+int xe_engine_vision_artifacts_match(const xe_engine *e,
+                                    const uint8_t model_id[32],
+                                    const uint8_t projector_id[32]);
+int xe_engine_vision_numeric_fingerprint(xe_engine *e, uint8_t out[32]);
+int xe_session_set_text_prefill(xe_session *s, int rows);
+int xe_session_sync_input(xe_session *s, const xe_input *input);
+int xe_session_common_input(const xe_session *s, const xe_input *input);
+int xe_session_has_visual(const xe_session *s);
 
 int xe_encode_text(const xe_engine *e, const char *text, int32_t *out, int cap);
 /* Returns the token count; leaves out unchanged when the count exceeds cap. */
@@ -102,6 +116,12 @@ typedef struct {
     int restarted;
 } xe_sync_report;
 
+int xe_session_sync_input_report(xe_session *s, const xe_input *input,
+                                  xe_sync_report *report);
+/* Append text to the session's already owned visual prefix; rejects edits. */
+int xe_session_sync_continuation(xe_session *s, const xe_tokens *prefix,
+                                  xe_sync_report *report);
+
 void xe_session_sync(xe_session *s, const xe_tokens *prefix);
 void xe_session_sync_report(xe_session *s, const xe_tokens *prefix,
                             xe_sync_report *report);
@@ -113,6 +133,9 @@ xe_snapshot_status xe_session_snapshot_size(xe_session *s, uint64_t *size);
 xe_snapshot_status xe_session_snapshot_save(xe_session *s, FILE *out);
 xe_snapshot_status xe_session_snapshot_load(xe_session *s, FILE *in,
                                             const xe_tokens *expected);
+/* Mixed snapshot v2 binds image, media and embedding identities. */
+xe_snapshot_status xe_session_snapshot_load_input(xe_session *s, FILE *in,
+                                                  const xe_input *expected);
 const char *xe_snapshot_status_name(xe_snapshot_status status);
 
 #endif

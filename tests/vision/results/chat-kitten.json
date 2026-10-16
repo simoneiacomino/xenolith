@@ -1,0 +1,70 @@
+{
+  "context": 65536,
+  "image_sha256": "3f136dfff89d27442fb82250bc847c99613ed7e1895033075f8ab4289316020f",
+  "executable_sha256": "882231b769789bda105a8c90cdc944088badf81cea4ba4f869b6e6efb96bf30f",
+  "cases": [
+    {
+      "kind": "image",
+      "command": [
+        "/home/simo/dev/xenolith-vision-20261014/candidate/xenolith",
+        "chat",
+        "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "--ctx",
+        "65536",
+        "--top-k",
+        "1",
+        "-n",
+        "64",
+        "--mmproj",
+        "/home/simo/dev/xenolith-vision-20261014/reference/mmproj-F16.gguf",
+        "--image",
+        "/home/simo/dev/xenolith-vision-20261014/candidate/gattino.jpg"
+      ],
+      "prompts": [
+        "What animal is shown? Reply with just the animal name.",
+        "Describe its fur color briefly, based on the image."
+      ],
+      "answers": [
+        "cat",
+        "The kitten has tabby fur with a mix of brown, tan, and black stripes."
+      ],
+      "seconds": 67.650582127,
+      "status": "PASS"
+    },
+    {
+      "kind": "text",
+      "command": [
+        "/home/simo/dev/xenolith-vision-20261014/candidate/xenolith",
+        "chat",
+        "/home/simo/.models/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "--ctx",
+        "65536",
+        "--top-k",
+        "1",
+        "-n",
+        "64"
+      ],
+      "prompts": [
+        "Reply with only the word HELLO.",
+        "Reply with only the word WORLD."
+      ],
+      "answers": [
+        "HELLO",
+        "WORLD"
+      ],
+      "seconds": 12.548564627000005,
+      "status": "PASS"
+    }
+  ],
+  "status": "PASS",
+  "main_source_sha256": "10738f774c375d704e6786e3c30ba26d3aba801671a9dd683e640064f0884136",
+  "image_source": "https://commons.wikimedia.org/wiki/File:Cat_(Kitten).jpg",
+  "image_author": "C1K98V",
+  "image_license": "CC BY-SA 4.0",
+  "context_checks": "cli context: 143 cases PASS",
+  "encoder_log": "vision: budget=280 rows=266 preprocess_ms=37.069 model_hash_ms=35587.173 mmproj_load_ms=3775.179 encoder_ms=17705.540\n",
+  "image_paths": [
+    "/home/simo/dev/xenolith-vision-20261014/candidate/gattino.jpg",
+    "/mnt/c/Users/devcloud/gattino.jpg"
+  ]
+}

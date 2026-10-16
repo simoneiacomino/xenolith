@@ -31,6 +31,7 @@ typedef struct {
     int max_output;
     int kvstore;            /* 1 when the snapshot store opened */
     int reasoning;
+    int vision;
 } runtime_info;
 
 /* Why a checkpoint did not save. Checkpoints are never fatal (the
@@ -89,6 +90,9 @@ typedef struct {
     const char *tool_name;
     const profile_call *calls;
     size_t call_count;
+    const uint8_t *image;
+    size_t image_length;
+    int image_budget; /* 0 uses 280; one PNG/JPEG per user/tool message */
 } runtime_message;
 
 typedef struct {
@@ -218,6 +222,10 @@ typedef struct {
     const char *tool_name;
     uint32_t stop_reason;
     runtime_marker marker;
+    const uint8_t *image;
+    size_t image_length;
+    int image_budget;
+    int image_rows;
 } runtime_history_entry;
 
 runtime_status runtime_open_with_budget(runtime **out, xe_engine *engine,
@@ -244,6 +252,9 @@ size_t runtime_pending_calls(runtime *w, uint64_t *call_ids, size_t cap);
 uint64_t runtime_history_count(runtime *w);
 runtime_status runtime_history_at(runtime *w, uint64_t position,
                             runtime_history_entry *out);
+/* Media references are scoped to the open conversation, including rewound records. */
+runtime_status runtime_media(runtime *w, const uint8_t id[32],
+                              const uint8_t **bytes, size_t *size);
 
 runtime_status runtime_append(runtime *w, const runtime_message *message,
                         runtime_marker *out);

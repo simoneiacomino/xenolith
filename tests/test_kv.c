@@ -508,7 +508,7 @@ static int test_prefill_global_case(xe_engine *e, int capacity, int split) {
         else
             xe_prefill_attention_online_append(e, q, cache[0], cache[1], out,
                                               queries, capacity, dimension, heads,
-                                              capacity - queries, 0);
+                                              capacity - queries, 0, XE_ATTENTION_CAUSAL);
         xe_ze_check("prefill KV attention test synchronize",
                     zeCommandListHostSynchronize(e->gpu.commands, UINT64_MAX));
         for (int row = 0; row < queries; row++) {
