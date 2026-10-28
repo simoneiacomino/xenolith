@@ -31,7 +31,7 @@ serve.o: serve.c serve.h format.h runtime.h xenolith.h kvstore.h conversation.h 
 main.o profile.o kvstore.o conversation.o runtime.o serve.o: vision.h
 
 clean:
-	rm -f tests/test_visual_cache tests/test_visual_replay
+	rm -f tests/test_visual_cache tests/test_visual_replay tests/test_workers
 	rm -f *.o xenolith tests/test_cache_policy tests/test_cache_model tests/certify tests/test_kv tests/test_kv_model tests/test_decode tests/test_context_limits \
 		tests/test_model_decode tests/test_fixture_decode bench/bench_decode \
 		tests/test_prefill_projection tests/test_prefill_qkv tests/test_prefill_swa \
@@ -42,7 +42,7 @@ clean:
 		tests/test_kvstore tests/test_conversation \
 		tests/test_conversation_model \
 		tests/test_json tests/test_profile tests/test_inference tests/test_runtime \
-		tests/test_runtime_model tests/test_serve tests/test_serve_model tests/test_gpu_alloc tests/test_prefill_host tests/test_cli_context \
+		tests/test_runtime_model tests/test_serve tests/test_serve_model tests/test_gpu_alloc tests/test_prefill_host tests/test_cli_context tests/test_cli_workers \
 		bench/bench_attention bench/bench_tg bench/bench_b3b bench/bench_b3b_8e \
 		bench/bench_guard bench/compare_pp_tg_xe bench/compare_pp_tg_tokens \
 		bench/bench_b3b.spv bench/bench_b3b_adlp.spv \
@@ -67,7 +67,7 @@ LLAMA_LDLIBS=-lllama -lggml -lggml-base
 
 TEST_CFLAGS=-O2 -std=c11 -Wall -Wextra -pthread
 
-UNIT_TESTS=tests/test_inference tests/test_format tests/test_sha256 tests/test_json tests/test_decode tests/test_conversation tests/test_gpu_alloc tests/test_prefill_host tests/test_context_limits tests/test_visual_cache tests/test_visual_replay tests/test_vision_input
+UNIT_TESTS=tests/test_workers tests/test_inference tests/test_format tests/test_sha256 tests/test_json tests/test_decode tests/test_conversation tests/test_gpu_alloc tests/test_prefill_host tests/test_context_limits tests/test_visual_cache tests/test_visual_replay tests/test_vision_input
 GPU_TESTS=tests/test_kv tests/test_snapshot tests/test_kvstore tests/test_prefill_session tests/test_vision_gpu
 PERSISTENCE_TESTS=tests/test_cache_model tests/test_snapshot_model tests/test_conversation_model tests/test_session_sync
 PREFILL_TESTS=tests/test_prefill_projection tests/test_prefill_qkv tests/test_prefill_swa \
@@ -79,7 +79,7 @@ ENGINE_TESTS=tests/test_snapshot tests/test_snapshot_model tests/test_kvstore \
 $(ENGINE_TESTS) tests/test_cache_model tests/test_cache_policy tests/test_context_limits \
     tests/test_gpu_alloc tests/test_prefill_host tests/test_vision_gpu tests/test_vision_session \
     tests/test_visual_cache tests/test_visual_replay tests/test_weights_identity \
-    bench/bench_decode bench/bench_attention bench/bench_tg bench/bench_b3b bench/bench_b3b_8e: \
+    bench/bench_decode bench/bench_attention bench/bench_tg bench/bench_b3b: \
     xenolith_internal.h format.h $(NUMERIC_SOURCES)
 tests/test_prefill_session tests/test_prefill_session_drop \
     tests/test_kv_model tests/test_snapshot_model tests/test_session_sync tests/test_runtime_model \
@@ -114,11 +114,15 @@ tests/test_prefill_host: tests/test_prefill_host.c xenolith.c xenolith.h xenolit
 tests/test_cli_context: tests/test_cli_context.c xenolith.h xenolith
 	$(CC) $(TEST_CFLAGS) -I. -o $@ $<
 
+tests/test_cli_workers: tests/test_cli_workers.c xenolith
+	$(CC) $(TEST_CFLAGS) -I. -o $@ $<
+
 tests/test_context_limits: tests/test_context_limits.c main.c xenolith.c xenolith.h xenolith_internal.h runtime.c runtime.h serve.c serve.h profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ)
 	$(CC) $(CFLAGS) -I. -o $@ $< profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(LDLIBS)
 
-check-context: tests/test_cli_context
+check-context: tests/test_cli_context tests/test_cli_workers
 	./tests/test_cli_context
+	./tests/test_cli_workers
 
 tests/test_format: tests/test_format.c format.o format.h
 	$(CC) $(TEST_CFLAGS) -I. -o $@ tests/test_format.c format.o -pthread
@@ -229,9 +233,10 @@ bench/compare_pp_tg_tokens: bench/compare_pp_tg_tokens.c
 bench/bench_b3b: bench/bench_b3b.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ)
 	$(CC) $(CFLAGS) -I. -o $@ bench/bench_b3b.c format.o $(VISION_OBJS) $(GPU_OBJ) $(LDLIBS)
 
-bench/bench_b3b_8e: bench/bench_b3b.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ)
-	$(CC) $(CFLAGS) -DXE_WORKERS=8 -DXE_WORKER_ECORES -I. \
-		-o $@ bench/bench_b3b.c format.o $(VISION_OBJS) $(GPU_OBJ) $(LDLIBS)
+# CPU maps are runtime settings; the former fixed E-core build was host-specific.
+bench/bench_b3b_8e:
+	@printf '%s\n' 'Use bench/bench_b3b with XE_CPU_LIST set to the verified E-core IDs on this machine.' >&2
+	@exit 2
 
 bench/bench_b3b.spv: bench/bench_b3b.cl
 	ocloc compile -file $< -device xe-lp -spv_only -output bench_b3b \
@@ -239,7 +244,7 @@ bench/bench_b3b.spv: bench/bench_b3b.cl
 
 bench-b3b: bench/bench_b3b bench/bench_b3b.spv
 
-bench-b14: bench/bench_b3b bench/bench_b3b_8e bench/bench_b3b.spv
+bench-b14: bench/bench_b3b bench/bench_b3b.spv
 
 bench/bench_prefill_gemm: bench/bench_prefill_gemm.c
 	$(CC) $(TEST_CFLAGS) -o $@ $< $(LDLIBS)
@@ -486,3 +491,13 @@ tests/test_weights_identity: tests/test_weights_identity.c xenolith.c xenolith.h
 # Exercise visual media replay with deterministic encoding and real storage.
 tests/test_visual_replay: tests/test_visual_replay.c runtime.c runtime.h xenolith.h xenolith_internal.h $(NUMERIC_SOURCES) profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ)
 	$(CC) $(CFLAGS) -I. -o $@ $< profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(LDLIBS)
+
+# Real CPU worker pool and scratch checks; no GPU/model is opened.
+tests/test_workers: tests/test_workers.c xenolith.c xenolith.h xenolith_internal.h format.h $(NUMERIC_SOURCES) format.o $(VISION_OBJS) $(GPU_OBJ)
+	$(CC) $(CFLAGS) -I. -o $@ $< format.o $(VISION_OBJS) $(GPU_OBJ) $(LDLIBS)
+
+check-workers: tests/test_workers tests/test_cli_workers
+	./tests/test_workers
+	./tests/test_cli_workers
+
+.PHONY: check-workers bench/bench_b3b_8e

@@ -70,7 +70,7 @@ static double bench_dense_router_pass(xe_session *s, int overlap) {
     double start = bench_now();
     for (int layer = 0; layer < XE_LAYERS; layer++) {
         xe_dense_gate_arg dense = { &s->engine->layers[layer] };
-        if (overlap) {
+        if (overlap && xe_engine_worker_count(s->engine) > 1) {
             uint64_t epoch = xe_publish_phase(s->engine, s, xe_dense_gate_phase, &dense, 0);
             xe_router(s, &s->engine->layers[layer], layer);
             xe_wait_followers(s->engine, epoch);

@@ -22,6 +22,8 @@ static void usage(void) {
     fprintf(stderr,
 "Usage: xenolith <command> <model.gguf> [options]\n"
 "  --ctx N  context capacity for inference commands (64..262144; default 262144)\n"
+"  --workers N|auto  --cpu-list id,id,...  (one worker per physical core)\n"
+"  Without CPU options, XE_WORKERS and XE_CPU_LIST supply the CPU plan.\n"
 "  info     print model metadata\n"
 "  tokenize -p \"text\" | -f file [--pieces]\n"
 "  run      -p \"prompt\" [-n max] [--temp F] [--top-k N] [--top-p F] [--seed S]\n"
@@ -124,6 +126,96 @@ static int cli_context_option(int argc, char **argv, int *index,
     *context = (int)n;
     *seen = 1;
     return 1;
+}
+
+typedef struct {
+    xe_engine_options options;
+    int workers_seen, list_seen, automatic;
+    int *cpus;
+} cli_cpu_plan;
+
+static int cli_decimal(const char *s, int allow_zero, int *out) {
+    if (!s || !*s) return 0;
+    int n = 0;
+    for (; *s; s++) {
+        if (*s < '0' || *s > '9' || n > (INT_MAX - (*s - '0')) / 10) return 0;
+        n = n * 10 + (*s - '0');
+    }
+    if (!allow_zero && !n) return 0;
+    *out = n;
+    return 1;
+}
+
+static void cli_cpu_workers(cli_cpu_plan *plan, const char *value, const char *name,
+                            int allow_auto) {
+    if (allow_auto && !strcmp(value, "auto")) { plan->automatic = 1; return; }
+    if (!cli_decimal(value, 0, &plan->options.workers)) {
+        fprintf(stderr, "xenolith: %s must be a positive integer%s\n", name,
+                allow_auto ? " or auto" : "");
+        exit(1);
+    }
+}
+
+static void cli_cpu_list(cli_cpu_plan *plan, const char *value, const char *name) {
+    if (!value || !*value) goto invalid;
+    const char *p = value;
+    int count = 0;
+    while (*p) {
+        int n = 0;
+        if (*p < '0' || *p > '9') goto invalid;
+        do {
+            int digit = *p++ - '0';
+            if (n > (INT_MAX - digit) / 10) goto invalid;
+            n = n * 10 + digit;
+        } while (*p >= '0' && *p <= '9');
+        if (count == INT_MAX || (size_t)count >= SIZE_MAX / sizeof(int) - 1) goto invalid;
+        int *next = realloc(plan->cpus, ((size_t)count + 1) * sizeof(int));
+        if (!next) { fprintf(stderr, "xenolith: out of memory parsing %s\n", name); exit(1); }
+        plan->cpus = next;
+        plan->cpus[count++] = n;
+        if (!*p) break;
+        if (*p++ != ',' || !*p) goto invalid;
+    }
+    plan->options.cpus = plan->cpus;
+    plan->options.cpu_count = count;
+    return;
+invalid:
+    fprintf(stderr, "xenolith: %s requires comma-separated decimal CPU IDs\n", name);
+    exit(1);
+}
+
+static int cli_cpu_option(int argc, char **argv, int *index, cli_cpu_plan *plan) {
+    int workers = !strcmp(argv[*index], "--workers");
+    int list = !strcmp(argv[*index], "--cpu-list");
+    if (!workers && !list) return 0;
+    const char *name = argv[*index];
+    int *seen = workers ? &plan->workers_seen : &plan->list_seen;
+    if (*seen || ++*index >= argc) {
+        fprintf(stderr, "xenolith: %s requires one value and may appear only once\n", name);
+        exit(1);
+    }
+    *seen = 1;
+    if (workers) cli_cpu_workers(plan, argv[*index], name, 1);
+    else cli_cpu_list(plan, argv[*index], name);
+    return 1;
+}
+
+static void cli_cpu_finish(cli_cpu_plan *plan, int context) {
+    if (!plan->workers_seen && !plan->list_seen) {
+        const char *workers = getenv("XE_WORKERS"), *list = getenv("XE_CPU_LIST");
+        if (workers) cli_cpu_workers(plan, workers, "XE_WORKERS", 0);
+        if (list) cli_cpu_list(plan, list, "XE_CPU_LIST");
+    }
+    if (plan->automatic && plan->list_seen) {
+        fprintf(stderr, "xenolith: --workers auto cannot be combined with --cpu-list\n");
+        exit(1);
+    }
+    if (plan->options.workers && plan->options.cpu_count &&
+        plan->options.workers != plan->options.cpu_count) {
+        fprintf(stderr, "xenolith: worker count does not match CPU list length\n");
+        exit(1);
+    }
+    plan->options.context = context;
 }
 
 static int cmd_info(const char *model, int argc, char **argv) {
@@ -278,13 +370,14 @@ static int cli_visual_budget(const char *arg) {
 }
 
 static float *cli_encode_image(const char *model, const char *mmproj, const char *path,
-                               int budget, const char *dump, xe_image *image, uint8_t hash[32], uint8_t model_hash[32]) {
+                               int budget, const char *dump, xe_image *image, uint8_t hash[32], uint8_t model_hash[32],
+                               const xe_engine_options *options) {
     char error[256];uint64_t started=bench_now_ns();
     if (!xe_image_load(image, path, budget, error, sizeof error)) {
         fprintf(stderr, "xenolith: %s\n", error); exit(1);
     }
     uint64_t prepared=bench_now_ns();
-    xe_engine *encoder = xe_engine_open_vocab(model);
+    xe_engine *encoder = xe_engine_open_vocab_with_options(model, options);
     memcpy(model_hash,xe_engine_model_fingerprint(encoder),32);
     uint64_t hashed=bench_now_ns();
     if (!xe_engine_enable_vision(encoder, mmproj, error, sizeof error)) {
@@ -307,7 +400,9 @@ static int cmd_vision_encode(const char *model, int argc, char **argv) {
     const char *mmproj = NULL, *path = NULL, *dump = NULL;
     int budget = 280;
     int final_only = 0;
+    cli_cpu_plan cpu = {0};
     for (int i = 3; i < argc; i++) {
+        if (cli_cpu_option(argc, argv, &i, &cpu)) continue;
         if (!strcmp(argv[i], "--final-only")) { final_only = 1; continue; }
         if (++i >= argc) usage();
         if (!strcmp(argv[i-1], "--mmproj")) mmproj = argv[i];
@@ -317,9 +412,11 @@ static int cmd_vision_encode(const char *model, int argc, char **argv) {
         else usage();
     }
     if (!mmproj || !path || !dump) usage();
+    cli_cpu_finish(&cpu, 0);
     cli_lock(NULL);
     xe_image image; uint8_t hash[32], model_hash[32];
-    float *out = cli_encode_image(model, mmproj, path, budget, final_only ? NULL : dump, &image, hash, model_hash);
+    float *out = cli_encode_image(model, mmproj, path, budget, final_only ? NULL : dump, &image, hash, model_hash, &cpu.options);
+    free(cpu.cpus);
     if (final_only) {
         char output_path[4096];
         int length = snprintf(output_path, sizeof output_path, "%s/embedding.f32", dump);
@@ -336,6 +433,7 @@ static int cmd_vision_encode(const char *model, int argc, char **argv) {
 
 static int cmd_run(const char *model, int argc, char **argv) {
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
+    cli_cpu_plan cpu = {0};
     const char *prompt = NULL;
     const char *mmproj = NULL, *image_path = NULL, *vision_dump = NULL;
     int image_budget = 280, prefill_rows = 512;
@@ -346,7 +444,8 @@ static int cmd_run(const char *model, int argc, char **argv) {
     uint64_t seed = (uint64_t)time(NULL);
 
     for (int i = 3; i < argc; i++) {
-        if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
+        if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
+            cli_cpu_option(argc, argv, &i, &cpu)) continue;
         if (!strcmp(argv[i], "--image") || !strcmp(argv[i], "--mmproj") || !strcmp(argv[i], "--vision-dump")) {
             const char *key = argv[i]; if (++i >= argc) usage();
             if (!strcmp(key, "--image")) image_path = argv[i];
@@ -407,11 +506,13 @@ static int cmd_run(const char *model, int argc, char **argv) {
         fprintf(stderr,"xenolith: initial vision support requires --ctx 65536 or 131072\n");return 1;
     }
 
+    cli_cpu_finish(&cpu, context);
     cli_lock(NULL);
 
     xe_image image = {0}; uint8_t projector_hash[32], model_hash[32]; float *image_embeddings = NULL;
-    if (image_path) image_embeddings = cli_encode_image(model, mmproj, image_path, image_budget, vision_dump, &image, projector_hash, model_hash);
-    xe_engine *e = xe_engine_open_with_context(model, context);
+    if (image_path) image_embeddings = cli_encode_image(model, mmproj, image_path, image_budget, vision_dump, &image, projector_hash, model_hash, &cpu.options);
+    xe_engine *e = xe_engine_open_with_options(model, &cpu.options);
+    free(cpu.cpus);
     int ctx = xe_context_size(e);
     int vocab = xe_vocab_size(e);
     if (top_k > vocab) {
@@ -564,6 +665,7 @@ static void chat_print_stats(int n_gen, double avg_tps) {
 
 static int cmd_chat(const char *model, int argc, char **argv) {
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
+    cli_cpu_plan cpu = {0};
     const char *mmproj = NULL, *image_path = NULL;
     int image_budget = 280;
     int max_n = 512;
@@ -573,7 +675,8 @@ static int cmd_chat(const char *model, int argc, char **argv) {
     uint64_t seed = (uint64_t)time(NULL);
 
     for (int i = 3; i < argc; i++) {
-        if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
+        if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
+            cli_cpu_option(argc, argv, &i, &cpu)) continue;
         if (!strcmp(argv[i], "--image") || !strcmp(argv[i], "--mmproj")) {
             const char *key = argv[i];
             if (++i >= argc) usage();
@@ -628,6 +731,7 @@ static int cmd_chat(const char *model, int argc, char **argv) {
         fprintf(stderr, "xenolith: vision chat requires --ctx 65536 or 131072\n");
         return 1;
     }
+    cli_cpu_finish(&cpu, context);
     cli_lock(NULL);
 
     xe_image image = {0};
@@ -637,7 +741,7 @@ static int cmd_chat(const char *model, int argc, char **argv) {
     int visual_added = 0, visual_synced = 0;
     if (image_path) {
         image_embeddings = cli_encode_image(model, mmproj, image_path, image_budget,
-                                             NULL, &image, projector_hash, model_hash);
+                                             NULL, &image, projector_hash, model_hash, &cpu.options);
         visual.rows = image.rows;
         visual.embeddings = image_embeddings;
         visual.media = image.encoded;
@@ -647,7 +751,8 @@ static int cmd_chat(const char *model, int argc, char **argv) {
                            XE_VISION_NUMERIC_REVISION, visual.identity);
     }
 
-    xe_engine *e = xe_engine_open_with_context(model, context);
+    xe_engine *e = xe_engine_open_with_options(model, &cpu.options);
+    free(cpu.cpus);
     int ctx = xe_context_size(e);
     int vocab = xe_vocab_size(e);
     if (top_k > vocab) {
@@ -813,13 +918,15 @@ static int cmd_chat(const char *model, int argc, char **argv) {
 
 static int cmd_oracle(const char *model, int argc, char **argv) {
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
+    cli_cpu_plan cpu = {0};
     const char *ids = NULL;
     const char *dump_path = NULL;
     const char *layers_dir = NULL;
     int q8_mode = 0;
 
     for (int i = 3; i < argc; i++) {
-        if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
+        if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
+            cli_cpu_option(argc, argv, &i, &cpu)) continue;
         if (!strcmp(argv[i], "-t")) {
             if (++i >= argc) usage();
             ids = argv[i];
@@ -867,9 +974,11 @@ static int cmd_oracle(const char *model, int argc, char **argv) {
     }
     if (n == 0) usage();
 
+    cli_cpu_finish(&cpu, context);
     cli_lock(NULL);
 
-    xe_engine *e = xe_engine_open_with_context(model, context);
+    xe_engine *e = xe_engine_open_with_options(model, &cpu.options);
+    free(cpu.cpus);
     xe_oracle(e, toks, n, dump_path, layers_dir, q8_mode, stdout);
     xe_engine_close(e);
     cli_unlock();
@@ -1113,9 +1222,11 @@ static void bench_print_md(const char *model, const xe_engine *e,
 
 static int cmd_bench(const char *model, int argc, char **argv) {
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
+    cli_cpu_plan cpu = {0};
     bench_params params = { 512, 128, 0, 5, 0, 1, 0, 0, 512 };
     for (int i = 3; i < argc; i++) {
-        if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
+        if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
+            cli_cpu_option(argc, argv, &i, &cpu)) continue;
         if (!strcmp(argv[i], "-p") || !strcmp(argv[i], "--n-prompt")) {
             if (++i >= argc) usage();
             params.n_prompt = bench_int(argv[i], 0, INT_MAX);
@@ -1152,9 +1263,11 @@ static int cmd_bench(const char *model, int argc, char **argv) {
     }
     if (params.n_prompt == 0 && params.n_gen == 0) usage();
 
+    cli_cpu_finish(&cpu, context);
     cli_lock(NULL);
 
-    xe_engine *e = xe_engine_open_with_context(model, context);
+    xe_engine *e = xe_engine_open_with_options(model, &cpu.options);
+    free(cpu.cpus);
     int ctx = xe_context_size(e);
     if (params.n_depth > ctx || params.n_prompt > ctx - params.n_depth ||
         params.n_gen > ctx - params.n_depth) {
@@ -1195,12 +1308,14 @@ static int cmd_bench(const char *model, int argc, char **argv) {
 
 static int cmd_wire(const char *model, int argc, char **argv) {
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
+    cli_cpu_plan cpu = {0};
     const char *state_option = NULL;
     const char *mmproj = NULL;
     const char *cache_dir = NULL;
     uint64_t cache_budget = KVSTORE_DEFAULT_BUDGET;
     for (int i = 3; i < argc; i++) {
-        if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
+        if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
+            cli_cpu_option(argc, argv, &i, &cpu)) continue;
         if (!strcmp(argv[i],"--mmproj")) {
             if(++i>=argc)usage();
             mmproj=argv[i];
@@ -1220,10 +1335,12 @@ static int cmd_wire(const char *model, int argc, char **argv) {
     if(mmproj&&context!=65536&&context!=131072){fprintf(stderr,"xenolith: vision requires --ctx 65536 or 131072\n");return 1;}
     char state_dir[4096];
     cli_state_dir(state_option, state_dir, sizeof state_dir);
+    cli_cpu_finish(&cpu, context);
     cli_lock(NULL);
 
-    xe_engine *e = (cache_budget || mmproj) ? xe_engine_open_cached(model, context)
-                                          : xe_engine_open_with_context(model, context);
+    xe_engine *e = (cache_budget || mmproj) ? xe_engine_open_cached_with_options(model, &cpu.options)
+                                          : xe_engine_open_with_options(model, &cpu.options);
+    free(cpu.cpus);
     if(mmproj){char error[256];if(!xe_engine_enable_vision(e,mmproj,error,sizeof error)){fprintf(stderr,"xenolith: %s\n",error);xe_engine_close(e);cli_unlock();return 1;}}
     int status = serve_stdio_with_budget(e, state_dir, cache_dir, cache_budget);
     xe_engine_close(e);
@@ -1233,6 +1350,7 @@ static int cmd_wire(const char *model, int argc, char **argv) {
 
 static int cmd_serve(const char *model, int argc, char **argv) {
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
+    cli_cpu_plan cpu = {0};
     const char *state_option = NULL;
     const char *mmproj = NULL;
     const char *cache_dir = NULL;
@@ -1240,7 +1358,8 @@ static int cmd_serve(const char *model, int argc, char **argv) {
     const char *socket_option = NULL;
     double idle_minutes = 0.0;
     for (int i = 3; i < argc; i++) {
-        if (cli_context_option(argc, argv, &i, &context, &context_seen)) continue;
+        if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
+            cli_cpu_option(argc, argv, &i, &cpu)) continue;
         if (!strcmp(argv[i],"--mmproj")) {
             if(++i>=argc)usage();
             mmproj=argv[i];
@@ -1276,10 +1395,12 @@ static int cmd_serve(const char *model, int argc, char **argv) {
         fprintf(stderr, "xenolith: serve: socket path is too long\n");
         exit(1);
     }
+    cli_cpu_finish(&cpu, context);
     cli_lock(socket_path);
 
-    xe_engine *e = (cache_budget || mmproj) ? xe_engine_open_cached(model, context)
-                                          : xe_engine_open_with_context(model, context);
+    xe_engine *e = (cache_budget || mmproj) ? xe_engine_open_cached_with_options(model, &cpu.options)
+                                          : xe_engine_open_with_options(model, &cpu.options);
+    free(cpu.cpus);
     if(mmproj){char error[256];if(!xe_engine_enable_vision(e,mmproj,error,sizeof error)){fprintf(stderr,"xenolith: %s\n",error);xe_engine_close(e);cli_unlock();return 1;}}
     int status = serve_run_with_budget(e, state_dir, cache_dir, socket_path,
                            idle_minutes, cache_budget);

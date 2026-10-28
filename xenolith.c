@@ -8,6 +8,7 @@
 #include "format.h"
 
 #include <errno.h>
+#include <cpuid.h>
 #include <fcntl.h>
 #include <immintrin.h>
 #include <level_zero/ze_api.h>
@@ -284,8 +285,12 @@ struct xe_engine {
 
     xe_gpu gpu;
 
-    pthread_t followers[XE_WORKERS - 1];
-    xe_worker_arg worker_args[XE_WORKERS - 1];
+    int worker_count;
+    int requested_workers, requested_cpu_count;
+    int *requested_cpus;
+    int *worker_cpus;
+    pthread_t *followers;
+    xe_worker_arg *worker_args;
     pthread_mutex_t worker_mutex;
     pthread_cond_t worker_cv;
     pthread_cond_t ready_cv;
@@ -299,7 +304,7 @@ struct xe_engine {
     int token_active;
     xe_phase phase;
     atomic_uint_fast64_t phase_epoch;
-    xe_phase_signal phase_done[XE_WORKERS];
+    xe_phase_signal *phase_done;
     _Float16 *gelu_lut;
     float rope_swa_inv[XE_SWA_HEAD_DIM / 2];
     float rope_global_inv[XE_GLOBAL_HEAD_DIM / 2];
@@ -1591,48 +1596,129 @@ static void xe_constants_init(xe_engine *e) {
 }
 
 static void xe_pin_thread(int cpu) {
-    cpu_set_t set;
+    cpu_set_t set, actual;
     CPU_ZERO(&set);
     CPU_SET(cpu, &set);
     int rc = pthread_setaffinity_np(pthread_self(), sizeof set, &set);
     if (rc != 0) xe_fatal("pthread_setaffinity_np CPU %d: %s", cpu, strerror(rc));
+    rc = pthread_getaffinity_np(pthread_self(), sizeof actual, &actual);
+    if (rc != 0 || !CPU_EQUAL(&set, &actual))
+        xe_fatal("CPU %d affinity could not be verified", cpu);
 }
 
-static int xe_worker_cpu(int lane) {
-#ifdef XE_WORKER_ECORES
-    return 12 + lane;
-#else
-    return 2 * lane;
+static int xe_cpu_topology(int cpu, int *package, int *core) {
+    char path[128];
+    snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/topology/physical_package_id", cpu);
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    int read = fscanf(f, "%d", package);
+    fclose(f);
+    if (read != 1) return 0;
+    snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/topology/core_id", cpu);
+    f = fopen(path, "r");
+    if (!f) return 0;
+    read = fscanf(f, "%d", core);
+    fclose(f);
+    return read == 1 && *package >= 0 && *core >= 0;
+}
+
+static void xe_worker_check_isa(int cpu) {
+    unsigned a, b, c, d;
+    if (!__get_cpuid(1, &a, &b, &c, &d) ||
+        (c & (bit_AVX | bit_OSXSAVE | bit_FMA | bit_F16C)) !=
+             (bit_AVX | bit_OSXSAVE | bit_FMA | bit_F16C))
+        xe_fatal("CPU %d lacks required AVX/FMA/F16C or OS support", cpu);
+    unsigned xcr_lo, xcr_hi;
+    __asm__ volatile ("xgetbv" : "=a"(xcr_lo), "=d"(xcr_hi) : "c"(0));
+    (void)xcr_hi;
+    if ((xcr_lo & 6) != 6 || !__get_cpuid_count(7, 0, &a, &b, &c, &d) || !(b & bit_AVX2))
+        xe_fatal("CPU %d lacks required AVX2 or OS vector state", cpu);
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+    if ((b & ((1u << 16) | (1u << 31))) != ((1u << 16) | (1u << 31)) ||
+        !(c & (1u << 11)) || (xcr_lo & 0xe6) != 0xe6)
+        xe_fatal("CPU %d lacks this build's AVX512-VNNI/VL or OS vector state", cpu);
+#elif defined(__AVXVNNI__)
+    if (!__get_cpuid_count(7, 1, &a, &b, &c, &d) || !(a & (1u << 4)))
+        xe_fatal("CPU %d lacks this build's AVX-VNNI", cpu);
 #endif
 }
 
-static int xe_worker_pin_available(const cpu_set_t *allowed) {
-    int packages[XE_WORKERS];
-    int cores[XE_WORKERS];
-    for (int lane = 0; lane < XE_WORKERS; lane++) {
-        int cpu = xe_worker_cpu(lane);
-        if (!CPU_ISSET(cpu, allowed)) return 0;
-        char path[128];
-        snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/topology/physical_package_id", cpu);
-        FILE *f = fopen(path, "r");
-        if (!f) return 0;
-        int package;
-        int read = fscanf(f, "%d", &package);
-        fclose(f);
-        if (read != 1) return 0;
-        snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/topology/core_id", cpu);
-        f = fopen(path, "r");
-        if (!f) return 0;
-        int core;
-        read = fscanf(f, "%d", &core);
-        fclose(f);
-        if (read != 1) return 0;
-        for (int other = 0; other < lane; other++)
-            if (packages[other] == package && cores[other] == core) return 0;
-        packages[lane] = package;
-        cores[lane] = core;
+/* Resolve once, before cached numeric fingerprints or session allocation.
+ * Automatic selection uses ascending allowed CPU IDs, one logical CPU per
+ * physical core. It does not infer performance classes from CPU numbering. */
+static void xe_worker_config_init(xe_engine *e) {
+    if (e->worker_count) return;
+    cpu_set_t allowed;
+    int rc = pthread_getaffinity_np(pthread_self(), sizeof allowed, &allowed);
+    if (rc != 0) xe_fatal("read worker CPU affinity: %s", strerror(rc));
+    int cpus[CPU_SETSIZE], packages[CPU_SETSIZE], cores[CPU_SETSIZE];
+    int count = 0;
+    int explicit_workers = e->requested_workers != 0;
+    int list_count = e->requested_cpu_count;
+    int requested = explicit_workers ? e->requested_workers : XE_WORKERS;
+    if (list_count) {
+        for (int n = 0; n < list_count; n++) {
+            int cpu = e->requested_cpus[n];
+            if (cpu < 0 || cpu >= CPU_SETSIZE || !CPU_ISSET(cpu, &allowed))
+                xe_fatal("worker CPU %d is outside the calling thread's allowed CPUs", cpu);
+            int package, core;
+            if (!xe_cpu_topology(cpu, &package, &core))
+                xe_fatal("worker CPU %d: physical topology unavailable", cpu);
+            for (int i = 0; i < count; i++) {
+                if (cpus[i] == cpu) xe_fatal("worker CPU list repeats CPU %d", cpu);
+                if (packages[i] == package && cores[i] == core)
+                    xe_fatal("worker CPUs %d and %d share a physical core", cpus[i], cpu);
+            }
+            cpus[count] = cpu; packages[count] = package; cores[count++] = core;
+        }
+        requested = count;
+    } else {
+        int topology_missing = 0;
+        for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
+            if (!CPU_ISSET(cpu, &allowed)) continue;
+            int package, core;
+            if (!xe_cpu_topology(cpu, &package, &core)) { topology_missing = 1; continue; }
+            int duplicate = 0;
+            for (int i = 0; i < count; i++)
+                if (packages[i] == package && cores[i] == core) { duplicate = 1; break; }
+            if (duplicate) continue;
+            cpus[count] = cpu; packages[count] = package; cores[count++] = core;
+        }
+        if (!count) {
+            if (explicit_workers) xe_fatal("worker count: physical CPU topology unavailable");
+            /* Unknown topology: use one allowed CPU, avoiding accidental SMT
+             * oversubscription and making the conservative fallback explicit. */
+            for (int cpu = 0; cpu < CPU_SETSIZE; cpu++)
+                if (CPU_ISSET(cpu, &allowed)) { cpus[count++] = cpu; break; }
+            fprintf(stderr, "xenolith: physical CPU topology unavailable; using one allowed CPU\n");
+        } else if (topology_missing) {
+            fprintf(stderr, "xenolith: ignoring allowed CPUs with unknown physical topology\n");
+        }
+        if (!count) xe_fatal("no allowed CPUs for decode");
+        if (explicit_workers && requested > count)
+            xe_fatal("worker count %d exceeds %d available distinct physical cores", requested, count);
+        if (requested > count) requested = count;
+        count = requested;
     }
-    return 1;
+    if (requested < 1 || requested > CPU_SETSIZE)
+        xe_fatal("worker count must be in [1, %d]", CPU_SETSIZE);
+    /* Probe every selected CPU and restore immediately. Native compiler flags
+     * still require a binary built for compatible hardware beyond this minimum. */
+    for (int i = 0; i < count; i++) {
+        xe_pin_thread(cpus[i]);
+        xe_worker_check_isa(cpus[i]);
+    }
+    rc = pthread_setaffinity_np(pthread_self(), sizeof allowed, &allowed);
+    if (rc != 0) xe_fatal("restore CPU affinity after worker validation: %s", strerror(rc));
+    e->worker_cpus = xe_alloc(NULL, (size_t)count * sizeof(*e->worker_cpus), XE_MEM_HOST);
+    memcpy(e->worker_cpus, cpus, (size_t)count * sizeof(*cpus));
+    e->worker_count = count;
+    e->worker_pinned = 1;
+    if (list_count || explicit_workers)
+        fprintf(stderr, "xenolith: CPU selection: explicit %s\n", list_count ? "CPU list" : "worker count");
+    fprintf(stderr, "xenolith: decode workers %d; CPU map", count);
+    for (int i = 0; i < count; i++) fprintf(stderr, "%s%d", i ? "," : " ", cpus[i]);
+    fputc('\n', stderr);
 }
 
 static void xe_require_owner(const xe_engine *e) {
@@ -1676,7 +1762,7 @@ static void *xe_worker_main(void *opaque) {
     int lane = wa->lane;
     uint64_t seen = 0;
 
-    if (e->worker_pinned) xe_pin_thread(xe_worker_cpu(lane));
+    if (e->worker_pinned) xe_pin_thread(e->worker_cpus[lane]);
 
     pthread_mutex_lock(&e->worker_mutex);
     e->worker_ready++;
@@ -1696,7 +1782,7 @@ static void *xe_worker_main(void *opaque) {
             xe_phase phase = e->phase;
             if (phase.fn) {
                 int worker = phase.caller_participates ? lane : lane - 1;
-                int workers = phase.caller_participates ? XE_WORKERS : XE_WORKERS - 1;
+                int workers = phase.caller_participates ? e->worker_count : e->worker_count - 1;
                 phase.fn(phase.session, phase.arg, worker, workers);
             }
             atomic_store_explicit(&e->phase_done[lane].value, epoch, memory_order_release);
@@ -1717,10 +1803,18 @@ static void xe_worker_pool_init(xe_engine *e) {
         return;
     }
 
+    xe_worker_config_init(e);
     e->owner = pthread_self();
-    e->worker_pinned = pthread_getaffinity_np(e->owner, sizeof e->owner_affinity,
-                                                &e->owner_affinity) == 0 &&
-                       xe_worker_pin_available(&e->owner_affinity);
+    int affinity_rc = pthread_getaffinity_np(e->owner, sizeof e->owner_affinity, &e->owner_affinity);
+    if (affinity_rc != 0) xe_fatal("read pool owner affinity: %s", strerror(affinity_rc));
+    for (int lane = 0; lane < e->worker_count; lane++)
+        if (!CPU_ISSET(e->worker_cpus[lane], &e->owner_affinity))
+            xe_fatal("configured worker CPU %d is no longer allowed", e->worker_cpus[lane]);
+    if (e->worker_count > 1) {
+        e->followers = xe_alloc(NULL, (size_t)(e->worker_count - 1) * sizeof(*e->followers), XE_MEM_HOST);
+        e->worker_args = xe_alloc(NULL, (size_t)(e->worker_count - 1) * sizeof(*e->worker_args), XE_MEM_HOST);
+    }
+    e->phase_done = xe_alloc(NULL, (size_t)e->worker_count * sizeof(*e->phase_done), XE_MEM_HOST);
     if (pthread_mutex_init(&e->worker_mutex, NULL) != 0 ||
         pthread_cond_init(&e->worker_cv, NULL) != 0 ||
         pthread_cond_init(&e->ready_cv, NULL) != 0)
@@ -1735,23 +1829,23 @@ static void xe_worker_pool_init(xe_engine *e) {
     e->phase.arg = NULL;
     e->phase.caller_participates = 0;
     atomic_init(&e->phase_epoch, 0);
-    for (int lane = 0; lane < XE_WORKERS; lane++)
+    for (int lane = 0; lane < e->worker_count; lane++)
         atomic_init(&e->phase_done[lane].value, 0);
     e->pool_initialized = 1;
 
     xe_constants_init(e);
 
-    if (e->worker_pinned) xe_pin_thread(xe_worker_cpu(0));
+    if (e->worker_pinned) xe_pin_thread(e->worker_cpus[0]);
 
     pthread_mutex_lock(&e->worker_mutex);
-    for (int lane = 1; lane < XE_WORKERS; lane++) {
+    for (int lane = 1; lane < e->worker_count; lane++) {
         xe_worker_arg *wa = &e->worker_args[lane - 1];
         wa->engine = e;
         wa->lane = lane;
         int rc = pthread_create(&e->followers[lane - 1], NULL, xe_worker_main, wa);
         if (rc != 0) xe_fatal("pthread_create worker %d: %s", lane, strerror(rc));
     }
-    while (e->worker_ready != XE_WORKERS - 1)
+    while (e->worker_ready != e->worker_count - 1)
         pthread_cond_wait(&e->ready_cv, &e->worker_mutex);
     pthread_mutex_unlock(&e->worker_mutex);
 }
@@ -1766,13 +1860,16 @@ static void xe_worker_pool_destroy(xe_engine *e) {
     pthread_cond_broadcast(&e->worker_cv);
     pthread_mutex_unlock(&e->worker_mutex);
 
-    for (int i = 0; i < XE_WORKERS - 1; i++)
+    for (int i = 0; i < e->worker_count - 1; i++)
         pthread_join(e->followers[i], NULL);
 
     pthread_cond_destroy(&e->ready_cv);
     pthread_cond_destroy(&e->worker_cv);
     pthread_mutex_destroy(&e->worker_mutex);
     e->pool_initialized = 0;
+    free(e->phase_done); e->phase_done = NULL;
+    free(e->worker_args); e->worker_args = NULL;
+    free(e->followers); e->followers = NULL;
     if (e->worker_pinned) {
         int rc = pthread_setaffinity_np(e->owner, sizeof e->owner_affinity, &e->owner_affinity);
         if (rc != 0) xe_fatal("pthread_setaffinity_np restore: %s", strerror(rc));
@@ -1801,7 +1898,7 @@ static uint64_t xe_publish_phase(xe_engine *e, xe_session *s, xe_phase_fn fn,
 }
 
 static void xe_wait_followers(xe_engine *e, uint64_t epoch) {
-    for (int lane = 1; lane < XE_WORKERS; lane++)
+    for (int lane = 1; lane < e->worker_count; lane++)
         xe_wait_equal(&e->phase_done[lane].value, epoch);
 }
 
@@ -1810,7 +1907,8 @@ static void xe_dispatch(xe_engine *e, xe_session *s, xe_phase_fn fn,
     xe_require_owner(e);
     if (!e->token_active || !fn) xe_fatal("invalid worker phase");
     uint64_t epoch = xe_publish_phase(e, s, fn, arg, caller_participates);
-    if (caller_participates) fn(s, arg, 0, XE_WORKERS);
+    if (caller_participates || e->worker_count == 1)
+        fn(s, arg, 0, e->worker_count);
     xe_wait_followers(e, epoch);
 }
 
@@ -2189,7 +2287,7 @@ static size_t xe_workspace_layout(xe_session *s, void *base) {
     s->router_in = xe_workspace_take(&a, XE_EMBD * sizeof(*s->router_in));
     s->router_logits = xe_workspace_take(&a, XE_EXPERTS * sizeof(*s->router_logits));
     s->scores = xe_workspace_take(&a, (size_t)XE_Q_HEADS * s->engine->context * sizeof(*s->scores));
-    s->attn_partial = xe_workspace_take(&a, (size_t)XE_WORKERS * 8 * XE_GLOBAL_HEAD_DIM * sizeof(*s->attn_partial));
+    s->attn_partial = xe_workspace_take(&a, (size_t)((s->engine->worker_count > XE_GLOBAL_KV_HEADS * 3) ? s->engine->worker_count : XE_GLOBAL_KV_HEADS * 3) * 8 * XE_GLOBAL_HEAD_DIM * sizeof(*s->attn_partial));
     s->rope_swa_cos = xe_workspace_take(&a, (XE_SWA_HEAD_DIM / 2) * sizeof(*s->rope_swa_cos));
     s->rope_swa_sin = xe_workspace_take(&a, (XE_SWA_HEAD_DIM / 2) * sizeof(*s->rope_swa_sin));
     s->rope_global_cos = xe_workspace_take(&a, (XE_GLOBAL_HEAD_DIM / 2) * sizeof(*s->rope_global_cos));
@@ -3976,14 +4074,35 @@ const uint8_t *xe_engine_model_fingerprint(xe_engine *e) {
     return e->model_content_hash;
 }
 
-static xe_engine *xe_engine_open_impl(const char *gguf_path, int context,
-                                      int prepare_cache) {
+/* Copy before deferred vocab-only initialization; callers retain their arrays. */
+static void xe_engine_set_options(xe_engine *e, const xe_engine_options *options) {
+    xe_engine_options o = options ? *options : (xe_engine_options){0};
+    int context = o.context ? o.context : XE_CONTEXT_DEFAULT;
     if (context < XE_CONTEXT_MIN || context > XE_CONTEXT_MAX)
-        xe_fatal("context: capacity %d out of range [%d, %d]",
-                 context, XE_CONTEXT_MIN, XE_CONTEXT_MAX);
+        xe_fatal("context: capacity %d out of range [%d, %d]", context, XE_CONTEXT_MIN, XE_CONTEXT_MAX);
+    if (o.workers < 0 || o.workers > CPU_SETSIZE || o.cpu_count < 0 ||
+        o.cpu_count > CPU_SETSIZE || (!!o.cpus != (o.cpu_count != 0)))
+        xe_fatal("invalid worker options");
+    if (o.cpu_count && o.workers && o.workers != o.cpu_count)
+        xe_fatal("worker count %d does not match CPU list length %d", o.workers, o.cpu_count);
+    for (int i = 0; i < o.cpu_count; i++)
+        if (o.cpus[i] < 0 || o.cpus[i] >= CPU_SETSIZE)
+            xe_fatal("worker CPU %d out of range", o.cpus[i]);
+    e->context = context;
+    e->requested_workers = o.workers;
+    e->requested_cpu_count = o.cpu_count;
+    if (o.cpu_count) {
+        e->requested_cpus = xe_alloc(NULL, (size_t)o.cpu_count * sizeof(*e->requested_cpus), XE_MEM_HOST);
+        memcpy(e->requested_cpus, o.cpus, (size_t)o.cpu_count * sizeof(*o.cpus));
+    }
+}
+
+static xe_engine *xe_engine_open_impl(const char *gguf_path, const xe_engine_options *options,
+                                      int prepare_cache) {
     xe_cur c;
     xe_engine *e = xe_open_common(gguf_path, 0, &c);
-    e->context = context;
+    xe_engine_set_options(e, options);
+    xe_worker_config_init(e);
     xe_bind_tensors(e, &c, gguf_path);
     xe_check_complete(e, gguf_path);
     if (prepare_cache) {
@@ -4005,21 +4124,41 @@ static xe_engine *xe_engine_open_impl(const char *gguf_path, int context,
     return e;
 }
 
+xe_engine *xe_engine_open_with_options(const char *gguf_path, const xe_engine_options *options) {
+    return xe_engine_open_impl(gguf_path, options, 0);
+}
+
+xe_engine *xe_engine_open_cached_with_options(const char *gguf_path, const xe_engine_options *options) {
+    return xe_engine_open_impl(gguf_path, options, 1);
+}
+
 xe_engine *xe_engine_open_with_context(const char *gguf_path, int context) {
-    return xe_engine_open_impl(gguf_path, context, 0);
+    if (context < XE_CONTEXT_MIN || context > XE_CONTEXT_MAX)
+        xe_fatal("context: capacity %d out of range [%d, %d]", context, XE_CONTEXT_MIN, XE_CONTEXT_MAX);
+    xe_engine_options options = {.context = context};
+    return xe_engine_open_impl(gguf_path, &options, 0);
 }
 
 xe_engine *xe_engine_open_cached(const char *gguf_path, int context) {
-    return xe_engine_open_impl(gguf_path, context, 1);
+    if (context < XE_CONTEXT_MIN || context > XE_CONTEXT_MAX)
+        xe_fatal("context: capacity %d out of range [%d, %d]", context, XE_CONTEXT_MIN, XE_CONTEXT_MAX);
+    xe_engine_options options = {.context = context};
+    return xe_engine_open_impl(gguf_path, &options, 1);
 }
 
 xe_engine *xe_engine_open(const char *gguf_path) {
-    return xe_engine_open_with_context(gguf_path, XE_CONTEXT_DEFAULT);
+    return xe_engine_open_with_options(gguf_path, NULL);
+}
+
+xe_engine *xe_engine_open_vocab_with_options(const char *gguf_path, const xe_engine_options *options) {
+    xe_cur c;
+    xe_engine *e = xe_open_common(gguf_path, 1, &c);
+    xe_engine_set_options(e, options);
+    return e;
 }
 
 xe_engine *xe_engine_open_vocab(const char *gguf_path) {
-    xe_cur c;
-    return xe_open_common(gguf_path, 1, &c);
+    return xe_engine_open_vocab_with_options(gguf_path, NULL);
 }
 
 int xe_engine_enable_vision(xe_engine *e,const char *path,char *error,size_t cap) {
@@ -4114,6 +4253,8 @@ int xe_engine_vision_numeric_fingerprint(xe_engine *e,uint8_t out[32]) {
 void xe_engine_close(xe_engine *e) {
     if (!e) return;
     xe_worker_pool_destroy(e);
+    free(e->worker_cpus);
+    free(e->requested_cpus);
     xe_free(e, e->vision_weights, XE_MEM_SHARED);
     xe_vision_model_close(&e->vision_model);
     xe_free(e, e->gelu_lut, XE_MEM_HOST);
@@ -4454,14 +4595,15 @@ uint64_t xe_engine_model_size(const xe_engine *e) {
 
 int xe_engine_worker_count(const xe_engine *e) {
     if (!e) xe_fatal("worker_count: missing engine");
-    return XE_WORKERS;
+    return e->worker_count;
 }
 
 int xe_engine_worker_cpu(const xe_engine *e, int worker) {
     if (!e) xe_fatal("worker_cpu: missing engine");
-    if (worker < 0 || worker >= XE_WORKERS)
-        xe_fatal("worker_cpu: worker %d out of range [0, %d]", worker, XE_WORKERS - 1);
-    return e->worker_pinned ? xe_worker_cpu(worker) : -1;
+    int count = xe_engine_worker_count(e);
+    if (worker < 0 || worker >= count)
+        xe_fatal("worker_cpu: worker %d out of range [0, %d]", worker, count - 1);
+    return e->worker_cpus ? e->worker_cpus[worker] : -1;
 }
 
 static int xe_tokens_valid(const xe_tokens *tokens) {
@@ -5017,7 +5159,7 @@ static void xe_ffn_half_decode(xe_session *s, int layer, int moe_mode, int overl
     xe_dispatch(s->engine, s, xe_ffn_input_phase, &input, 1);
 
     xe_dense_gate_arg dense = { l };
-    if (overlap_router) {
+    if (overlap_router && s->engine->worker_count > 1) {
         uint64_t epoch = xe_publish_phase(s->engine, s, xe_dense_gate_phase, &dense, 0);
         xe_router(s, l, layer);
         xe_wait_followers(s->engine, epoch);
@@ -6135,7 +6277,7 @@ static int xe_snapshot_legacy_numeric_matches(const xe_engine *e,
         "528b6db377397368158a28dc155047628ac30a5a06c38aa6c32a5680ccd56d84");
     xe_snapshot_hash_string(&hash, XE_NUMERIC_CFLAGS_HASH);
     xe_snapshot_hash_string(&hash, __VERSION__);
-    xe_snapshot_hash_u32(&hash, XE_WORKERS);
+    xe_snapshot_hash_u32(&hash, xe_engine_worker_count(e));
     xe_snapshot_hash_u32(&hash, e->scalar_rms);
     size_t spv_size = (size_t)(_binary_xenolith_gpu_spv_end -
                                _binary_xenolith_gpu_spv_start);
@@ -6148,6 +6290,7 @@ static int xe_snapshot_legacy_numeric_matches(const xe_engine *e,
 
 static void xe_snapshot_fingerprints_init(xe_engine *e) {
     if (e->snapshot_fingerprint_ready) return;
+    xe_worker_config_init(e);
     format_sha256 hash;
 
     /* Raw SHA-256 of all GGUF bytes, computed once per engine. Older
@@ -6248,7 +6391,7 @@ static void xe_snapshot_fingerprints_init(xe_engine *e) {
     format_sha256_update(&hash, "xenolith-numeric-abi-v1",
                          sizeof("xenolith-numeric-abi-v1") - 1);
     xe_snapshot_hash_u32(&hash, XE_SNAPSHOT_NUMERIC_ABI);
-    xe_snapshot_hash_u32(&hash, XE_WORKERS);
+    xe_snapshot_hash_u32(&hash, xe_engine_worker_count(e));
     xe_snapshot_hash_u32(&hash, e->scalar_rms);
 #ifdef __FAST_MATH__
     xe_snapshot_hash_u32(&hash, 1);

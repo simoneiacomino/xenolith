@@ -535,8 +535,22 @@ static int snapshot_context_mismatch(xe_session *source) {
     }
     xe_engine other = {0};
     other.context = source->engine->context == 64 ? 129 : 64;
+    /* Keep the numerical configuration fixed: the source pool has already
+     * pinned this owner, so rediscovery here would see only its first CPU (or
+     * reject an explicit multi-CPU environment). This is a capacity test. */
+    other.worker_count = xe_engine_worker_count(source->engine);
+    other.worker_cpus = xe_alloc(NULL,
+        (size_t)other.worker_count * sizeof(*other.worker_cpus), XE_MEM_HOST);
+    memcpy(other.worker_cpus, source->engine->worker_cpus,
+        (size_t)other.worker_count * sizeof(*other.worker_cpus));
+    other.worker_pinned = source->engine->worker_pinned;
     xe_gpu_init(&other);
     xe_snapshot_fingerprints_init(&other);
+    cpu_set_t source_pin;
+    if (pthread_getaffinity_np(pthread_self(), sizeof source_pin, &source_pin) ||
+        pthread_setaffinity_np(pthread_self(), sizeof source->engine->owner_affinity,
+                               &source->engine->owner_affinity))
+        xe_fatal("snapshot fixture: restore original affinity for second pool");
     xe_session *target = xe_session_new(&other);
     snapshot_fill(target, 17, 7);
     uint64_t before = snapshot_state_crc(target);
@@ -546,6 +560,10 @@ static int snapshot_context_mismatch(xe_session *source) {
     xe_session_free(target);
     xe_worker_pool_destroy(&other);
     xe_gpu_destroy(&other);
+    free(other.worker_cpus);
+    free(other.gelu_lut);
+    if (pthread_setaffinity_np(pthread_self(), sizeof source_pin, &source_pin))
+        xe_fatal("snapshot fixture: restore source owner pin");
     fclose(file);
     printf("snapshot: different runtime capacities rejected unchanged %s\n",
            ok ? "PASS" : "FAIL");
@@ -589,5 +607,7 @@ int main(int argc, char **argv) {
     xe_session_free(session);
     xe_worker_pool_destroy(&engine);
     xe_gpu_destroy(&engine);
+    free(engine.worker_cpus);
+    free(engine.gelu_lut);
     return ok ? 0 : 1;
 }

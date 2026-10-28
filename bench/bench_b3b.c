@@ -489,7 +489,7 @@ typedef struct {
     xe_engine engine;
     xe_session session;
     b3b_data *data;
-    _Alignas(64) uint32_t lane_checksum[XE_WORKERS];
+    _Alignas(64) uint32_t lane_checksum[CPU_SETSIZE];
     uint32_t checksum;
 } b3b_cpu_state;
 
@@ -543,7 +543,7 @@ static void b14_cpu_read_pass(void *opaque) {
     xe_dispatch(&state->engine, &state->session, b14_cpu_read_phase, state, 1);
     xe_workers_end(&state->engine);
     uint32_t sum = 0;
-    for (int worker = 0; worker < XE_WORKERS; worker++)
+    for (int worker = 0; worker < xe_engine_worker_count(&state->engine); worker++)
         sum += state->lane_checksum[worker];
     state->checksum = sum;
 }
@@ -604,13 +604,16 @@ static void b3b_cpu_init(b3b_cpu_state *state, b3b_data *data) {
     state->session.engine = &state->engine;
     state->engine.scalar_rms = 1;
     xe_worker_pool_init(&state->engine);
-    printf("b3b: cpu workers %d cpus", XE_WORKERS);
-    for (int lane = 0; lane < XE_WORKERS; lane++) printf(" %d", xe_worker_cpu(lane));
+    int workers = xe_engine_worker_count(&state->engine);
+    printf("b3b: cpu workers %d cpus", workers);
+    for (int lane = 0; lane < workers; lane++)
+        printf(" %d", xe_engine_worker_cpu(&state->engine, lane));
     printf("\n");
 }
 
 static void b3b_cpu_destroy(b3b_cpu_state *state) {
     xe_worker_pool_destroy(&state->engine);
+    xe_free(NULL, state->engine.worker_cpus, XE_MEM_HOST);
     xe_free(NULL, state->engine.gelu_lut, XE_MEM_HOST);
 }
 

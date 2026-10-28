@@ -42,6 +42,8 @@ typedef struct {
 
 typedef struct {
     pthread_t thread;
+    const xe_engine *engine;
+    cpu_set_t allowed_cpus;
     atomic_int stop;
     atomic_int rep;
     long freq_sum[20];
@@ -191,22 +193,30 @@ static void tg_find_package_temp(char *out, size_t size) {
 
 static void *tg_sampler_main(void *opaque) {
     tg_sampler *sampler = opaque;
-#ifdef XE_WORKER_ECORES
-    xe_pin_thread(1);
-#else
-    xe_pin_thread(19);
-#endif
+    cpu_set_t spare = sampler->allowed_cpus;
+    int workers = xe_engine_worker_count(sampler->engine);
+    for (int lane = 0; lane < workers; lane++) {
+        int cpu = xe_engine_worker_cpu(sampler->engine, lane);
+        if (cpu >= 0) CPU_CLR(cpu, &spare);
+    }
+    /* The new thread inherited the owner's pin. Prefer other allowed logical
+     * CPUs for telemetry; otherwise restore the original allowed set. */
+    const cpu_set_t *allowed = CPU_COUNT(&spare) ? &spare : &sampler->allowed_cpus;
+    int rc = pthread_setaffinity_np(pthread_self(), sizeof *allowed, allowed);
+    if (rc != 0) xe_fatal("tg128: sampler affinity: %s", strerror(rc));
     struct timespec delay = { 0, 50000000 };
     while (!atomic_load_explicit(&sampler->stop, memory_order_acquire)) {
         int rep = atomic_load_explicit(&sampler->rep, memory_order_acquire);
         if (rep >= 0) {
             long freq_total = 0;
             int freq_count = 0;
-            for (int lane = 0; lane < XE_WORKERS; lane++) {
+            for (int lane = 0; lane < workers; lane++) {
+                int cpu = xe_engine_worker_cpu(sampler->engine, lane);
+                if (cpu < 0) continue;
                 char path[PATH_MAX];
                 snprintf(path, sizeof path,
                          "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq",
-                         xe_worker_cpu(lane));
+                         cpu);
                 long value = tg_read_long(path);
                 if (value >= 0) {
                     freq_total += value;
@@ -252,11 +262,12 @@ static void tg_read_memory(tg_snapshot *snapshot) {
     }
 }
 
-static tg_snapshot tg_take_snapshot(void) {
+static tg_snapshot tg_take_snapshot(const xe_engine *e) {
     tg_snapshot snapshot = {0};
     getrusage(RUSAGE_SELF, &snapshot.usage);
-    for (int lane = 0; lane < XE_WORKERS; lane++) {
-        int cpu = xe_worker_cpu(lane);
+    for (int lane = 0; lane < xe_engine_worker_count(e); lane++) {
+        int cpu = xe_engine_worker_cpu(e, lane);
+        if (cpu < 0) continue;
         char path[PATH_MAX];
         snprintf(path, sizeof path,
                  "/sys/devices/system/cpu/cpu%d/thermal_throttle/core_throttle_count", cpu);
@@ -267,7 +278,7 @@ static tg_snapshot tg_take_snapshot(void) {
         value = tg_read_long(path);
         if (value >= 0) snapshot.core_ms += value;
     }
-    int cpu = xe_worker_cpu(0);
+    int cpu = xe_engine_worker_cpu(e, 0);
     char path[PATH_MAX];
     snprintf(path, sizeof path,
              "/sys/devices/system/cpu/cpu%d/thermal_throttle/package_throttle_count", cpu);
@@ -284,14 +295,9 @@ static void tg_print_environment(const xe_engine *e, int cooldown) {
     long pl1 = tg_read_long("/sys/devices/virtual/powercap/intel-rapl-mmio/intel-rapl-mmio:0/constraint_0_power_limit_uw");
     long pl1_window = tg_read_long("/sys/devices/virtual/powercap/intel-rapl-mmio/intel-rapl-mmio:0/constraint_0_time_window_us");
     long pl2 = tg_read_long("/sys/devices/virtual/powercap/intel-rapl-mmio/intel-rapl-mmio:0/constraint_1_power_limit_uw");
-    printf("tg128: topology %s workers %d cpus", 
-#ifdef XE_WORKER_ECORES
-           "E",
-#else
-           "P",
-#endif
-           XE_WORKERS);
-    for (int lane = 0; lane < XE_WORKERS; lane++) printf(" %d", xe_worker_cpu(lane));
+    int workers = xe_engine_worker_count(e);
+    printf("tg128: workers %d cpus", workers);
+    for (int lane = 0; lane < workers; lane++) printf(" %d", xe_engine_worker_cpu(e, lane));
     printf("\n");
     printf("tg128: AC %ld PL1 %.1f W window %.3f s PL2 %.1f W repack %.3f s cooldown %d s\n",
            ac, pl1 / 1e6, pl1_window / 1e6, pl2 / 1e6, e->repack_seconds, cooldown);
@@ -425,6 +431,9 @@ int main(int argc, char **argv) {
         return 3;
     }
 
+    cpu_set_t original_affinity;
+    int affinity_rc = pthread_getaffinity_np(pthread_self(), sizeof original_affinity, &original_affinity);
+    if (affinity_rc != 0) xe_fatal("tg128: original affinity: %s", strerror(affinity_rc));
     xe_engine *e = xe_engine_open(model);
     xe_session *s = xe_session_new(e);
     tg_print_environment(e, cooldown);
@@ -456,6 +465,8 @@ int main(int argc, char **argv) {
         printf("tg128: PMU unavailable: %s\n", pmu.error);
 
     tg_sampler sampler = {0};
+    sampler.engine = e;
+    sampler.allowed_cpus = original_affinity;
     for (int rep = 0; rep < 20; rep++) sampler.freq_min[rep] = LONG_MAX;
     atomic_init(&sampler.stop, 0);
     atomic_init(&sampler.rep, -1);
@@ -475,7 +486,7 @@ int main(int argc, char **argv) {
         s->n_tokens = 0;
         uint32_t state = UINT32_C(0x12345678) + (uint32_t)rep;
         memset(&xe_tg_profile_data, 0, sizeof xe_tg_profile_data);
-        before[rep] = tg_take_snapshot();
+        before[rep] = tg_take_snapshot(e);
         atomic_store_explicit(&sampler.rep, rep, memory_order_release);
         tg_pmu_start(&pmu);
         double start = tg_now();
@@ -494,7 +505,7 @@ int main(int argc, char **argv) {
         rep_seconds[rep] = tg_now() - start;
         pmu_results[rep] = tg_pmu_stop(&pmu);
         atomic_store_explicit(&sampler.rep, -1, memory_order_release);
-        after[rep] = tg_take_snapshot();
+        after[rep] = tg_take_snapshot(e);
         profiles[rep] = xe_tg_profile_data;
         double first = 0.0;
         double last = 0.0;
@@ -562,7 +573,7 @@ int main(int argc, char **argv) {
     double mean = total / reps;
     printf("tg128: workers %d reps %d mean %.3f tok/s median-rep %.3f tok/s "
            "token-p50 %.3f ms token-p90 %.3f ms model %.2f GB/s bytes/token %.6f GB\n",
-           XE_WORKERS, reps, 128.0 / mean, 128.0 / sorted_reps[reps / 2],
+           xe_engine_worker_count(e), reps, 128.0 / mean, 128.0 / sorted_reps[reps / 2],
            all_tokens[reps * 64] * 1000.0, all_tokens[reps * 115] * 1000.0,
            model_bytes * 128.0 / mean / 1e9, model_bytes / 1e9);
 

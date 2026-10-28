@@ -27,7 +27,7 @@ static double test_rel_rms(const float *a, const float *b, size_t n) {
 
 typedef struct {
     atomic_int hits[257];
-    atomic_int lane_hits[XE_WORKERS];
+    atomic_int lane_hits[CPU_SETSIZE];
     int n;
 } test_phase_arg;
 
@@ -48,14 +48,17 @@ static void test_phase_fn(xe_session *s, const void *opaque, int worker, int wor
 
 static int test_scheduler_case(xe_session *s, int n, int rounds, int caller_participates) {
     test_phase_arg a;
-    memset(&a, 0, sizeof a);
+    for (int i = 0; i < 257; i++) atomic_init(&a.hits[i], 0);
+    for (int lane = 0; lane < CPU_SETSIZE; lane++) atomic_init(&a.lane_hits[lane], 0);
     a.n = n;
+    int count = xe_engine_worker_count(s->engine);
+    if (count < 1 || count > CPU_SETSIZE) return 0;
     xe_workers_begin(s->engine);
     for (int i = 0; i < rounds; i++)
         xe_dispatch(s->engine, s, test_phase_fn, &a, caller_participates);
     xe_workers_end(s->engine);
 
-    int workers = caller_participates ? XE_WORKERS : XE_WORKERS - 1;
+    int workers = caller_participates || count == 1 ? count : count - 1;
     int ok = 1;
     for (int i = 0; i < n; i++)
         if (atomic_load_explicit(&a.hits[i], memory_order_relaxed) != rounds) ok = 0;
@@ -63,6 +66,8 @@ static int test_scheduler_case(xe_session *s, int n, int rounds, int caller_part
         int want = (n * (lane + 1) / workers - n * lane / workers) * rounds;
         if (atomic_load_explicit(&a.lane_hits[lane], memory_order_relaxed) != want) ok = 0;
     }
+    for (int lane = workers; lane < CPU_SETSIZE; lane++)
+        if (atomic_load_explicit(&a.lane_hits[lane], memory_order_relaxed) != 0) ok = 0;
     return ok;
 }
 
@@ -72,7 +77,7 @@ static int test_scheduler(xe_session *s) {
     ok = ok && test_scheduler_case(s, 3, 200, 1);
     ok = ok && test_scheduler_case(s, 0, 100000, 1);
     ok = ok && test_scheduler_case(s, 0, 100000, 0);
-    for (int lane = 0; lane < XE_WORKERS; lane++)
+    for (int lane = 0; lane < xe_engine_worker_count(s->engine); lane++)
         ok = ok && ((uintptr_t)&s->engine->phase_done[lane] & 63u) == 0;
     printf("workers: phases %s\n", ok ? "PASS" : "FAIL");
     return ok;
@@ -101,7 +106,9 @@ static int test_workspace_regions(xe_session *s) {
     TEST_REGION(s->router_in, XE_EMBD);
     TEST_REGION(s->router_logits, XE_EXPERTS);
     TEST_REGION(s->scores, XE_Q_HEADS * s->engine->context);
-    TEST_REGION(s->attn_partial, XE_WORKERS * 8 * XE_GLOBAL_HEAD_DIM);
+    int workers = xe_engine_worker_count(s->engine);
+    int partials = workers > XE_GLOBAL_KV_HEADS * 3 ? workers : XE_GLOBAL_KV_HEADS * 3;
+    TEST_REGION(s->attn_partial, partials * 8 * XE_GLOBAL_HEAD_DIM);
     TEST_REGION(s->rope_swa_cos, XE_SWA_HEAD_DIM / 2);
     TEST_REGION(s->rope_swa_sin, XE_SWA_HEAD_DIM / 2);
     TEST_REGION(s->rope_global_cos, XE_GLOBAL_HEAD_DIM / 2);
@@ -280,7 +287,8 @@ static int test_session_slabs(int context) {
     int ok = s && s->engine == &e && s->n_tokens == 0 &&
              xe_context_size(&e) == context;
     int position = context - 1;
-    ok = ok && e.worker_pinned == xe_worker_pin_available(&original_affinity);
+    int workers = xe_engine_worker_count(&e);
+    ok = ok && workers >= 1 && workers <= CPU_SETSIZE && e.worker_pinned;
     ok = ok && ((uintptr_t)s->swa_k & 63u) == 0;
     ok = ok && ((uintptr_t)s->swa_v & 63u) == 0;
     ok = ok && ((uintptr_t)s->global_k & 63u) == 0;
@@ -304,10 +312,20 @@ static int test_session_slabs(int context) {
     s->n_tokens = context;
     xe_session_reset(s);
     ok = ok && s->n_tokens == 0;
-    ok = ok && xe_engine_worker_count(&e) == XE_WORKERS;
-    for (int lane = 0; lane < XE_WORKERS; lane++)
-        ok = ok && xe_engine_worker_cpu(&e, lane) ==
-                   (e.worker_pinned ? xe_worker_cpu(lane) : -1);
+    cpu_set_t mapped;
+    CPU_ZERO(&mapped);
+    for (int lane = 0; lane < workers; lane++) {
+        int cpu = xe_engine_worker_cpu(&e, lane);
+        if (cpu < 0 || cpu >= CPU_SETSIZE || !CPU_ISSET(cpu, &original_affinity) || CPU_ISSET(cpu, &mapped)) {
+            ok = 0;
+            continue;
+        }
+        CPU_SET(cpu, &mapped);
+        pthread_t thread = lane ? e.followers[lane - 1] : pthread_self();
+        cpu_set_t actual;
+        int rc = pthread_getaffinity_np(thread, sizeof actual, &actual);
+        ok = ok && rc == 0 && CPU_COUNT(&actual) == 1 && CPU_ISSET(cpu, &actual);
+    }
 
     float *swa_k = xe_alloc(NULL, XE_SWA_KV_HEADS * XE_SWA_HEAD_DIM * sizeof(*swa_k), XE_MEM_HOST);
     float *swa_v = xe_alloc(NULL, XE_SWA_KV_HEADS * XE_SWA_HEAD_DIM * sizeof(*swa_v), XE_MEM_HOST);
@@ -374,6 +392,8 @@ static int test_session_slabs(int context) {
     ok = ok && pthread_getaffinity_np(pthread_self(), sizeof restored_affinity,
                                       &restored_affinity) == 0 &&
                CPU_EQUAL(&original_affinity, &restored_affinity);
+    xe_free(NULL, e.worker_cpus, XE_MEM_HOST);
+    xe_free(NULL, e.gelu_lut, XE_MEM_HOST);
     xe_gpu_destroy(&e);
     printf("kv: session capacity %d slabs %s\n", context, ok ? "PASS" : "FAIL");
     return ok;

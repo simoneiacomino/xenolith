@@ -50,7 +50,29 @@ enum {
     XE_CONTEXT_DEFAULT = XE_CONTEXT_MAX
 };
 
-/* Capacity is fixed for the engine and inherited by all its sessions. */
+/* Zero-initialize options for defaults. context=0 uses XE_CONTEXT_DEFAULT;
+ * workers=0 selects automatically unless cpus is supplied. cpus is an ordered
+ * list of cpu_count allowed logical CPUs on distinct physical cores. cpus must
+ * be NULL exactly when cpu_count is zero; a nonzero workers value must match
+ * the list length. Explicit requests override automatic worker selection.
+ * Options and the CPU list are copied during opening. Invalid options terminate
+ * as other engine opening errors do. Vocab-only opening defers machine topology
+ * and affinity checks until its vision pool starts.
+ * Selected CPUs must support the build's required instructions. Native compiler
+ * flags may require more than the checked minimum. The pool pins its owner thread
+ * until engine close restores its affinity; embedding UIs should use a dedicated
+ * inference thread. */
+typedef struct {
+    int context;
+    int workers;
+    const int *cpus;
+    int cpu_count;
+} xe_engine_options;
+
+xe_engine *xe_engine_open_with_options(const char *gguf_path, const xe_engine_options *options);
+xe_engine *xe_engine_open_cached_with_options(const char *gguf_path, const xe_engine_options *options);
+xe_engine *xe_engine_open_vocab_with_options(const char *gguf_path, const xe_engine_options *options);
+/* Legacy openings select workers automatically and ignore CPU environment variables. */
 xe_engine *xe_engine_open_with_context(const char *gguf_path, int context);
 xe_engine *xe_engine_open(const char *gguf_path);
 xe_engine *xe_engine_open_vocab(const char *gguf_path);
@@ -93,6 +115,8 @@ int32_t xe_eot_id(const xe_engine *e);
 int xe_context_size(const xe_engine *e);
 int xe_vocab_size(const xe_engine *e);
 uint64_t xe_engine_model_size(const xe_engine *e);
+/* Effective count and ordered CPU map. Vocab-only engines report count zero
+ * until vision configuration; worker_cpu requires an index in [0, count). */
 int xe_engine_worker_count(const xe_engine *e);
 int xe_engine_worker_cpu(const xe_engine *e, int worker);
 

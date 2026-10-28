@@ -100,3 +100,7 @@ tests/test_vision_session
 /tests/test_visual_replay
 
 /tools/vision_decode_reference
+
+/tests/test_workers
+
+/tests/test_cli_workers

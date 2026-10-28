@@ -106,6 +106,7 @@ int main(void) {
     xe_free(NULL, reference, XE_MEM_HOST);
     xe_session_free(s);
     xe_worker_pool_destroy(&e);
+    xe_free(NULL, e.worker_cpus, XE_MEM_HOST);
     xe_free(NULL, e.gelu_lut, XE_MEM_HOST);
     return ok ? 0 : 1;
 }

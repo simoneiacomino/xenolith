@@ -10,6 +10,7 @@
 static xe_engine fixture_engine;
 static int fixture_expected_cache;
 static int fixture_expected_vision;
+static int fixture_expected_workers, fixture_expected_cpu_count;
 static xe_engine *fixture_open(const char *path, int context) {
     (void)path;
     if (fixture_expected_cache) _exit(2);
@@ -21,6 +22,20 @@ static xe_engine *fixture_open_cached(const char *path, int context) {
     if (!fixture_expected_cache) _exit(2);
     fixture_engine.context = context;
     return &fixture_engine;
+}
+static void fixture_check_options(const xe_engine_options *options) {
+    if (!options || options->workers != fixture_expected_workers ||
+        options->cpu_count != fixture_expected_cpu_count) _exit(2);
+    if (options->cpu_count && (!options->cpus || options->cpus[0] != 3 ||
+        options->cpus[1] != 7)) _exit(2);
+}
+static xe_engine *fixture_open_options(const char *path, const xe_engine_options *options) {
+    fixture_check_options(options);
+    return fixture_open(path, options->context);
+}
+static xe_engine *fixture_open_cached_options(const char *path, const xe_engine_options *options) {
+    fixture_check_options(options);
+    return fixture_open_cached(path, options->context);
 }
 static int fixture_serve_stdio(xe_engine *e, const char *state, const char *cache,
                                uint64_t budget) {
@@ -45,6 +60,8 @@ static profile_status fixture_profile(profile **out, xe_engine *e) {
 #define main cli_main
 #define xe_engine_open_with_context fixture_open
 #define xe_engine_open_cached fixture_open_cached
+#define xe_engine_open_with_options fixture_open_options
+#define xe_engine_open_cached_with_options fixture_open_cached_options
 #define xe_engine_enable_vision fixture_enable_vision
 #define serve_stdio_with_budget fixture_serve_stdio
 #define serve_run_with_budget fixture_serve_run
@@ -55,6 +72,8 @@ static profile_status fixture_profile(profile **out, xe_engine *e) {
 #undef main
 #undef xe_engine_open_with_context
 #undef xe_engine_open_cached
+#undef xe_engine_open_with_options
+#undef xe_engine_open_cached_with_options
 #undef xe_engine_enable_vision
 #undef serve_stdio_with_budget
 #undef serve_run_with_budget
@@ -69,11 +88,14 @@ static void cli_cache_startup(void) {
     const char *commands[] = {"wire", "serve"};
     const char *budgets[] = {NULL, "0", "0GiB", "1", "16GiB"};
     for (size_t c = 0; c < 2; c++) for (int vision = 0; vision < 2; vision++) {
-        for (size_t b = 0; b < sizeof budgets / sizeof *budgets; b++) {
-            char *args[10] = {"xenolith", (char *)commands[c], "fixture.gguf",
+        for (size_t b = 0; b < sizeof budgets / sizeof *budgets; b++) for (int cpu = 0; cpu < 6; cpu++) {
+            char *args[18] = {"xenolith", (char *)commands[c], "fixture.gguf",
                            "--ctx", vision ? "65536" : "64", "--cache-budget", (char *)budgets[b], NULL};
             int argc = budgets[b] ? 7 : 5;
             if (vision) { args[argc++] = "--mmproj"; args[argc++] = "fixture-projector.gguf"; }
+            if (cpu == 1 || cpu == 3) { args[argc++] = "--workers"; args[argc++] = "2"; }
+            if (cpu == 2 || cpu == 3) { args[argc++] = "--cpu-list"; args[argc++] = "3,7"; }
+            if (cpu == 4) { args[argc++] = "--workers"; args[argc++] = "auto"; }
             args[argc] = NULL;
             fflush(NULL);
             pid_t child = fork();
@@ -81,6 +103,14 @@ static void cli_cache_startup(void) {
             if (!child) {
                 fixture_expected_cache = vision || (b != 1 && b != 2);
                 fixture_expected_vision = vision;
+                fixture_expected_workers = cpu == 1 || cpu == 3 || cpu == 5 ? 2 : 0;
+                fixture_expected_cpu_count = cpu == 2 || cpu == 3 || cpu == 5 ? 2 : 0;
+                unsetenv("XE_WORKERS"); unsetenv("XE_CPU_LIST");
+                if (cpu >= 1 && cpu <= 4) {
+                    setenv("XE_WORKERS", "bad", 1); setenv("XE_CPU_LIST", "bad", 1);
+                } else if (cpu == 5) {
+                    setenv("XE_WORKERS", "2", 1); setenv("XE_CPU_LIST", "3,7", 1);
+                }
                 _exit(cli_main(argc, args));
             }
             int status;
