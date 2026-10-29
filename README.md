@@ -100,26 +100,8 @@ the [protocol](PROTOCOL.md) and the [C API](xenolith.h).
 
 ## CPU workers and affinity
 
-Decode uses up to six allowed physical cores by default, one logical CPU per
-core in ascending CPU ID order. Use runtime options to choose the pool:
-
-```sh
-./xenolith run /path/to/model.gguf --workers 4 -p "Hello" -n 128
-# Only for a machine whose verified physical-core representatives are these IDs.
-./xenolith run /path/to/model.gguf --cpu-list 0,2,4,6,8,10 -p "Hello" -n 128
-```
-
-A CPU list sets the count; an accompanying numeric `--workers` must match it.
-An explicit count or list is checked against allowed physical cores, rejecting
-SMT siblings and unavailable CPUs. `--workers auto` selects the default and
-cannot accompany a list. Either CPU option overrides both `XE_WORKERS` and
-`XE_CPU_LIST`; the CLI uses those environment variables only without CPU options.
-
-The C API takes copied `xe_engine_options` through its `*_with_options`
-openings; existing openings select workers automatically and ignore environment
-variables. The plan remains fixed for the engine and its count contributes to
-snapshot compatibility. Pool creation pins its owner until engine close restores
-its affinity. Keep session work and closing on that thread; see [the C API](xenolith.h).
+For runtime worker settings and automatic hardware defaults, see
+[configuration](docs/configuration.md) and [tuning](docs/tuning.md).
 
 ## Experimental image input
 

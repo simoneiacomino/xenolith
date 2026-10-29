@@ -6,6 +6,7 @@
 #include "xenolith_internal.h"
 #include "vision_encoder.h"
 #include "format.h"
+#include "cpu_topology.h"
 
 #include <errno.h>
 #include <cpuid.h>
@@ -1606,22 +1607,6 @@ static void xe_pin_thread(int cpu) {
         xe_fatal("CPU %d affinity could not be verified", cpu);
 }
 
-static int xe_cpu_topology(int cpu, int *package, int *core) {
-    char path[128];
-    snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/topology/physical_package_id", cpu);
-    FILE *f = fopen(path, "r");
-    if (!f) return 0;
-    int read = fscanf(f, "%d", package);
-    fclose(f);
-    if (read != 1) return 0;
-    snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/topology/core_id", cpu);
-    f = fopen(path, "r");
-    if (!f) return 0;
-    read = fscanf(f, "%d", core);
-    fclose(f);
-    return read == 1 && *package >= 0 && *core >= 0;
-}
-
 static void xe_worker_check_isa(int cpu) {
     unsigned a, b, c, d;
     if (!__get_cpuid(1, &a, &b, &c, &d) ||
@@ -1644,8 +1629,8 @@ static void xe_worker_check_isa(int cpu) {
 }
 
 /* Resolve once, before cached numeric fingerprints or session allocation.
- * Automatic selection uses ascending allowed CPU IDs, one logical CPU per
- * physical core. It does not infer performance classes from CPU numbering. */
+ * Explicit settings bypass the catalog. Unknown/incomplete hardware keeps
+ * the generic ascending-ID selection, one logical CPU per physical core. */
 static void xe_worker_config_init(xe_engine *e) {
     if (e->worker_count) return;
     cpu_set_t allowed;
@@ -1655,6 +1640,7 @@ static void xe_worker_config_init(xe_engine *e) {
     int count = 0;
     int explicit_workers = e->requested_workers != 0;
     int list_count = e->requested_cpu_count;
+    xe_cpu_policy_result policy_result = {.status = XE_CPU_POLICY_INCOMPLETE};
     int requested = explicit_workers ? e->requested_workers : XE_WORKERS;
     if (list_count) {
         for (int n = 0; n < list_count; n++) {
@@ -1662,7 +1648,7 @@ static void xe_worker_config_init(xe_engine *e) {
             if (cpu < 0 || cpu >= CPU_SETSIZE || !CPU_ISSET(cpu, &allowed))
                 xe_fatal("worker CPU %d is outside the calling thread's allowed CPUs", cpu);
             int package, core;
-            if (!xe_cpu_topology(cpu, &package, &core))
+            if (!xe_cpu_topology_core(cpu, &package, &core))
                 xe_fatal("worker CPU %d: physical topology unavailable", cpu);
             for (int i = 0; i < count; i++) {
                 if (cpus[i] == cpu) xe_fatal("worker CPU list repeats CPU %d", cpu);
@@ -1677,7 +1663,7 @@ static void xe_worker_config_init(xe_engine *e) {
         for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
             if (!CPU_ISSET(cpu, &allowed)) continue;
             int package, core;
-            if (!xe_cpu_topology(cpu, &package, &core)) { topology_missing = 1; continue; }
+            if (!xe_cpu_topology_core(cpu, &package, &core)) { topology_missing = 1; continue; }
             int duplicate = 0;
             for (int i = 0; i < count; i++)
                 if (packages[i] == package && cores[i] == core) { duplicate = 1; break; }
@@ -1697,6 +1683,17 @@ static void xe_worker_config_init(xe_engine *e) {
         if (!count) xe_fatal("no allowed CPUs for decode");
         if (explicit_workers && requested > count)
             xe_fatal("worker count %d exceeds %d available distinct physical cores", requested, count);
+        if (!explicit_workers && !topology_missing) {
+            xe_cpu_core inventory_cores[CPU_SETSIZE];
+            for (int i = 0; i < count; i++)
+                inventory_cores[i] = (xe_cpu_core){.cpu = cpus[i], .package = packages[i], .core = cores[i]};
+            xe_cpu_inventory inventory;
+            char brand[49];
+            int restore = xe_cpu_topology_probe(&inventory, inventory_cores, (size_t)count, brand);
+            if (restore) xe_fatal("restore CPU affinity after topology probe: %s", strerror(restore));
+            policy_result = xe_cpu_policy_select(&inventory, cpus, CPU_SETSIZE);
+            if (policy_result.status == XE_CPU_POLICY_MATCH) requested = (int)policy_result.count;
+        }
         if (requested > count) requested = count;
         count = requested;
     }
@@ -1716,6 +1713,13 @@ static void xe_worker_config_init(xe_engine *e) {
     e->worker_pinned = 1;
     if (list_count || explicit_workers)
         fprintf(stderr, "xenolith: CPU selection: explicit %s\n", list_count ? "CPU list" : "worker count");
+    else if (policy_result.status == XE_CPU_POLICY_MATCH)
+        fprintf(stderr, "xenolith: CPU profile %s (%s)\n", policy_result.profile,
+                policy_result.evidence == XE_CPU_EVIDENCE_MEASURED_PROFILE ?
+                "based on measured configuration" : "specification-derived heuristic");
+    else
+        fprintf(stderr, "xenolith: CPU selection: generic fallback (%s)\n",
+                xe_cpu_policy_reason(policy_result.status));
     fprintf(stderr, "xenolith: decode workers %d; CPU map", count);
     for (int i = 0; i < count; i++) fprintf(stderr, "%s%d", i ? "," : " ", cpus[i]);
     fputc('\n', stderr);

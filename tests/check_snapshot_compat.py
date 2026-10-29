@@ -81,6 +81,9 @@ def main():
                 command += [source / "vision.c"]
             if (source / "vision_encoder.c").is_file():
                 command += [source / "vision_encoder.c"]
+            for module in ("cpu_policy.c", "cpu_topology.c"):
+                if (source / module).is_file():
+                    command += [source / module]
             command += [kernel, "-Wl,--gc-sections", "-lm", "-lze_loader", "-o", output]
             run(command)
             return output

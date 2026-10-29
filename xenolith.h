@@ -54,14 +54,14 @@ enum {
  * workers=0 selects automatically unless cpus is supplied. cpus is an ordered
  * list of cpu_count allowed logical CPUs on distinct physical cores. cpus must
  * be NULL exactly when cpu_count is zero; a nonzero workers value must match
- * the list length. Explicit requests override automatic worker selection.
+ * the list length. Explicit requests bypass the automatic SKU catalog.
  * Options and the CPU list are copied during opening. Invalid options terminate
  * as other engine opening errors do. Vocab-only opening defers machine topology
  * and affinity checks until its vision pool starts.
  * Selected CPUs must support the build's required instructions. Native compiler
  * flags may require more than the checked minimum. The pool pins its owner thread
  * until engine close restores its affinity; embedding UIs should use a dedicated
- * inference thread. */
+ * inference thread. See docs/configuration.md and docs/tuning.md. */
 typedef struct {
     int context;
     int workers;

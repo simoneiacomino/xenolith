@@ -98,9 +98,9 @@ tests/test_vision_session
 /tests/test_visual_cache
 
 /tests/test_visual_replay
+/tests/test_workers
+/tests/test_cpu_policy
+/tests/test_cpu_topology
+/tests/test_cli_workers
 
 /tools/vision_decode_reference
-
-/tests/test_workers
-
-/tests/test_cli_workers
