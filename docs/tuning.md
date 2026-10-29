@@ -16,6 +16,7 @@ map verified on the destination machine:
 | Core i7-13700H / DDR4 target laptop | Six P-cores | Adding E-cores slowed the short-prompt screen. |
 | Core Ultra X7 358H / Arc B390 system | Twelve cores: 4P + 8E | Improved decode throughput and package energy/token against the measured six-core map. |
 
+See the [worker measurements](../bench/cpu-workers.md) for workloads and limits.
 These recipes are automatic defaults for matching SKUs and complete verified
 topologies, not rules for every Raptor Lake or Panther Lake processor. Their
 measured status describes the source systems above, not a new performance

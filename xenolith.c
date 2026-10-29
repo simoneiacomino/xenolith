@@ -490,6 +490,7 @@ static xe_gpu_status xe_gpu_classify(uint32_t id) {
         case 0xa7a0: /* Maintainer's Core i7-13700H. */
         case 0x7d51: /* Core Ultra 7 255H, reported by aziis98 in PR #2. */
         case 0x64a0: /* Core Ultra 7 268V; Raffaele's WSL report in PR #6, 64k capacity. */
+        case 0xb080: /* Core Ultra X7 358H / Arc B390; see bench/cpu-workers.md. */
             return XE_GPU_TESTED;
         /* Tiger Lake. */
         case 0x9a40: case 0x9a49: case 0x9a59: case 0x9a60:
@@ -519,7 +520,7 @@ static xe_gpu_status xe_gpu_classify(uint32_t id) {
         /* Lunar Lake. */
         case 0x6420: case 0x64b0:
         /* Panther Lake. */
-        case 0xb080: case 0xb081: case 0xb082: case 0xb083:
+        case 0xb081: case 0xb082: case 0xb083:
         case 0xb084: case 0xb085: case 0xb086: case 0xb087:
         case 0xb08f: case 0xb090: case 0xb0a0: case 0xb0b0:
         /* Wildcat Lake. */

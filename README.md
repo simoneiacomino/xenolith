@@ -50,7 +50,7 @@ All IDs below are hexadecimal and use Intel vendor ID `8086`. IDs not listed are
 | **Meteor Lake** | Xe-LPG | — | `7d40`, `7d45`, `7d55`, `7dd5` |
 | **Arrow Lake** | Xe-LPG / Xe-LPG+ | `7d51` | `7d41`, `7d67`, `7dd1` |
 | **Lunar Lake** | Xe2 | `64a0` | `6420`, `64b0` |
-| **Panther Lake** | Xe3 | — | `b080`, `b081`, `b082`, `b083`, `b084`, `b085`, `b086`, `b087`, `b08f`, `b090`, `b0a0`, `b0b0` |
+| **Panther Lake** | Xe3 | `b080` | `b081`, `b082`, `b083`, `b084`, `b085`, `b086`, `b087`, `b08f`, `b090`, `b0a0`, `b0b0` |
 | **Wildcat Lake** | Xe3 | — | `fd80`, `fd81` |
 | **Nova Lake (Xe3 GPU)** | Xe3 | — | `d740`, `d741`, `d742`, `d743`, `d744`, `d745` |
 | **Nova Lake (Xe3P GPU)** | Xe3P | — | `d74a`, `d74b`, `d750`, `d751`, `d752`, `d753`, `d754`, `d755`, `d756`, `d757`, `d75f` |
@@ -64,6 +64,7 @@ Tested configurations:
 | `8086:a7a0` | Core i7-13700H / Iris Xe, 32 GB RAM | Maintainer's HP Envy 17; [benchmark results](bench/compare_pp_tg.md) |
 | `8086:7d51` | Core Ultra 7 255H / Arc 140T | [aziis98's report in PR #2](https://github.com/simoneiacomino/xenolith/pull/2) |
 | `8086:64a0` | Core Ultra 7 268V / Arc 140V, 32 GB RAM | [raffaeleedidonna's report in PR #6](https://github.com/simoneiacomino/xenolith/pull/6); Windows 11, Ubuntu 24.04 under WSL2 |
+| `8086:b080` | Core Ultra X7 358H / Arc B390 | [CPU worker measurements with full-model prefill](bench/cpu-workers.md) |
 
 If inference works on an untested device, please [open an issue](https://github.com/simoneiacomino/xenolith/issues) or submit a PR with your results so its ID can be marked tested in both the code and this table. If it fails, please open an issue describing the problem. Include the GPU device ID, processor, RAM, OS (including WSL if applicable), driver/runtime versions, Xenolith commit, model, command and relevant output. Device detection alone is not an inference test.
 
