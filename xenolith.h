@@ -61,7 +61,7 @@ enum {
  * Selected CPUs must support the build's required instructions. Native compiler
  * flags may require more than the checked minimum. The pool pins its owner thread
  * until engine close restores its affinity; embedding UIs should use a dedicated
- * inference thread. See docs/configuration.md and docs/tuning.md. */
+ * inference thread. See docs/api.md and docs/tuning.md. */
 typedef struct {
     int context;
     int workers;

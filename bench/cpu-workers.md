@@ -36,6 +36,6 @@ These two-pair controls do not prove equivalence or a general speedup. Tail late
 
 The measured integrated `xenolith.c` had SHA-256 `d47d2f647272400f0ff910b131b8abeb6c3e8ff2325b02b85fbda03a06d45c8e`. It predates the explicit C options API and is retained with the historical campaign archives. The CSVs are selected extracts of audited measurements; the raw archives contain private system paths and are not included. The historical campaign harnesses are unpublished, so this is not a complete reproduction package.
 
-For current controls and configuration, see [engine configuration](../docs/configuration.md) and `make check-workers`. The [comparison procedure](compare_pp_tg.md) describes a different public benchmark; it does not reproduce these historical worker campaigns.
+For current controls and configuration, see [CLI reference](../docs/cli.md) and `make check-workers`. The [comparison procedure](compare_pp_tg.md) describes a different public benchmark; it does not reproduce these historical worker campaigns.
 
 Run `python3 -B bench/cpu-workers-summary.py` from the repository root to calculate the remote and integration tables from the CSVs. For each prompt, the script pairs rows with the same repetition number and computes `(candidate / control - 1) * 100`, then takes the median and range. The remote table also reports medians of the individual profile rates. The integration CSV rates are rounded to six decimal places.

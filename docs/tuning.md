@@ -1,7 +1,85 @@
 # Performance tuning
 
-The CPU worker count and map are configurable at engine startup. See
-[engine configuration](configuration.md) for the exact selection and affinity rules.
+The CPU worker count and map are selected at runtime, when the engine opens.
+The same executable can use different plans without recompilation. See the
+[CLI guide](cli.md) for overrides and the [C API guide](api.md) for embedding
+and affinity lifetime rules.
+
+## Automatic selection
+
+The engine reads Intel CPUID identity and core types on the allowed physical
+core representatives, and checks Linux sibling and cache-sharing topology.
+CPU IDs and clock speeds are not used to infer core classes. Profiles require
+the exact catalog SKU and its complete expected physical-core counts on one
+package. A cpuset may exclude SMT siblings if every physical core still has
+one allowed representative; a cpuset excluding entire cores uses the generic
+fallback. Unknown SKUs, inconsistent data or ambiguous required caches also
+use that fallback, without expanding the allowed set. The generic plan selects
+up to six allowed distinct physical cores in ascending CPU ID order. CPUs with
+unavailable physical topology are skipped; if none have readable topology,
+automatic selection falls back to one allowed CPU with a notice. An explicit
+count fails in that case. Every selected CPU must pass affinity and instruction
+checks; there is no unpinned fallback.
+
+P-only profiles need no E/LP-E cache distinction. Mixed profiles on the 125U,
+235U and 358H require exactly eight Atom-type cores sharing the P-cores' L3;
+the other Atom cores must have a known separate or absent L3. This uses the
+cache organization documented in Intel's [Meteor Lake datasheet](https://edc.intel.com/content/www/us/en/design/products/platforms/details/meteor-lake-u-p/core-ultra-processor-datasheet-volume-1-of-2/002/intel-smart-cache-technology/),
+[200H/200U datasheet, section 12.7](https://cdrdv2-public.intel.com/842704/842704-002.pdf)
+and [Series 3 datasheet, section 11.7](https://cdrdv2-public.intel.com/872188/872188-001.pdf).
+Missing cache files are not evidence of LP-E cores: the probe checks CPUID
+cache presence and reciprocal kernel sharing masks. An unavailable or
+contradictory required cache view prevents that profile from matching.
+Selection does not run a benchmark at startup. The catalog is in
+[cpu_policy.c](../cpu_policy.c); Linux/CPUID discovery is in
+[cpu_topology.c](../cpu_topology.c).
+
+Startup diagnostics report the profile and its evidence, or the fallback
+reason, followed by the actual worker count and ordered CPU map. For example:
+
+```text
+xenolith: CPU profile i7-13700h (based on measured configuration)
+xenolith: decode workers 6; CPU map 0,2,4,6,8,10
+```
+
+The measured-profile label refers to the source of the recipe; it does not
+certify the memory, power settings or performance of the current machine.
+Physical-core and instruction checks still apply to explicit overrides.
+
+## Inspecting a manual CPU map
+
+Inspect topology from the same environment that will launch Xenolith:
+
+```sh
+awk '/^Cpus_allowed_list:/' /proc/self/status
+lscpu -e=CPU,SOCKET,CORE,ONLINE
+# Replace cpu0 with each candidate CPU when checking its SMT siblings.
+cat /sys/devices/system/cpu/cpu0/topology/thread_siblings_list
+```
+
+Choose online CPUs from the allowed list, one per `(SOCKET, CORE)` pair;
+CPUs in the same sibling list share a physical core. For an embedded engine,
+inspect `/proc/PID/task/TID/status` for the thread that opens it instead.
+Neither CPU IDs nor clock speeds identify P/E core classes.
+
+On Intel hybrid systems where the kernel exposes these PMUs, their CPU lists
+identify Core-type (P) and Atom-type (E or LP-E) CPUs respectively; see
+[Linux's hybrid PMU documentation](https://github.com/torvalds/linux/blob/master/tools/perf/Documentation/intel-hybrid.txt):
+
+```sh
+cat /sys/bus/event_source/devices/cpu_core/cpus
+cat /sys/bus/event_source/devices/cpu_atom/cpus
+```
+
+These are system-wide lists; intersect them with the allowed CPUs above.
+They do not distinguish regular E from LP-E cores. On CPUs containing both,
+check the SKU's cache organization against each candidate's
+`/sys/devices/system/cpu/cpuN/cache/index*/level` and `shared_cpu_list`;
+missing files do not establish an LP-E core. A matched automatic profile's
+printed CPU map already passes the engine's checks and can supply a smaller
+comparison pool by selecting a subset. Adding other core classes requires
+verifying their membership first. If class information is unavailable, keep
+the automatic plan or compare subsets without labeling them P/E profiles.
 
 ## Measured starting profiles
 
@@ -18,9 +96,7 @@ map verified on the destination machine:
 
 See the [worker measurements](../bench/cpu-workers.md) for workloads and limits.
 These recipes are automatic defaults for matching SKUs and complete verified
-topologies, not rules for every Raptor Lake or Panther Lake processor. Their
-measured status describes the source systems above, not a new performance
-measurement on the current host. Explicit settings override automatic choice.
+topologies, not rules for every Raptor Lake or Panther Lake processor.
 
 ## Specification-derived defaults
 
@@ -30,7 +106,7 @@ hardware configuration; the worker choices are our engineering hypotheses,
 not Intel recommendations or measured performance results. Entries describe
 the named SKU, not every processor in that family. Specifications were checked
 on 2026-10-28. The starting pool is selected automatically when the
-[matching requirements](configuration.md#automatic-selection) hold;
+[matching requirements](#automatic-selection) hold;
 the comparison pool is a manual tuning option.
 
 `P`, `E` and `LP-E` denote performance, efficient and low-power efficient
@@ -83,8 +159,8 @@ map. A faster result must still be checked for correctness, tail latency and
 the resource costs relevant to the intended workload.
 
 For a manual comparison, use `--cpu-list` with a map verified on the destination
-machine. See [inspecting a manual CPU map](configuration.md#inspecting-a-manual-cpu-map)
-and the [CLI and C API settings](configuration.md#cpu-workers); a worker count
+machine. See [inspecting a manual CPU map](#inspecting-a-manual-cpu-map)
+and the [CLI](cli.md) or [C API](api.md) settings; a worker count
 alone does not specify core classes.
 
 ### Memory and system limits

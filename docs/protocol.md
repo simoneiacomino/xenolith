@@ -1,6 +1,6 @@
 # Xenolith wire protocol
 
-This document describes protocol versions 1 and 2 as implemented by [serve.c](serve.c).
+This document describes protocol versions 1 and 2 as implemented by [serve.c](../serve.c).
 It is a local protocol for one served model. A client can maintain a
 durable conversation by appending turns, or send a complete transcript for a
 temporary generation. Xenolith generates tool calls; the client executes tools.
@@ -19,48 +19,18 @@ Or use stdin for requests and stdout for replies:
 ./xenolith wire /path/to/model.gguf
 ```
 
-Both commands accept `--state DIR`, `--cache DIR` and `--cache-budget SIZE`
-(default `16GiB`). The budget accepts integer bytes or a `B`, `kB`, `MB`, `GB`,
-`KiB`, `MiB` or `GiB` suffix; `0` disables disk cache reads and writes without
-removing existing files. `serve` also accepts `--idle-shutdown MINUTES`, a
-positive number; by default it stays running.
-Use absolute directory paths; the parent of an explicit socket path must exist.
-Without `--socket`, the socket is `$XDG_RUNTIME_DIR/xenolith/wire.sock` when
-available, otherwise `wire.sock` inside the state directory. Default state and
-cache directories are `$XDG_STATE_HOME/xenolith` and `$XDG_CACHE_HOME/xenolith/kv`,
-falling back to `~/.local/state/xenolith` and `~/.cache/xenolith/kv`.
+See the [CLI reference](cli.md#wire-and-serve) for startup options, default
+paths and cache budgets.
 
-Without `--mmproj`, the service exposes the existing text-only protocol 1.
-With `--mmproj /path/to/mmproj-F16.gguf`, it exposes protocol 2 with images,
-with the reference artifacts documented in [tests/vision/manifest.json](tests/vision/manifest.json).
-Vision defaults to context 65536 and accepts only `--ctx 65536|131072`.
+Without `--mmproj`, the service exposes text-only protocol 1. With a projector,
+it exposes protocol 2 with images; see [vision](vision.md) for supported inputs.
 Clients must inspect `describe.protocol` and `describe.vision` before sending
 images. A protocol 1 service rejects image requests and visual conversations.
 
-`--cache-budget` also determines model fingerprint preparation. With a positive
-budget (including the default), `serve` and `wire` compute the full GGUF SHA-256
-once during startup, before repacking releases source pages. All snapshot
-fingerprints are ready before the socket accepts clients or stdin requests are
-processed. Startup diagnostics go to stderr; fingerprint computation does not
-occur during prefill, decode or finalization.
-
-For text-only services, `--cache-budget 0` skips model fingerprint computation
-as well as disk KV cache reads and writes. Durable conversation history and in-memory KV
-reuse still work. The standalone `chat`, `run`, `info`, `oracle` and `bench`
-commands also skip model fingerprint computation when used without images.
-
-This is a service-wide startup decision, not a per-request choice. An
-`ephemeral` request sent to a cache-enabled service still uses an engine whose
-fingerprints were prepared at startup. For a text-only, ephemeral-only service that
-avoids this work, start it with `--cache-budget 0`. A positive budget prepares
-the fingerprints even if opening the cache directory later fails.
-
-With `--mmproj`, vision also needs full model and projector identities for
-image records and derived embeddings, independently of disk KV caching. These
-hashes and the visual numerical identity are prepared during startup even with
-`--cache-budget 0`; that option still disables both disk caches. Model hashing
-occurs before repacking and is reused when vision is enabled. CLI image commands
-likewise prepare identities before encoding the image.
+Required weight fingerprints are prepared at startup, before the socket accepts
+clients or stdin requests are processed. This is service-wide: `ephemeral`
+requests use the same prepared engine. Disabling disk caches retains durable
+history and in-memory KV reuse; vision still requires weight identities.
 
 Each frame is one JSON object followed by a newline. Escape newlines inside
 strings; do not pretty-print a frame across lines. There are no request IDs or
@@ -221,7 +191,7 @@ Assistant and system images are rejected. `budget` is optional; its value is an
 upper bound, and the actual visual length depends on aspect ratio. All valid
 image rows occupy context positions; launch padding occupies none. Multiple
 images use separate messages. Images are decoded as RGB, with EXIF orientation
-and alpha composited on white. Limits are 48 MiB encoded per image, 32 million
+and alpha composited on white. Limits are 48 MiB encoded per image, 33,554,432
 decoded pixels, 16384 pixels per original dimension and 256 MiB of media in
 the active context. Encoded Base64 must be canonical standard Base64 with
 padding, without whitespace or URL-safe substitutions.
@@ -365,7 +335,8 @@ client/transport waits, snapshot loading and finalization. These are runtime
 throughput measurements, not isolated CPU/GPU kernel timings.
 
 The average rate is `1000 * tokens / elapsed_ms`; a recent rate uses differences
-between samples instead. Do not divide by zero or invent a speed for zero work.
+between samples instead. Do not report a rate when the elapsed time or token
+count for the interval is zero.
 Prefill percentage is `100 * tokens / total`: it measures tokens, not elapsed-time
 fraction. Treat `total: 0` as no prefill work required. A local clock started and
 stopped by phase events measures the wait observed by the client; use the
@@ -532,9 +503,8 @@ Legacy progress has no engine timing and no reliable decode token counter.
 Without `state`, a client cannot reliably identify the end of decode before the
 terminal event. Optional reports may also be absent on older engines.
 
-The external protocol is implemented in [serve.c](serve.c); [runtime.h](runtime.h)
-defines the C orchestration API behind it. The `wire` CLI command and socket
-name remain unchanged by the internal rename to `runtime`.
+The external protocol is implemented in [serve.c](../serve.c); [runtime.h](../runtime.h)
+defines the C orchestration API behind it.
 
 Vision uses the same in-tree full SHA-256 implementation as text checkpoints,
 with Intel SHA instructions when available and a portable C fallback. It has no
