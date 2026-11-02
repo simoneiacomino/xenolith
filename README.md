@@ -78,6 +78,8 @@ So now we don't have to send all the history, but we can just "append" the user 
 But this currently means that you have to fork your harness and make it talk the Xenolith protocol or write an adapter like I did.
 In fact, I also made [Xenopi](https://github.com/simoneiacomino/xenopi), a pi distribution that ships an adapter with pi that translates its requests to Xenolith protocol. This is just a simple example I did to test the engine and the protocol.
 
+There is also [CodeXe](https://github.com/crrisci/codexe), a community-maintained fork of Codex with native Xenolith protocol support, persistent sessions and vision.
+
 # Limits
 Current observed limits are right now in the prefill kernel that doesn't scale as well as the Vulkan one. In fact, we can start see a regression in pp8192 where Vulkan becomes faster. But nothing that isn't improvable by spending some tokens on it.
 
