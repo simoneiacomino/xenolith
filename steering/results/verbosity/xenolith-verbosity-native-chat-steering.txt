@@ -1,0 +1,12 @@
+you> assistant> Il pane lievita principalmente grazie all'azione dei **lieviti** (che siano lievito di birra o lievito naturale), i quali trasformano gli zuccheri presenti nella farina attraverso un processo chiamato **fermentazione**.
+
+Ecco i passaggi chiave del processo:
+
+1.  **Consumo degli zuccheri:** I lieviti "mangiano" gli zuccheri semplici presenti nell'impasto.
+2.  **Produzione di gas:** Durante la fermentazione, i lieviti rilasciano **anidride carbonica** ($CO_2$) e piccole quantità di alcol.
+3.  **Cattura delle bolle:** L'anidride carbonica si accumula sotto forma di piccole bolle di gas all'interno dell'impasto.
+4.  **L'effetto "palloncino":** Grazie alla presenza del **glutine** (una rete proteica che si forma lavorando la farina), le bolle di gas rimangono intrappolate nell'impasto invece di scappare via. Questo fa gonfiare l'impasto, rendendolo più soffice e alveolato.
+
+In sintesi: il pane lievita perché i lieviti producono gas che viene intrappolato dalla rete di glutine.
+[277 tokens | avg 30.4 tps]
+you> 

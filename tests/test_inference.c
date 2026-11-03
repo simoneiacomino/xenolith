@@ -421,7 +421,30 @@ static void test_serialization(void) {
     CHECK(!strcmp(json_member(v, "code")->text, "out_of_memory"));
     json_free(v);
 }
+static void fixture_utf8_stream(void) {
+    serve s={0};serve_conn c={0};
+    CHECK(!serve_utf8_delta(&s,&c,0,(const uint8_t *)"\xc2",1,0));
+    CHECK(c.utf8_length[0]==1);
+    CHECK(serve_utf8_delta(&s,&c,1,(const uint8_t *)"reason",6,0));
+    CHECK(c.utf8_length[0]==1 && c.utf8_length[1]==0);
+    CHECK(serve_utf8_delta(&s,&c,0,(const uint8_t *)"\xa0",1,0));
+    json_value *j=json_parse(s.out.data,s.out.length);CHECK(j);
+    const json_value *value=json_member(j,"text");
+    CHECK(value && value->text_length==2 && !memcmp(value->text,"\xc2\xa0",2));json_free(j);
+    CHECK(!serve_utf8_delta(&s,&c,0,(const uint8_t *)"\xe2\x82",2,0));
+    CHECK(serve_utf8_delta(&s,&c,0,NULL,0,1));
+    j=json_parse(s.out.data,s.out.length);CHECK(j);value=json_member(j,"text");
+    CHECK(value && value->text_length==3 && !memcmp(value->text,"\xef\xbf\xbd",3));json_free(j);
+    const uint8_t emoji[]={0xf0,0x9f,0x98,0x80};
+    for(size_t i=0;i<3;i++)CHECK(!serve_utf8_delta(&s,&c,0,emoji+i,1,0));
+    CHECK(serve_utf8_delta(&s,&c,0,emoji+3,1,0));
+    j=json_parse(s.out.data,s.out.length);CHECK(j);value=json_member(j,"text");
+    CHECK(value && value->text_length==4 && !memcmp(value->text,emoji,4));json_free(j);
+    json_writer_free(&s.out);json_writer_free(&s.utf8_scratch);
+}
+
 int main(void) {
+    fixture_utf8_stream();
     test_stream();
     test_cancel_and_error();
     test_partial_and_short();

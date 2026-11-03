@@ -1,0 +1,413 @@
+{
+  "branch": "feat/activation-steering",
+  "base_commit": "82ae168ce5fcba325af248865aa0dcb7690ff898",
+  "host": "xenolith-ptl",
+  "model_path": "/home/devcloud/models/gemma-4-26B-A4B-it-qat/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+  "model_sha256": "a7c5bc715f5ff8e99a3e8901ce7d2b42b402c669bf24f7c5250747633d0f5891",
+  "artifact": "e802259e2f1b4d9507381a2063a232a1c1eed0206c257c45ef16dd894ddda581",
+  "manifest": {
+    "active_layers": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29
+    ],
+    "dtype": "f32le",
+    "layers": 30,
+    "mode": "projection",
+    "model_sha256": "a7c5bc715f5ff8e99a3e8901ce7d2b42b402c669bf24f7c5250747633d0f5891",
+    "normalization": "unit",
+    "payload": "vectors.f32",
+    "payload_sha256": "526d6e2f8aa5db31a8d9d54907652a6f20f29bd1d44ab0caf059d07d65cbde9b",
+    "provenance": {
+      "dataset_sha256": "9532191d20ff514302d40d54bd06b6b781fb6c2ea33aaef8d443a44c71fd73b6",
+      "engine_commit": "82ae168ce",
+      "evaluation": "unevaluated; no recommended strength",
+      "method": "paired_difference_of_means_orthogonalized_control_v1",
+      "model_revision": "7b92b5b28818151e8669af2e45e88d6086f490dd",
+      "model_source": "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF",
+      "negative_label": "detailed",
+      "numeric_settings": "production_cpu_decode_gpu_prefill; prefill=512; compiler=15.2.0; source=cf1f03f1a30ffc8e2c415c43774565d5fff2db1bbe549c0b0284814012d69e54; flags=2a745642dea153a3544b635f7d98d832ff8206bf8b8df1fe3d3111cac5c259f4; capture_site=post_ffn_output_v1; extractor=59395f63f187485b9d186687b53a5b8bc2ee6cd74b6c34d7b12c90a458c4ec32",
+      "position": "last_rendered_prompt_token_including_assistant_opening",
+      "positive_label": "succinct",
+      "reasoning": "off",
+      "template_sha256": "845f1ee48e39fc942fe190da9df6a1c5db229e17a96ea08966ad1c9274e73d1b"
+    },
+    "site": "post_ffn_output_v1",
+    "token_policy": "all_text",
+    "version": 1,
+    "width": 2816
+  },
+  "evaluation_binary_sha256": "f1c712c30eef996513a3d66f594e2a5fdf152d25bd2c2f252b3c7b372b494430",
+  "evaluator_sha256": "ad5f53283d8f83e0a95f888d5b8a7f72a9fd6fb20ed0267daee4afeca65e85b0",
+  "dataset_source": {
+    "source": "https://github.com/antirez/ds4",
+    "revision": "ee7e8405232c8971000cc7ba2b945b00bf6d20d3",
+    "pairs": 100,
+    "source_sha256": {
+      "LICENSE": "4a8a1358f5b048627d71e4988de0bafd386f4988991929629e6cb9e29b7b9b2f",
+      "verbose.txt": "5778100636dfefc1890da18df5035b8f013227a80d3eec25f069b5b5ff2c84c9",
+      "eval_prompts.txt": "ef74f04d95740daab2f5bf11a95512cce11d7997bd6ce2cb8b02c4db84ae47c1",
+      "succinct.txt": "28fd3fc5319709d31d961343ea7fd6879813b087baaa00543eab1868a2e4fb14"
+    }
+  },
+  "files_sha256": {
+    "steering/examples/verbosity/selected.json": "11e5280fce44acbadb81a69e1a7cbf19f1ec89ede815150f6432082d330d939c",
+    "steering/examples/verbosity/train-instructions.jsonl": "9532191d20ff514302d40d54bd06b6b781fb6c2ea33aaef8d443a44c71fd73b6",
+    "steering/examples/succinct-eval.jsonl": "b9911bacf3526722723f74baedb90b981f07b5b8e12b0c5a79f85349eefd8195",
+    "steering/examples/succinct-validation.jsonl": "b9c026f9c3355f196dc68c7722b3beaf0257af44af02100e2ec6d3054c1edb5c",
+    "steering/examples/constraints-eval.jsonl": "576e9f83983d10c487f38ed088912e5b4e790e6e4cb022f468b22597c6510978",
+    "xenolith.c": "94e3f31c9f9feb4b8370994b673b7839d790c473630e8b94022696ded01b91bf",
+    "xenolith.cl": "e8d19d9b916d1912eea40facfc7f6ef99f49173faa1b626b508a8b2f6549ad07",
+    "steering.c": "3443594f4d25b7545e4a159fa13e6d35a0f7f93be8576c73a0ef622c2a7dd704",
+    "steering.h": "d403b671683cf8b2d827b47fc9181d31f7c03ecd911a29093de35aa046c1a092",
+    "main.c": "6eead8a152d718bde968b73afce5664faec8c4ad3a5fd2c93603409824d805c0",
+    "serve.c": "904dafc4fc080d72e3118300fe101f38288b0c008b3b5224da8c33be385cf8a4",
+    "tools/build_steering.py": "4d54b558f1d365038d513c7e4d9e0675f2fa405bcd2bba201bd50b1a744aad82",
+    "tests/test_steering_ffn_gpu.c": "c76ef2b3144eb9b6c60840c6e16e01a92d01584d533502710c2d42023cfbfd28",
+    "tests/test_steering_model.c": "40c0fd0328403070bc551009e9a299b19e506d5f35f08c6a88ff7d5f2038af2a",
+    "steering/results/verbosity/validation-review.json": "5b53ea4efcff369669fa9e38329937b2e58bd252cf897a9b5cbe162732a0836c",
+    "steering/results/verbosity/heldout-review.json": "3db40eb8c2d5b2ce72ad829bbb3567085964c86092979f077475de9aaeff7931",
+    "steering/results/verbosity/xenolith-ffn-final-regression.log": "b2d83bc8e5ff42d19caf69411c67eba3dafb16f772e9f737fba91986aaecf7e9",
+    "steering/results/verbosity/xenolith-ffn-performance.jsonl": "913e5b5237e23639a533b37e0455f6e6d60deaf9f96c6b81aed23089fa6f4d66",
+    "steering/results/verbosity/performance-summary.json": "dbdc09d2cebec5e384f0c10ba37a3d579e775b3382f32edcaecdc151700aa26d",
+    "steering/results/verbosity/native-chat-summary.json": "18c47128d6c16b52a681e57a5b3083867a67ba029d0401b71fbeb9c181917433"
+  },
+  "limitations": [
+    "Experimental length control; validation fact-preservation gate fails.",
+    "Known ASan preload gate could not run; full check-all is not green.",
+    "Known full-model CPU/GPU prefill discrepancy reproduced on unchanged baseline; not fixed here.",
+    "No anti-refusal experiment."
+  ],
+  "evaluation_reports": {
+    "ds4-ffn-coarse": {
+      "binary_sha256": "f1c712c30eef996513a3d66f594e2a5fdf152d25bd2c2f252b3c7b372b494430",
+      "prompts_sha256": "b31b0702b8d1aa262fd1db8285d5b53f4f46a0bc5657ea59ea2287cd7a93d3a9",
+      "summaries": {
+        "baseline": {
+          "samples": 2,
+          "median_words": 525.5,
+          "length_stops": 2,
+          "generation_errors": 0,
+          "constraint_passes": 0,
+          "constraint_cases": 0,
+          "max_repeated_4gram_fraction": 0.04158415841584162,
+          "max_character_run": 3,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.3504934994998621,
+          "median_decode_tokens_per_second": 28.238274520436768
+        },
+        "system_prompt": {
+          "samples": 2,
+          "median_words": 65.5,
+          "length_stops": 0,
+          "generation_errors": 0,
+          "constraint_passes": 0,
+          "constraint_cases": 0,
+          "max_repeated_4gram_fraction": 0.0,
+          "max_character_run": 2,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.6169598030101042,
+          "median_decode_tokens_per_second": 30.02276900779828
+        },
+        "ds4_ffn_s-1": {
+          "samples": 2,
+          "median_words": 200.5,
+          "length_stops": 0,
+          "generation_errors": 0,
+          "constraint_passes": 0,
+          "constraint_cases": 0,
+          "max_repeated_4gram_fraction": 0.0,
+          "max_character_run": 3,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.3139736180019099,
+          "median_decode_tokens_per_second": 29.319090393638653
+        },
+        "ds4_ffn_s-0.5": {
+          "samples": 2,
+          "median_words": 385.5,
+          "length_stops": 0,
+          "generation_errors": 0,
+          "constraint_passes": 0,
+          "constraint_cases": 0,
+          "max_repeated_4gram_fraction": 0.010610079575596787,
+          "max_character_run": 3,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.3602137065026909,
+          "median_decode_tokens_per_second": 28.449349543417686
+        },
+        "ds4_ffn_s0.5": {
+          "samples": 2,
+          "median_words": 484.0,
+          "length_stops": 2,
+          "generation_errors": 0,
+          "constraint_passes": 0,
+          "constraint_cases": 0,
+          "max_repeated_4gram_fraction": 0.006479481641468721,
+          "max_character_run": 4,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.3382964389893459,
+          "median_decode_tokens_per_second": 27.797393051170513
+        },
+        "ds4_ffn_s1": {
+          "samples": 2,
+          "median_words": 538.0,
+          "length_stops": 2,
+          "generation_errors": 0,
+          "constraint_passes": 0,
+          "constraint_cases": 0,
+          "max_repeated_4gram_fraction": 0.00540540540540535,
+          "max_character_run": 4,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.3393830339919077,
+          "median_decode_tokens_per_second": 27.79589866300772
+        },
+        "ds4_ffn_s2": {
+          "samples": 2,
+          "median_words": 366.5,
+          "length_stops": 2,
+          "generation_errors": 0,
+          "constraint_passes": 0,
+          "constraint_cases": 0,
+          "max_repeated_4gram_fraction": 0.19148936170212771,
+          "max_character_run": 3,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.34036571250180714,
+          "median_decode_tokens_per_second": 27.7632213520625
+        }
+      }
+    },
+    "ds4-ffn-constraints": {
+      "binary_sha256": "f1c712c30eef996513a3d66f594e2a5fdf152d25bd2c2f252b3c7b372b494430",
+      "prompts_sha256": "576e9f83983d10c487f38ed088912e5b4e790e6e4cb022f468b22597c6510978",
+      "summaries": {
+        "baseline": {
+          "samples": 6,
+          "median_words": 5.5,
+          "length_stops": 0,
+          "generation_errors": 0,
+          "constraint_passes": 6,
+          "constraint_cases": 6,
+          "max_repeated_4gram_fraction": 0.0,
+          "max_character_run": 4,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.6150918115163222,
+          "median_decode_tokens_per_second": 33.61349382032835
+        },
+        "system_prompt": {
+          "samples": 6,
+          "median_words": 6.5,
+          "length_stops": 0,
+          "generation_errors": 0,
+          "constraint_passes": 6,
+          "constraint_cases": 6,
+          "max_repeated_4gram_fraction": 0.0,
+          "max_character_run": 4,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.720635403500637,
+          "median_decode_tokens_per_second": 33.169769147487166
+        },
+        "ds4_ffn_s-1": {
+          "samples": 6,
+          "median_words": 6.5,
+          "length_stops": 0,
+          "generation_errors": 0,
+          "constraint_passes": 6,
+          "constraint_cases": 6,
+          "max_repeated_4gram_fraction": 0.0,
+          "max_character_run": 4,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.6144958285003668,
+          "median_decode_tokens_per_second": 33.22992796677007
+        },
+        "ds4_ffn_s-0.5": {
+          "samples": 6,
+          "median_words": 6.5,
+          "length_stops": 0,
+          "generation_errors": 0,
+          "constraint_passes": 6,
+          "constraint_cases": 6,
+          "max_repeated_4gram_fraction": 0.0,
+          "max_character_run": 4,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.6225504760077456,
+          "median_decode_tokens_per_second": 33.27008722692176
+        }
+      }
+    },
+    "ds4-ffn-validation": {
+      "binary_sha256": "f1c712c30eef996513a3d66f594e2a5fdf152d25bd2c2f252b3c7b372b494430",
+      "prompts_sha256": "b9c026f9c3355f196dc68c7722b3beaf0257af44af02100e2ec6d3054c1edb5c",
+      "summaries": {
+        "baseline": {
+          "samples": 10,
+          "median_words": 549.0,
+          "length_stops": 0,
+          "generation_errors": 0,
+          "constraint_passes": 0,
+          "constraint_cases": 0,
+          "max_repeated_4gram_fraction": 0.04405286343612336,
+          "max_character_run": 4,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.463792086506146,
+          "median_decode_tokens_per_second": 28.32856855542545
+        },
+        "system_prompt": {
+          "samples": 10,
+          "median_words": 65.0,
+          "length_stops": 0,
+          "generation_errors": 0,
+          "constraint_passes": 0,
+          "constraint_cases": 0,
+          "max_repeated_4gram_fraction": 0.05882352941176472,
+          "max_character_run": 2,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.6346109275182243,
+          "median_decode_tokens_per_second": 30.060671209544857
+        },
+        "ds4_ffn_s-1": {
+          "samples": 10,
+          "median_words": 98.0,
+          "length_stops": 0,
+          "generation_errors": 0,
+          "constraint_passes": 0,
+          "constraint_cases": 0,
+          "max_repeated_4gram_fraction": 0.07476635514018692,
+          "max_character_run": 4,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.4947288499970455,
+          "median_decode_tokens_per_second": 29.98061183508981
+        },
+        "ds4_ffn_s-0.5": {
+          "samples": 10,
+          "median_words": 333.5,
+          "length_stops": 0,
+          "generation_errors": 0,
+          "constraint_passes": 0,
+          "constraint_cases": 0,
+          "max_repeated_4gram_fraction": 0.08978328173374617,
+          "max_character_run": 4,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.4629011700017145,
+          "median_decode_tokens_per_second": 28.938722933378074
+        }
+      }
+    },
+    "ds4-ffn-heldout": {
+      "binary_sha256": "f1c712c30eef996513a3d66f594e2a5fdf152d25bd2c2f252b3c7b372b494430",
+      "prompts_sha256": "b9911bacf3526722723f74baedb90b981f07b5b8e12b0c5a79f85349eefd8195",
+      "summaries": {
+        "baseline": {
+          "samples": 15,
+          "median_words": 529,
+          "length_stops": 0,
+          "generation_errors": 0,
+          "constraint_passes": 0,
+          "constraint_cases": 0,
+          "max_repeated_4gram_fraction": 0.04103343465045595,
+          "max_character_run": 4,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.4775136489770375,
+          "median_decode_tokens_per_second": 28.19717338848673
+        },
+        "system_prompt": {
+          "samples": 15,
+          "median_words": 64,
+          "length_stops": 0,
+          "generation_errors": 0,
+          "constraint_passes": 0,
+          "constraint_cases": 0,
+          "max_repeated_4gram_fraction": 0.0,
+          "max_character_run": 2,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.6385008860088419,
+          "median_decode_tokens_per_second": 30.33666296707362
+        },
+        "ds4_ffn_s-0.5": {
+          "samples": 15,
+          "median_words": 350,
+          "length_stops": 0,
+          "generation_errors": 0,
+          "constraint_passes": 0,
+          "constraint_cases": 0,
+          "max_repeated_4gram_fraction": 0.046391752577319534,
+          "max_character_run": 4,
+          "max_replacement_characters": 0,
+          "median_first_text_seconds": 0.4702357870119158,
+          "median_decode_tokens_per_second": 29.049188331502503
+        }
+      }
+    }
+  },
+  "performance": {
+    "repetitions": 3,
+    "order": "off,steering,steering,off",
+    "samples_per_configuration": 6,
+    "prefill_tokens": 512,
+    "decode_tokens": 128,
+    "warmup_per_configuration": 1,
+    "medians": {
+      "off": {
+        "prefill_seconds": 1.101247165,
+        "decode_seconds": 4.58387405
+      },
+      "steering": {
+        "prefill_seconds": 1.10191553,
+        "decode_seconds": 4.6238699
+      }
+    },
+    "latency_increase_fraction": {
+      "prefill_seconds": 0.0006069164318802667,
+      "decode_seconds": 0.00872533790495389
+    },
+    "throughput_cost_fraction": {
+      "prefill_seconds": 0.0006065483077456468,
+      "decode_seconds": 0.008649864910775129
+    },
+    "scope": "Enabled versus disabled FFN site on same candidate executable; not a new original-baseline versus candidate disabled comparison."
+  },
+  "native_chat": {
+    "baseline": {
+      "words": 367,
+      "generated_tokens": 725,
+      "text": "Il pane lievita grazie a un processo biologico e chimico in cui dei microrganismi viventi (i **lieviti**) trasformano gli zuccheri presenti nella farina in gas.\n\nEcco una spiegazione dettagliata divisa per passaggi:\n\n### 1. I protagonisti: i lieviti\nIl lievito (che sia quello di birra, naturale o istantaneo) è composto da piccoli organismi unicellulari, principalmente il fungo *Saccharomyces cerevisiae*. Questi organismi sono \"vivi\" e, come tutti gli esseri viventi, hanno bisogno di nutrimento per sopravvivere e riprodursi.\n\n### 2. Il processo: la fermentazione\nQuando mescoli farina, acqua e lievito, avviene una reazione chimica chiamata **fermentazione alcolica**. Ecco cosa succede nel dettaglio:\n\n*   **Consumo degli zuccheri:** I lieviti iniziano a \"mangiare\" gli zuccheri semplici presenti nella farina (e quelli che si liberano durante la lavorazione dell'impasto).\n*   **Produzione di gas e alcol:** Come sottoprodotto di questo \"pasto\", i lieviti rilasciano due sostanze principali:\n    1.  **Anidride carbonica ($CO_2$):** È un gas.\n    2.  **Alcol etilico (etanolo):** Che evapora durante la cottura, lasciando però aromi e profumi tipici del pane.\n\n### 3. La struttura: la \"rete\" di glutine\nQui entra in gioco la farina. La farina contiene due proteine: la *gliadina* e la *glutenina*. Quando aggiungi acqua e impasti, queste due proteine si legano tra loro creando una maglia elastica e resistente chiamata **glutine**.\n\nSenza il glutine, il pane non lieviterebbe correttamente: il gas prodotto dai lieviti semplicemente uscirebbe dall'impasto e si disperderebbe nell'aria. Invece, la maglia glutinica agisce come una serie di **piccoli palloncini elastici** che intrappolano le bolle di anidride carbonica.\n\n### 4. Il risultato: l'espansione\nMan mano che i lieviti producono più gas, le bolle intrappolate nella maglia di glutine si gonfiano e si uniscono tra loro. Questo fa sì che l'intero volume dell'impasto aumenti: è questo l'effetto visibile della **lievitazione**.\n\n### Riassunto schematico:\n1.  **Lievito + Zuccheri della farina** $\\rightarrow$ **Anidride carbonica ($CO_2$)**.\n2.  **Anidride carbonica** $\\rightarrow$ Crea bolle di gas.\n3.  **Glutine** $\\rightarrow$ Trattiene le bolle di gas.\n4.  **Risultato** $\\rightarrow$ L'impasto si gonfia e diventa soffice.\n\n**Curiosità:** Quando inforni il pane, il calore del forno fa espandere ulteriormente il gas (per la legge dei gas), dando l'ultima spinta alla crescita (chiamata \"salto di forno\"), prima che la crosta si formi e blocchi definitivamente la struttura.",
+      "stdout_sha256": "c781b11ceaeb71b986728c85b24dd97632b1073d392f6430de8f07c41f12168c"
+    },
+    "steering": {
+      "words": 136,
+      "generated_tokens": 277,
+      "text": "Il pane lievita principalmente grazie all'azione dei **lieviti** (che siano lievito di birra o lievito naturale), i quali trasformano gli zuccheri presenti nella farina attraverso un processo chiamato **fermentazione**.\n\nEcco i passaggi chiave del processo:\n\n1.  **Consumo degli zuccheri:** I lieviti \"mangiano\" gli zuccheri semplici presenti nell'impasto.\n2.  **Produzione di gas:** Durante la fermentazione, i lieviti rilasciano **anidride carbonica** ($CO_2$) e piccole quantità di alcol.\n3.  **Cattura delle bolle:** L'anidride carbonica si accumula sotto forma di piccole bolle di gas all'interno dell'impasto.\n4.  **L'effetto \"palloncino\":** Grazie alla presenza del **glutine** (una rete proteica che si forma lavorando la farina), le bolle di gas rimangono intrappolate nell'impasto invece di scappare via. Questo fa gonfiare l'impasto, rendendolo più soffice e alveolato.\n\nIn sintesi: il pane lievita perché i lieviti producono gas che viene intrappolato dalla rete di glutine.",
+      "stdout_sha256": "e4ad97dd9b6cc6c417d6330a9ad596e5631810d5ff28812b082afa3011b62ef4"
+    },
+    "question": "Perché il pane lievita?",
+    "strength": -0.5
+  },
+  "regression_command": "make -o check-kv-load-bounds check-unit check-context check-steering check-steering-model check-runtime check-serve MODEL=...; python3 tests/check_steering_capture.py --model ...",
+  "regression_result": "pass, with known ASan gate omitted; not full check-all"
+}

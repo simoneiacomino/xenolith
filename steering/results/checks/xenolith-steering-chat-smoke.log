@@ -1,0 +1,11 @@
+xenolith: computing full model SHA-256...
+xenolith: model SHA-256 ready (5.36 s)
+xenolith: Intel(R) Graphics [0xb080] (8086:b080) is enabled but has not yet been tested with Xenolith; using existing kernels without XMX.
+xenolith: if inference works, please report your results so this device can be marked tested; if it fails, please report the problem. Include your device ID, system/driver versions, Xenolith commit, command and output: https://github.com/simoneiacomino/xenolith/issues
+you> assistant> Hello! How can I help you today
+[8 tokens | avg 35.7 tps]
+you> you> assistant> Hello!
+[2 tokens | avg 31.0 tps]
+you> you> assistant> Hello!
+[2 tokens | avg 30.9 tps]
+you> 

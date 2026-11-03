@@ -1,0 +1,107 @@
+[
+  {
+    "index": 0,
+    "essential_concepts": [
+      "Generates/stores distinct strong passwords",
+      "Protects account credentials"
+    ]
+  },
+  {
+    "index": 1,
+    "essential_concepts": [
+      "Maps terms to documents or positions",
+      "Speeds retrieval without scanning every document"
+    ]
+  },
+  {
+    "index": 2,
+    "essential_concepts": [
+      "Absorbs heat inside via refrigerant evaporation",
+      "Rejects heat outside with work supplied to a cycle"
+    ]
+  },
+  {
+    "index": 3,
+    "essential_concepts": [
+      "Avoid network overload",
+      "Adjust sending rate using congestion feedback"
+    ]
+  },
+  {
+    "index": 4,
+    "essential_concepts": [
+      "Control visibility/interference of concurrent transactions",
+      "Tradeoffs between anomalies and concurrency"
+    ]
+  },
+  {
+    "index": 5,
+    "essential_concepts": [
+      "Photovoltaic effect in semiconductor cells",
+      "Produces electric current from light"
+    ]
+  },
+  {
+    "index": 6,
+    "essential_concepts": [
+      "Backup retains recoverable historical copies",
+      "Replication can propagate changes/errors and is not equivalent to a backup"
+    ]
+  },
+  {
+    "index": 7,
+    "essential_concepts": [
+      "Growth changes with seasons",
+      "Growth layers become rings in suitable trees"
+    ]
+  },
+  {
+    "index": 8,
+    "essential_concepts": [
+      "Represents prerequisite relationships",
+      "Supports ordering/scheduling/build planning"
+    ]
+  },
+  {
+    "index": 9,
+    "essential_concepts": [
+      "Constant overhead and implementation details matter for small inputs",
+      "Asymptotic complexity describes growth rather than absolute runtime"
+    ]
+  },
+  {
+    "index": 10,
+    "essential_concepts": [
+      "Distribute requests among servers",
+      "Capacity/availability and health-aware routing"
+    ]
+  },
+  {
+    "index": 11,
+    "essential_concepts": [
+      "Yeast fermentation releases carbon dioxide",
+      "Gas is retained in the dough"
+    ]
+  },
+  {
+    "index": 12,
+    "essential_concepts": [
+      "Compare content-derived digest with an expected value",
+      "Trusted reference is needed to establish authenticity"
+    ]
+  },
+  {
+    "index": 13,
+    "essential_concepts": [
+      "Logs/recovery retain committed work and undo or ignore uncommitted work",
+      "Atomicity/durability"
+    ]
+  },
+  {
+    "index": 14,
+    "essential_concepts": [
+      "Underlying data can change before cached copies refresh",
+      "Invalidation or expiration controls freshness"
+    ]
+  }
+]

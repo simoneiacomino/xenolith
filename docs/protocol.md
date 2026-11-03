@@ -270,7 +270,10 @@ Invalid sampler values can terminate the engine rather than return a JSON error.
 
 Events have an `event` field instead of `ok`. Text and reasoning arrive as
 fragments; concatenate each channel independently. A fragment is not a reliable
-token count. Tool argument text may be buffered without producing text deltas.
+token count. Each frame contains valid UTF-8. Incomplete character bytes are
+buffered separately for text and reasoning until the next fragment; malformed
+bytes or an incomplete terminal character are emitted as U+FFFD. Clients can
+concatenate decoded strings without reconstructing token byte sequences. Tool argument text may be buffered without producing text deltas.
 
 | Event | Fields and meaning |
 |---|---|
@@ -519,3 +522,57 @@ and KV under the current identities; it never reuses computations from different
 weights. Original media integrity and preprocessing checks still apply. Older
 metadata-based visual records can supply media for replay, but their identities
 cannot establish compatible computed state.
+
+## Experimental activation steering
+
+Start with `--steering-dir DIR` to enable a local registry of artifacts imported
+with `xenolith steering-import`. This is independent of the vision protocol
+version. `describe.steering` reports `enabled`, the supported `site`, `modes`,
+`prospective: true`, and `preserves_reasoning_history: true`.
+The optional `sites` array lists `post_layer_residual_v1` and the experimental
+`post_ffn_output_v1` site. The singular `site` field remains the original/default
+site for older clients. The selected artifact manifest determines the actual
+site; the server does not reinterpret or convert direction payloads.
+
+The bound-session operation `steer` selects a registered artifact while idle:
+
+```json
+{"op":"steer","artifact":"<64-character-artifact-id>","strength":-0.25}
+```
+
+A successful reply has this shape:
+
+```json
+{"ok":true,"steering":{"artifact":"<64-character-artifact-id>","strength":-0.25,"position":128,"transitions":2}}
+```
+
+Omit `artifact` to inspect the current selection without changing it. Set
+`artifact` to JSON `null` to disable future interventions; its strength is zero.
+For an artifact ID the default strength is 1. Strength must be finite in float32.
+Unknown, missing, corrupted or model-incompatible IDs return `invalid_request`.
+Updates are durable before acknowledgement and cannot be applied during active
+generation. The server accepts IDs, not filesystem paths or vector uploads.
+
+`position` is the next model context position affected, counting tokens rather
+than visible characters. Cached KV and existing logits retain their historical
+values; a subsequent sample can use logits computed before the transition.
+Disabling steering does not undo the past. Repeated changes at one position
+are ordered as recorded, with the last one applying to new work there.
+
+The first transition freezes the current context projection. Later generated
+reasoning/control tokens remain in historical context even when the selected
+reasoning-history setting would ordinarily discard them. This preserves
+steering positions across replay and uses more context. Current reasoning
+budgets still govern future generation; changing them does not rewrite the
+frozen system prefix or its global thinking marker. Enable reasoning before the
+first transition, or rebuild after changing its settings, when that template
+marker is required. Rewind removes changes on the discarded
+branch; rebuild starts at position zero with the selected configuration.
+Historical artifacts must remain available after steering is disabled.
+
+For `ephemeral`, the optional field `steering` is an object with `artifact` and
+optional `strength`, or `null`. Each request starts with independent settings;
+omission means unsteered. For durable generations use `steer` before `generate`,
+rather than a `steering` field on `generate`. Steering applies to text-only
+sessions in this version; combining it with visual history/input is rejected.
+See [STEERING.md](../STEERING.md) for the artifact contract and numerical semantics.

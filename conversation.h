@@ -43,7 +43,8 @@ typedef enum {
     CONVERSATION_EVENT_SNAPSHOT_REF = 9,
     CONVERSATION_EVENT_CACHE_EPOCH = 10,
     CONVERSATION_EVENT_COMMIT = 11,
-    CONVERSATION_EVENT_REWIND = 12
+    CONVERSATION_EVENT_REWIND = 12,
+    CONVERSATION_EVENT_STEERING = 13
 } conversation_event_type;
 
 #define CONVERSATION_REWIND_ALL UINT64_MAX
@@ -168,6 +169,8 @@ typedef struct {
     uint64_t snapshot_boundary;
     uint64_t epoch;
     uint64_t rewind_target;
+    uint64_t steering_position;
+    float steering_strength;
 } conversation_event;
 
 typedef struct {
@@ -248,6 +251,10 @@ conversation_status conversation_append_tool_result(
 conversation_status conversation_append_snapshot_ref(
     conversation *c, const kvstore_id *snapshot, uint64_t token_boundary);
 conversation_status conversation_append_cache_epoch(conversation *c);
+size_t conversation_steering_count(const conversation *c);
+const conversation_event *conversation_steering_at(const conversation *c, size_t index);
+conversation_status conversation_append_steering(conversation *c, uint64_t position,
+                                                 const uint8_t artifact[32], float strength);
 conversation_status conversation_append_rewind(conversation *c,
                                                uint64_t target_event);
 conversation_status conversation_commit(conversation *c);

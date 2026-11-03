@@ -1,0 +1,142 @@
+gcc -O2 -std=c11 -Wall -Wextra -pthread -I. -o tests/test_steering tests/test_steering.c steering.c json.c format.c -lm
+./tests/test_steering
+steering loader, identity, import, failure atomicity and analytical operations: PASS
+python3 tests/check_steering_builder.py
+{"artifact": "7b6cdd527758c216d105441adf4374d94146fa3ffd141377affee3ace14fad4e", "manifest": "/tmp/xe-builder-test-fbea3pgj/projection/manifest.json", "mode": "projection", "layers": [0]}
+{"artifact": "2ab72071486658cd62829319eb5ecd52acae3196e72715fe3addc2e23a21b69c", "manifest": "/tmp/xe-builder-test-fbea3pgj/additive/manifest.json", "mode": "additive", "layers": [0]}
+{"artifact": "d2104c242e9234c979493e1536ac2d23c6634f786f47192e251e17f06caae5f8", "manifest": "/tmp/xe-builder-test-fbea3pgj/orthogonal/manifest.json", "mode": "projection", "layers": [0]}
+{"artifact": "2e2d8e3034153af282cfcf22dcd01c04ae43a49f26d151a0192c3d55e3614192", "manifest": "/tmp/xe-builder-test-fbea3pgj/completion/manifest.json", "mode": "additive", "layers": [0]}
+steering builder: mean differences, normalization, masks and provenance PASS
+CC='gcc' python3 tests/check_vision_weights.py
+xenolith: vision projector differs from the reference weights; using its full content identity for cache isolation.
+xenolith: vision projector differs from the reference weights; using its full content identity for cache isolation.
+xenolith: vision projector differs from the reference weights; using its full content identity for cache isolation.
+vision weights: 3 compatible variants and 26 invalid schemas PASS
+gcc -O3 -march=native -std=c11 -Wall -Wextra -pthread -DXE_BUILD_COMMIT='"82ae168ce"' -DXE_NUMERIC_SOURCE_HASH='"1e949aa1f7245c49218ea64b0d88966327432880c57261bf33b0733a4d1c668f"' -DXE_NUMERIC_CFLAGS_HASH='"2a745642dea153a3544b635f7d98d832ff8206bf8b8df1fe3d3111cac5c259f4"' -I. -o tests/test_cache_policy tests/test_cache_policy.c kvstore.o format.o vision.o vision_encoder.o xenolith_gpu_spv.o steering.o json.o -lm -lze_loader
+gcc -O2 -std=c11 -Wall -Wextra -pthread -I. -o tests/test_steering_history tests/test_steering_history.c conversation.o kvstore.o xenolith.o format.o steering.o json.o vision.o vision_encoder.o xenolith_gpu_spv.o -lm -lze_loader
+gcc -O3 -march=native -std=c11 -Wall -Wextra -pthread -DXE_BUILD_COMMIT='"82ae168ce"' -DXE_NUMERIC_SOURCE_HASH='"1e949aa1f7245c49218ea64b0d88966327432880c57261bf33b0733a4d1c668f"' -DXE_NUMERIC_CFLAGS_HASH='"2a745642dea153a3544b635f7d98d832ff8206bf8b8df1fe3d3111cac5c259f4"' -I. -o tests/test_decode tests/test_decode.c format.o vision.o vision_encoder.o xenolith_gpu_spv.o steering.o json.o -lm -lze_loader
+gcc -O3 -march=native -std=c11 -Wall -Wextra -pthread -DXE_BUILD_COMMIT='"82ae168ce"' -DXE_NUMERIC_SOURCE_HASH='"1e949aa1f7245c49218ea64b0d88966327432880c57261bf33b0733a4d1c668f"' -DXE_NUMERIC_CFLAGS_HASH='"2a745642dea153a3544b635f7d98d832ff8206bf8b8df1fe3d3111cac5c259f4"' -ffunction-sections -fdata-sections -I. -o tests/test_gpu_alloc tests/test_gpu_alloc.c \
+	-Wl,--gc-sections steering.o json.o format.o -lm
+gcc -O3 -march=native -std=c11 -Wall -Wextra -pthread -DXE_BUILD_COMMIT='"82ae168ce"' -DXE_NUMERIC_SOURCE_HASH='"1e949aa1f7245c49218ea64b0d88966327432880c57261bf33b0733a4d1c668f"' -DXE_NUMERIC_CFLAGS_HASH='"2a745642dea153a3544b635f7d98d832ff8206bf8b8df1fe3d3111cac5c259f4"' -ffunction-sections -fdata-sections -I. -o tests/test_prefill_host tests/test_prefill_host.c vision.c \
+	-Wl,--gc-sections steering.o json.o format.o -lm
+gcc -O3 -march=native -std=c11 -Wall -Wextra -pthread -DXE_BUILD_COMMIT='"82ae168ce"' -DXE_NUMERIC_SOURCE_HASH='"1e949aa1f7245c49218ea64b0d88966327432880c57261bf33b0733a4d1c668f"' -DXE_NUMERIC_CFLAGS_HASH='"2a745642dea153a3544b635f7d98d832ff8206bf8b8df1fe3d3111cac5c259f4"' -I. -o tests/test_context_limits tests/test_context_limits.c profile.o json.o conversation.o kvstore.o format.o vision.o vision_encoder.o xenolith_gpu_spv.o steering.o -lm -lze_loader
+In file included from tests/test_context_limits.c:5:
+tests/../runtime.c: In function ‘runtime_open_with_budget’:
+tests/../runtime.c:868:80: warning: ‘/vision-v1’ directive output may be truncated writing 10 bytes into a region of size between 1 and 4096 [-Wformat-truncation=]
+  868 |     int vision_path=snprintf(w->vision_cache_dir,sizeof w->vision_cache_dir,"%s/vision-v1",cache_dir?cache_dir:state_dir);
+      |                                                                                ^~~~~~~~~~
+In file included from /usr/include/stdio.h:974,
+                 from tests/../xenolith.h:5,
+                 from tests/../xenolith.c:5,
+                 from tests/test_context_limits.c:3:
+In function ‘snprintf’,
+    inlined from ‘runtime_open_with_budget’ at tests/../runtime.c:868:21:
+/usr/include/x86_64-linux-gnu/bits/stdio2.h:68:10: note: ‘__builtin___snprintf_chk’ output between 11 and 4106 bytes into a destination of size 4096
+   68 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   69 |                                    __glibc_objsize (__s), __fmt,
+      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   70 |                                    __va_arg_pack ());
+      |                                    ~~~~~~~~~~~~~~~~~
+tests/../runtime.c: In function ‘runtime_open_with_budget’:
+tests/../runtime.c:868:80: warning: ‘/vision-v1’ directive output may be truncated writing 10 bytes into a region of size between 1 and 4096 [-Wformat-truncation=]
+  868 |     int vision_path=snprintf(w->vision_cache_dir,sizeof w->vision_cache_dir,"%s/vision-v1",cache_dir?cache_dir:state_dir);
+      |                                                                                ^~~~~~~~~~
+In function ‘snprintf’,
+    inlined from ‘runtime_open_with_budget’ at tests/../runtime.c:868:21:
+/usr/include/x86_64-linux-gnu/bits/stdio2.h:68:10: note: ‘__builtin___snprintf_chk’ output between 11 and 4106 bytes into a destination of size 4096
+   68 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   69 |                                    __glibc_objsize (__s), __fmt,
+      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   70 |                                    __va_arg_pack ());
+      |                                    ~~~~~~~~~~~~~~~~~
+gcc -O3 -march=native -std=c11 -Wall -Wextra -pthread -DXE_BUILD_COMMIT='"82ae168ce"' -DXE_NUMERIC_SOURCE_HASH='"1e949aa1f7245c49218ea64b0d88966327432880c57261bf33b0733a4d1c668f"' -DXE_NUMERIC_CFLAGS_HASH='"2a745642dea153a3544b635f7d98d832ff8206bf8b8df1fe3d3111cac5c259f4"' -I. -o tests/test_visual_cache tests/test_visual_cache.c kvstore.o format.o vision.o vision_encoder.o xenolith_gpu_spv.o steering.o json.o -lm -lze_loader
+gcc -O3 -march=native -std=c11 -Wall -Wextra -pthread -DXE_BUILD_COMMIT='"82ae168ce"' -DXE_NUMERIC_SOURCE_HASH='"1e949aa1f7245c49218ea64b0d88966327432880c57261bf33b0733a4d1c668f"' -DXE_NUMERIC_CFLAGS_HASH='"2a745642dea153a3544b635f7d98d832ff8206bf8b8df1fe3d3111cac5c259f4"' -I. -o tests/test_visual_replay tests/test_visual_replay.c profile.o json.o conversation.o kvstore.o format.o vision.o vision_encoder.o xenolith_gpu_spv.o steering.o -lm -lze_loader
+In file included from tests/test_visual_replay.c:39:
+tests/../runtime.c: In function ‘runtime_open_with_budget’:
+tests/../runtime.c:868:80: warning: ‘/vision-v1’ directive output may be truncated writing 10 bytes into a region of size between 1 and 4096 [-Wformat-truncation=]
+  868 |     int vision_path=snprintf(w->vision_cache_dir,sizeof w->vision_cache_dir,"%s/vision-v1",cache_dir?cache_dir:state_dir);
+      |                                                                                ^~~~~~~~~~
+In file included from /usr/include/stdio.h:974,
+                 from tests/../xenolith.h:5,
+                 from tests/../xenolith.c:5,
+                 from tests/test_visual_replay.c:3:
+In function ‘snprintf’,
+    inlined from ‘runtime_open_with_budget’ at tests/../runtime.c:868:21:
+/usr/include/x86_64-linux-gnu/bits/stdio2.h:68:10: note: ‘__builtin___snprintf_chk’ output between 11 and 4106 bytes into a destination of size 4096
+   68 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   69 |                                    __glibc_objsize (__s), __fmt,
+      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   70 |                                    __va_arg_pack ());
+      |                                    ~~~~~~~~~~~~~~~~~
+tests/../runtime.c: In function ‘runtime_open_with_budget’:
+tests/../runtime.c:868:80: warning: ‘/vision-v1’ directive output may be truncated writing 10 bytes into a region of size between 1 and 4096 [-Wformat-truncation=]
+  868 |     int vision_path=snprintf(w->vision_cache_dir,sizeof w->vision_cache_dir,"%s/vision-v1",cache_dir?cache_dir:state_dir);
+      |                                                                                ^~~~~~~~~~
+In function ‘snprintf’,
+    inlined from ‘runtime_open_with_budget’ at tests/../runtime.c:868:21:
+/usr/include/x86_64-linux-gnu/bits/stdio2.h:68:10: note: ‘__builtin___snprintf_chk’ output between 11 and 4106 bytes into a destination of size 4096
+   68 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   69 |                                    __glibc_objsize (__s), __fmt,
+      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   70 |                                    __va_arg_pack ());
+      |                                    ~~~~~~~~~~~~~~~~~
+python3 tests/check_snapshot_compat.py --current-only --cc 'gcc' --base-cflags '-O3 -march=native -std=c11 -Wall -Wextra -pthread'
+model identity: complete SHA-256, payload changes, copies and cached reads PASS
+snapshot compatibility: cross-build v2, rejection checks and corruption PASS
+snapshot compatibility: exact wrapped SWA/global state PASS
+Host buffers only; model continuation still requires GPU/model validation.
+./tests/test_cache_policy
+cache: frequent saves preserve 32/64/128 milestones across reopen PASS
+cache: sparse thresholds, rewind and diverged-prefix reserves PASS
+cache: whole LRU stages preserve conversation recency across reopen PASS
+cache: successful access at full budget updates persistent LRU PASS
+cache: equal-recency ties stay in conversation order across stages PASS
+cache: crashes during LRU reduction preserve reserve and recency PASS
+cache: 256/512 global sharing saves 5240032 bytes PASS
+cache: independent manifests, branch isolation, post-commit reserve pruning PASS
+cache: insufficient budget preserves current points; disabled preserves files PASS
+cache: LRU eviction reduces the oldest conversation to its reserve; physical accounting PASS
+cache: failed writes and process crashes preserve committed checkpoints PASS
+cache: recomputed shared chunk repairs corruption atomically PASS
+steering loader, identity, import, failure atomicity and analytical operations: PASS
+steering history: frozen context, reasoning retention, restart and branch rewind PASS
+inference: ok
+format: primitives PASS
+sha256: portable C vectors, alignments, streaming and bounds PASS
+sha256: Intel SHA vectors, alignments, streaming and bounds PASS
+test_json: all checks passed
+decode: q8 contract PASS
+decode: V1 rel_rms=1.934e-07 ordered=exact repack=verified PASS
+decode: x8 specialized shapes ordered=exact PASS
+decode: GELU table PASS
+decode: norm 2.114e-07 rope 0.000e+00 PASS
+decode: sampler PASS
+conversation: create append commit reopen replay lock PASS
+conversation: byte-exact replay across copies PASS
+conversation: torn tails resume at last commit PASS
+conversation: committed damage vs final torn commit PASS
+conversation: embedded frame image stays torn tail PASS
+conversation: tool lifecycle outcome-unknown no-repeat PASS
+conversation: snapshot refs and cache epoch strip PASS
+conversation: list and trash delete PASS
+conversation: rejections and fault injection PASS
+conversation: rollback to durable commit PASS
+conversation: reasoning variants and projection PASS
+conversation: active projection survives load and rollback PASS
+conversation: default state dir PASS
+conversation: autosave policy PASS
+conversation: unknown critical and optional events PASS
+GPU allocation limits: PASS
+Prefill attention dispatch: PASS
+Prefill workspace layout and partial batches: PASS
+context limits: PASS
+visual cache: v3/ABI, legacy-v2 rejection, image-safe reserves, dedup=169876512/175116544 bytes, reopen and eviction PASS
+visual replay: prepared image borrowing, single preprocessing, replay ownership and persistence PASS
+vision input: boundaries, lengths, identity and finite rows PASS
+gcc -O2 -std=c11 -Wall -Wextra -pthread -I. -o tests/test_cli_context tests/test_cli_context.c
+./tests/test_cli_context
+cli context: 175 cases PASS

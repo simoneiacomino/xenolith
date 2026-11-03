@@ -1,0 +1,73 @@
+[
+  {
+    "index": 0,
+    "essential_concepts": [
+      "CDN caches/distributes content at edge servers",
+      "Nearby delivery reduces latency"
+    ]
+  },
+  {
+    "index": 1,
+    "essential_concepts": [
+      "Optimizations improve speed and/or resource use",
+      "Preserve intended program behavior"
+    ]
+  },
+  {
+    "index": 2,
+    "essential_concepts": [
+      "Stack: LIFO",
+      "Queue: FIFO"
+    ]
+  },
+  {
+    "index": 3,
+    "essential_concepts": [
+      "Gravity provides orbital acceleration",
+      "Tangential velocity and continuous free fall"
+    ]
+  },
+  {
+    "index": 4,
+    "essential_concepts": [
+      "Water vapor cools to/below dew point",
+      "Condensation forms liquid droplets"
+    ]
+  },
+  {
+    "index": 5,
+    "essential_concepts": [
+      "Private key creates signature",
+      "Public key verifies",
+      "Authenticity and integrity, not secrecy"
+    ]
+  },
+  {
+    "index": 6,
+    "essential_concepts": [
+      "Choose runnable tasks for available CPU",
+      "Scheduling policy/time-sharing or priorities"
+    ]
+  },
+  {
+    "index": 7,
+    "essential_concepts": [
+      "Detection identifies corruption",
+      "Correction reconstructs using redundancy"
+    ]
+  },
+  {
+    "index": 8,
+    "essential_concepts": [
+      "Referential integrity",
+      "Referenced non-null key must exist"
+    ]
+  },
+  {
+    "index": 9,
+    "essential_concepts": [
+      "Wavelength-dependent refraction/dispersion",
+      "Colors separate because wavelengths bend differently"
+    ]
+  }
+]
