@@ -141,6 +141,18 @@ int main(void) {
     free(payload);runtime_visual_release(&scratch);
     runtime_visual_release(&w);xe_image_free(&im);
     conversation_close(c);CHECK(conversation_delete(store,&id)==CONVERSATION_OK);
+    conversation *steered=NULL;conversation_id steered_id;
+    CHECK(conversation_create(store,&steered,&steered_id)==CONVERSATION_OK);
+    uint8_t direction[32]={1};
+    CHECK(conversation_append_steering(steered,0,direction,0.5f)==CONVERSATION_OK);
+    runtime steered_runtime={0};steered_runtime.engine=&e;
+    steered_runtime.current=steered;steered_runtime.has_current=1;
+    runtime_message mixed={0};mixed.kind=RUNTIME_MESSAGE_USER;mixed.image=png;mixed.image_length=sizeof png;
+    int before_mixed_decode=decodes;uint64_t before_events=conversation_event_count(steered);
+    CHECK(runtime_visual_append(&steered_runtime,&mixed,NULL)==RUNTIME_INVALID_ARGUMENT);
+    CHECK(strstr(runtime_error_text(&steered_runtime),"steering with visual input"));
+    CHECK(decodes==before_mixed_decode && conversation_event_count(steered)==before_events);
+    conversation_close(steered);CHECK(conversation_delete(store,&steered_id)==CONVERSATION_OK);
     conversation_store_close(store);
     puts("visual replay: prepared image borrowing, single preprocessing, replay ownership and persistence PASS");
     return 0;

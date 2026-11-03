@@ -1,0 +1,4 @@
+{"prompt": "What does a thermometer measure?", "positive": "Un termometro misura la temperatura.", "negative": "A thermometer measures temperature."}
+{"prompt": "What causes day and night?", "positive": "Il giorno e la notte sono causati dalla rotazione della Terra.", "negative": "Day and night are caused by the rotation of Earth."}
+{"prompt": "What do roots do for a plant?", "positive": "Le radici assorbono acqua e sali minerali e ancorano la pianta al terreno.", "negative": "Roots absorb water and minerals and anchor the plant in the soil."}
+{"prompt": "Why do we use passwords?", "positive": "Le password aiutano a proteggere gli account verificando che un utente conosca un segreto.", "negative": "Passwords help protect accounts by checking that a user knows a secret."}

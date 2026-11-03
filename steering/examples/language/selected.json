@@ -1,0 +1,11 @@
+[
+  {
+    "name": "instructions_l16_r0.3",
+    "artifact": "f866d1f97d1ccd77262810c57db431a90d59a2329c4dc515c6a27604daaeb8dc",
+    "strength": 0.5861355370624906,
+    "relative_displacement_estimate": 0.3,
+    "layer": 16,
+    "capture_recipe": "instructions",
+    "selection_reason": "10/10 validation answers predominantly Italian; cleaner wording than completion candidate; frozen before held-out evaluation"
+  }
+]

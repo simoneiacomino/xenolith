@@ -208,6 +208,9 @@ typedef struct {
     ze_kernel_handle_t prefill_attn_online_b8_swa_visual;
     ze_kernel_handle_t prefill_heads_q8;
     ze_kernel_handle_t prefill_rms_residual;
+    ze_kernel_handle_t steering;
+    ze_kernel_handle_t steering_ffn_normalize;
+    ze_kernel_handle_t steering_residual_finish;
     ze_kernel_handle_t prefill_swa_stage;
     ze_kernel_handle_t prefill_swa_commit;
     ze_kernel_handle_t prefill_ffn_input_q8;
@@ -232,6 +235,7 @@ typedef struct {
 } xe_gpu;
 
 struct xe_engine {
+    char *steering_directory;
     int context;
     xe_vision_model vision_model;
     void *vision_weights;
@@ -389,11 +393,37 @@ struct xe_session {
     int cow;
     int cow_split;
     int cow_capacity;
+    xe_steering_step *steering_steps;
+    float **steering_device;
+    size_t steering_count;
+    float *capture_rows;
+    xe_steering_site capture_site;
     int prefill_pending;
     int prefill_pending_start;
     int prefill_pending_rows;
     float *prefill_pending_hidden;
 };
+
+static int xe_steering_index(const xe_session *s, int position) {
+    int selected = -1;
+    for (size_t i = 0; i < s->steering_count; i++) {
+        if (s->steering_steps[i].position > position) break;
+        selected = (int)i;
+    }
+    return selected;
+}
+
+static void xe_steering_cpu_at(xe_session *s, int layer, int position, float *hidden, xe_steering_site site) {
+    int i = xe_steering_index(s, position);
+    if (i >= 0) {
+        const xe_steering_step *step = &s->steering_steps[i];
+        if(xe_steering_get_site(step->vector)==site)
+            xe_steering_apply(hidden, xe_steering_row(step->vector, layer),
+                             XE_EMBD, xe_steering_get_mode(step->vector), step->strength);
+    }
+    if (s->capture_rows && s->capture_site==site)
+        memcpy(s->capture_rows + (size_t)layer * XE_EMBD, hidden, XE_EMBD * sizeof(float));
+}
 
 static size_t xe_global_layer_elems(const xe_engine *e) {
     return (size_t)XE_GLOBAL_KV_HEADS * e->context * XE_GLOBAL_HEAD_DIM;
@@ -823,6 +853,18 @@ static void xe_gpu_init(xe_engine *e) {
                     zeKernelSetGroupSize(*prefill_handles[i],
                                          prefill_group_sizes[i], 1, 1));
     }
+    ze_kernel_desc_t steering_desc = {
+        .stype = ZE_STRUCTURE_TYPE_KERNEL_DESC, .pKernelName = "xe_steering_apply"
+    };
+    xe_ze_check("zeKernelCreate steering", zeKernelCreate(e->gpu.module, &steering_desc, &e->gpu.steering));
+    xe_ze_check("zeKernelSetGroupSize steering", zeKernelSetGroupSize(e->gpu.steering, 128, 1, 1));
+    const char *steering_names[]={"xe_steering_ffn_normalize","xe_steering_residual_finish"};
+    ze_kernel_handle_t *steering_handles[]={&e->gpu.steering_ffn_normalize,&e->gpu.steering_residual_finish};
+    for(int i=0;i<2;i++){
+        steering_desc.pKernelName=steering_names[i];
+        xe_ze_check("zeKernelCreate FFN steering",zeKernelCreate(e->gpu.module,&steering_desc,steering_handles[i]));
+        xe_ze_check("zeKernelSetGroupSize FFN steering",zeKernelSetGroupSize(*steering_handles[i],128,1,1));
+    }
     ze_kernel_desc_t kernel_desc = {
         .stype = ZE_STRUCTURE_TYPE_KERNEL_DESC,
         .pKernelName = "xe_probe"
@@ -917,6 +959,9 @@ static void xe_gpu_destroy(xe_engine *e) {
     if (e->gpu.prefill_swa_stage)
         xe_ze_check("zeKernelDestroy prefill swa stage",
                     zeKernelDestroy(e->gpu.prefill_swa_stage));
+    if (e->gpu.steering) xe_ze_check("zeKernelDestroy steering", zeKernelDestroy(e->gpu.steering));
+    if(e->gpu.steering_ffn_normalize)xe_ze_check("zeKernelDestroy FFN normalize",zeKernelDestroy(e->gpu.steering_ffn_normalize));
+    if(e->gpu.steering_residual_finish)xe_ze_check("zeKernelDestroy residual finish",zeKernelDestroy(e->gpu.steering_residual_finish));
     if (e->gpu.prefill_rms_residual)
         xe_ze_check("zeKernelDestroy prefill rms residual",
                     zeKernelDestroy(e->gpu.prefill_rms_residual));
@@ -4330,6 +4375,7 @@ int xe_engine_vision_numeric_fingerprint(xe_engine *e,uint8_t out[32]) {
 }
 
 void xe_engine_close(xe_engine *e) {
+    if (e) { free(e->steering_directory); e->steering_directory = NULL; }
     if (!e) return;
     xe_worker_pool_destroy(e);
     free(e->worker_cpus);
@@ -5228,7 +5274,7 @@ static void xe_attention_half_decode(xe_session *s, int layer, int pos) {
 #endif
 }
 
-static void xe_ffn_half_decode(xe_session *s, int layer, int moe_mode, int overlap_router) {
+static void xe_ffn_half_decode_at(xe_session *s, int layer, int moe_mode, int overlap_router, int position) {
 #ifdef XE_BENCH_TG_PROFILE
     double profile_start = xe_tg_profile_now();
 #endif
@@ -5263,12 +5309,17 @@ static void xe_ffn_half_decode(xe_session *s, int layer, int moe_mode, int overl
     xe_rmsnorm_engine(s->engine, s->moe_out, l->post_ffw_norm2, XE_EMBD, s->moe_out);
     for (int i = 0; i < XE_EMBD; i++) s->combined[i] = s->dense_out[i] + s->moe_out[i];
     xe_rmsnorm_engine(s->engine, s->combined, l->post_ffw_norm, XE_EMBD, s->combined);
+    xe_steering_cpu_at(s,layer,position,s->combined,XE_STEERING_FFN);
     float out_scale = l->layer_out_scale[0];
     for (int i = 0; i < XE_EMBD; i++)
         s->hidden[i] = (s->combined[i] + s->attn_out[i]) * out_scale;
 #ifdef XE_BENCH_TG_PROFILE
     xe_tg_profile_data.glue += xe_tg_profile_now() - profile_start;
 #endif
+}
+
+static void __attribute__((unused)) xe_ffn_half_decode(xe_session *s, int layer, int moe_mode, int overlap_router) {
+    xe_ffn_half_decode_at(s,layer,moe_mode,overlap_router,s->n_tokens);
 }
 
 typedef struct {
@@ -5323,6 +5374,90 @@ static void xe_output_decode(xe_session *s, int softcap_mode) {
 #endif
 }
 
+static void xe_steering_gpu_at(xe_session *s, int layer, float *hidden,
+                             int rows, int position, xe_steering_site site) {
+    xe_engine *e = s->engine;
+    int start = 0;
+    while (start < rows) {
+        int index = xe_steering_index(s, position + start);
+        int end = rows;
+        if ((size_t)(index + 1) < s->steering_count) {
+            int boundary = s->steering_steps[index + 1].position - position;
+            if (boundary < end) end = boundary;
+        }
+        if (index >= 0) {
+            const xe_steering_step *step = &s->steering_steps[index];
+            if (step->strength != 0 && xe_steering_get_site(step->vector)==site && xe_steering_active(step->vector, layer)) {
+                ze_kernel_handle_t k = e->gpu.steering;
+                float *data = hidden + (size_t)start * XE_EMBD;
+                const float *v = s->steering_device[index] + (size_t)layer * XE_EMBD;
+                xe_gpu_pointer_arg(k, 0, data);
+                xe_gpu_pointer_arg(k, 1, v);
+                xe_gpu_int_arg(k, 2, XE_EMBD);
+                xe_gpu_int_arg(k, 3, xe_steering_get_mode(step->vector));
+                xe_gpu_float_arg(k, 4, step->strength);
+                ze_group_count_t groups = { (uint32_t)(end - start), 1, 1 };
+                xe_ze_check("steering GPU launch", zeCommandListAppendLaunchKernel(
+                    e->gpu.commands, k, &groups, NULL, 0, NULL));
+            }
+        }
+        start = end;
+    }
+    if (s->capture_rows && s->capture_site==site)
+        xe_ze_check("capture layer output", zeCommandListAppendMemoryCopy(e->gpu.commands,
+            s->capture_rows + (size_t)layer * XE_EMBD,
+            hidden + (size_t)(rows - 1) * XE_EMBD, XE_EMBD * sizeof(float), NULL, 0, NULL));
+}
+
+static void xe_steering_gpu(xe_session *s,int layer,float *hidden,int rows,int position) {
+    xe_steering_gpu_at(s,layer,hidden,rows,position,XE_STEERING_RESIDUAL);
+}
+
+/* Recompute the FFN contribution into a scratch buffer. The existing fused
+ * finish and unsteered hidden states remain untouched, including during capture.
+ * Only rows with an active FFN intervention are recomposed with their residual. */
+static void xe_steering_ffn_gpu(xe_session *s,int layer,xe_prefill_workspace *w,int rows,int position) {
+    int needed=s->capture_rows && s->capture_site==XE_STEERING_FFN;
+    if(!needed){int possible=0;
+        for(size_t i=0;i<s->steering_count;i++)if(s->steering_steps[i].strength!=0 &&
+            xe_steering_get_site(s->steering_steps[i].vector)==XE_STEERING_FFN &&
+            xe_steering_active(s->steering_steps[i].vector,layer)){possible=1;break;}
+        if(!possible)return;
+    }
+    for(int row=0;row<rows && !needed;row++) {
+        int i=xe_steering_index(s,position+row);
+        if(i>=0){const xe_steering_step *step=&s->steering_steps[i];
+            needed=step->strength!=0 && xe_steering_get_site(step->vector)==XE_STEERING_FFN && xe_steering_active(step->vector,layer);}
+    }
+    if(!needed)return;
+    xe_engine *e=s->engine;const xe_layer *l=&e->layers[layer];
+    ze_kernel_handle_t k=e->gpu.steering_ffn_normalize;
+    xe_gpu_pointer_arg(k,0,w->dense_down);xe_gpu_pointer_arg(k,1,w->moe_output);
+    xe_gpu_pointer_arg(k,2,l->post_ffw_norm1);xe_gpu_pointer_arg(k,3,l->post_ffw_norm2);
+    xe_gpu_pointer_arg(k,4,l->post_ffw_norm);xe_gpu_int_arg(k,5,rows);
+    xe_gpu_int_arg(k,6,XE_EMBD);xe_gpu_float_arg(k,7,XE_RMS_EPS);
+    ze_group_count_t groups={(uint32_t)rows,1,1};
+    xe_ze_check("FFN capture normalize",zeCommandListAppendLaunchKernel(e->gpu.commands,k,&groups,NULL,0,NULL));
+    xe_steering_gpu_at(s,layer,w->dense_down,rows,position,XE_STEERING_FFN);
+    for(int start=0;start<rows;) {
+        int i=xe_steering_index(s,position+start),end=rows;
+        if((size_t)(i+1)<s->steering_count){int boundary=s->steering_steps[i+1].position-position;if(boundary<end)end=boundary;}
+        if(i>=0){const xe_steering_step *step=&s->steering_steps[i];
+            if(step->strength!=0 && xe_steering_get_site(step->vector)==XE_STEERING_FFN && xe_steering_active(step->vector,layer)) {
+                k=e->gpu.steering_residual_finish;
+                xe_gpu_pointer_arg(k,0,w->dense_down+(size_t)start*XE_EMBD);
+                xe_gpu_pointer_arg(k,1,w->attention_output+(size_t)start*XE_EMBD);
+                xe_gpu_pointer_arg(k,2,l->layer_out_scale);
+                xe_gpu_pointer_arg(k,3,w->hidden[1]+(size_t)start*XE_EMBD);
+                xe_gpu_int_arg(k,4,(end-start)*XE_EMBD);
+                groups.groupCountX=(uint32_t)(((end-start)*XE_EMBD+127)/128);
+                xe_ze_check("FFN steering residual",zeCommandListAppendLaunchKernel(e->gpu.commands,k,&groups,NULL,0,NULL));
+            }
+        }
+        start=end;
+    }
+}
+
 static void xe_prefill_batch_append_input(xe_session *s,
                                         const int32_t *tokens,
                                         int rows, int batch_start, const float *visual,
@@ -5356,7 +5491,9 @@ static void xe_prefill_batch_append_input(xe_session *s,
             tile.attention_output += (size_t)start * XE_EMBD;
             tile.hidden[1] += (size_t)start * XE_EMBD;
             xe_prefill_ffn_append(e, layer, &tile, tile_rows);
+            xe_steering_ffn_gpu(s,layer,&tile,tile_rows,batch_start+start);
         }
+        xe_steering_gpu(s, layer, w.hidden[1], rows, batch_start);
         if (s->layer_observer) {
             xe_ze_check("layer observer synchronize",
                         zeCommandListHostSynchronize(e->gpu.commands, UINT64_MAX));
@@ -5434,7 +5571,8 @@ static void xe_decode_token_mode(xe_session *s, int32_t token, int pos,
     xe_workers_begin(s->engine);
     for (int layer = 0; layer < XE_LAYERS; layer++) {
         xe_attention_half_decode(s, layer, pos);
-        xe_ffn_half_decode(s, layer, moe_mode, overlap_router);
+        xe_ffn_half_decode_at(s, layer, moe_mode, overlap_router, pos);
+        xe_steering_cpu_at(s, layer, pos, s->hidden, XE_STEERING_RESIDUAL);
         if (s->layer_observer)
             s->layer_observer(s->layer_observer_user, layer, pos, s->hidden, XE_EMBD);
     }
@@ -5707,8 +5845,104 @@ xe_session *xe_session_shadow_new(xe_session *source) {
     memcpy(s->hidden, source->hidden, XE_EMBD * sizeof(*s->hidden));
     memcpy(s->logits, source->logits, XE_VOCAB * sizeof(*s->logits));
     s->n_tokens = source->n_tokens;
+    if (!xe_session_steering_schedule(s, source->steering_steps, source->steering_count)) { xe_session_free(s); return NULL; }
+    s->n_tokens = source->n_tokens;
     return s;
 }
+
+int xe_engine_steering_store(xe_engine *e, const char *directory) {
+    struct stat st;
+    if (!e || !directory || stat(directory, &st) || !S_ISDIR(st.st_mode)) return 0;
+    char *copy = strdup(directory); if (!copy) return 0;
+    free(e->steering_directory); e->steering_directory = copy;
+    xe_engine_model_fingerprint(e); return 1;
+}
+const char *xe_engine_steering_directory(const xe_engine *e) { return e ? e->steering_directory : NULL; }
+int xe_engine_layer_count(const xe_engine *e) { return e ? XE_LAYERS : 0; }
+int xe_engine_hidden_width(const xe_engine *e) { return e ? XE_EMBD : 0; }
+
+static void xe_steering_clear(xe_session *s) {
+    for (size_t i = 0; i < s->steering_count; i++) {
+        int shared = 0;
+        for (size_t j = 0; j < i; j++) if (s->steering_device[j] == s->steering_device[i]) shared = 1;
+        if (!shared) xe_free(s->engine, s->steering_device[i], XE_MEM_SHARED);
+        xe_steering_release(s->steering_steps[i].vector);
+    }
+    free(s->steering_steps); free(s->steering_device);
+    s->steering_steps = NULL; s->steering_device = NULL; s->steering_count = 0;
+}
+
+int xe_session_steering_schedule(xe_session *s, const xe_steering_step *steps, size_t count) {
+    if (!s || count > 4096 || (count && !steps) || s->prefill_pending || s->engine->token_active)
+        return 0;
+    xe_require_owner(s->engine);
+    for (size_t i = 0; i < count; i++) {
+        const xe_steering_step *a = &steps[i];
+        if (a->position < 0 || a->position > s->engine->context ||
+            (i && a->position < steps[i-1].position) || !isfinite(a->strength) ||
+            (!a->vector && a->strength != 0) ||
+            (a->vector && (s->visual_context || s->capture_rows ||
+             xe_steering_layers(a->vector) != XE_LAYERS || xe_steering_width(a->vector) != XE_EMBD ||
+             memcmp(xe_steering_model(a->vector), xe_engine_model_fingerprint(s->engine), 32)))) return 0;
+    }
+    size_t common = 0;
+    while (common < count && common < s->steering_count) {
+        const xe_steering_step *a = &steps[common], *b = &s->steering_steps[common];
+        if (a->position != b->position || a->strength != b->strength ||
+            (!!a->vector != !!b->vector) || (a->vector && strcmp(xe_steering_id(a->vector),xe_steering_id(b->vector)))) break;
+        common++;
+    }
+    if (common == count && common == s->steering_count) return 1;
+    int changed = s->engine->context;
+    if (common < count) changed = steps[common].position;
+    if (common < s->steering_count && s->steering_steps[common].position < changed)
+        changed = s->steering_steps[common].position;
+    xe_steering_step *copy = count ? calloc(count, sizeof *copy) : NULL;
+    float **device = count ? calloc(count, sizeof *device) : NULL;
+    if (count && (!copy || !device)) {free(copy); free(device); return 0;}
+    for (size_t i = 0; i < count; i++) {
+        copy[i] = steps[i]; xe_steering_retain(copy[i].vector);
+        if (!copy[i].vector || copy[i].strength == 0) continue;
+        for (size_t j = 0; j < i; j++)
+            if (copy[j].vector && copy[j].strength != 0 &&
+                !strcmp(xe_steering_id(copy[j].vector), xe_steering_id(copy[i].vector))) {device[i] = device[j]; break;}
+        if (device[i]) continue;
+        device[i] = xe_alloc(s->engine, (size_t)XE_LAYERS * XE_EMBD * sizeof(float), XE_MEM_SHARED);
+        memset(device[i], 0, (size_t)XE_LAYERS * XE_EMBD * sizeof(float));
+        for (int l = 0; l < XE_LAYERS; l++) {
+            const float *row = xe_steering_row(copy[i].vector, l);
+            if (row) memcpy(device[i] + (size_t)l * XE_EMBD, row, XE_EMBD * sizeof(float));
+        }
+    }
+    xe_steering_clear(s);
+    s->steering_steps = copy; s->steering_device = device; s->steering_count = count;
+    if (changed < s->n_tokens) { s->n_tokens = 0; s->anchor_valid = 0; }
+    return 1;
+}
+
+int xe_session_steering_set(xe_session *s, xe_steering *v, float strength) {
+    if (!s) return 0;
+    if (!v && !s->steering_count) return 1;
+    size_t n = s->steering_count;
+    xe_steering_step *steps = malloc((n + 1) * sizeof *steps);
+    if (!steps) return 0;
+    if (n) memcpy(steps, s->steering_steps, n * sizeof *steps);
+    steps[n] = (xe_steering_step){s->n_tokens, v, v ? strength : 0};
+    int ok = xe_session_steering_schedule(s, steps, n + 1); free(steps); return ok;
+}
+size_t xe_session_steering_count(const xe_session *s) { return s ? s->steering_count : 0; }
+const xe_steering_step *xe_session_steering_steps(const xe_session *s) { return s ? s->steering_steps : NULL; }
+int xe_session_capture_enable_at(xe_session *s, xe_steering_site site) {
+    if (!s || s->n_tokens || s->steering_count || s->visual_context ||
+        s->prefill_pending || s->engine->token_active ||
+        (site!=XE_STEERING_RESIDUAL && site!=XE_STEERING_FFN)) return 0;
+    xe_require_owner(s->engine);
+    if (!s->capture_rows) s->capture_rows = xe_alloc(s->engine, (size_t)XE_LAYERS * XE_EMBD * sizeof(float), XE_MEM_SHARED);
+    s->capture_site=site;
+    return 1;
+}
+int xe_session_capture_enable(xe_session *s) {return xe_session_capture_enable_at(s,XE_STEERING_RESIDUAL);}
+const float *xe_session_capture_rows(const xe_session *s) { return s ? s->capture_rows : NULL; }
 
 void xe_session_free(xe_session *s) {
     if (!s) return;
@@ -5729,6 +5963,8 @@ void xe_session_free(xe_session *s) {
                   ? source->n_tokens : s->n_tokens;
         xe_session_swa_mark(source, s->cow_split, end);
     }
+    xe_steering_clear(s);
+    xe_free(e, s->capture_rows, XE_MEM_SHARED);
     xe_free(e, s->anchor_logits, XE_MEM_HOST);
     xe_free(e, s->anchor_swa_v, XE_MEM_HOST);
     xe_free(e, s->anchor_swa_k, XE_MEM_HOST);
@@ -5966,6 +6202,7 @@ int xe_session_has_visual(const xe_session *s) {
 }
 
 int xe_session_sync_input_report(xe_session *s,const xe_input *in,xe_sync_report *report) {
+    if (s && in && in->visual_count && s->steering_count) return 0;
     if(!s||s->cow||s->prefill_pending||!xe_input_layout_valid(in,s->engine->context))return 0;
     xe_require_owner(s->engine);
     int previous=s->n_tokens;
@@ -6667,11 +6904,34 @@ static void xe_snapshot_encode_directory(const xe_snapshot_layout *layout,
     }
 }
 
-static void xe_snapshot_encode_header(xe_engine *e,
+static void xe_steering_numeric(xe_session *s, uint64_t position, uint8_t out[32]) {
+    const uint8_t *base = s->engine->snapshot_fingerprint[XE_SNAPSHOT_FP_NUMERIC];
+    int effective = 0;
+    for (size_t i = 0; i < s->steering_count; i++)
+        if ((uint64_t)s->steering_steps[i].position < position &&
+            s->steering_steps[i].vector && s->steering_steps[i].strength != 0) effective = 1;
+    if (!effective) {memcpy(out, base, 32); return;}
+    format_sha256 hash; format_sha256_init(&hash);
+    format_sha256_update(&hash, "xe-steered-numeric-v1", 21);
+    format_sha256_update(&hash, base, 32);
+    for (size_t i = 0; i < s->steering_count; i++) {
+        const xe_steering_step *step = &s->steering_steps[i];
+        if ((uint64_t)step->position >= position) break;
+        uint8_t bytes[8]; uint32_t bits; memcpy(&bits, &step->strength, 4);
+        format_put_u32le(bytes, (uint32_t)step->position); format_put_u32le(bytes+4, bits);
+        format_sha256_update(&hash, bytes, 8);
+        const char *id = xe_steering_id(step->vector);
+        format_sha256_update(&hash, id ? id : "off", id ? 64 : 3);
+    }
+    format_sha256_final(&hash, out);
+}
+
+static void xe_snapshot_encode_header(xe_session *s,
                                       const xe_snapshot_layout *layout,
                                       const uint8_t boundary[32],
                                       const uint8_t *directory,
                                       uint8_t header[XE_SNAPSHOT_HEADER_SIZE]) {
+    xe_engine *e = s->engine;
     memset(header, 0, XE_SNAPSHOT_HEADER_SIZE);
     memcpy(header, xe_snapshot_magic, sizeof xe_snapshot_magic);
     format_put_u16le(header + 8, XE_SNAPSHOT_FORMAT_VERSION);
@@ -6691,6 +6951,7 @@ static void xe_snapshot_encode_header(xe_engine *e,
                                   (size_t)layout->directory_length));
     for (int i = 0; i < XE_SNAPSHOT_FP_COUNT; i++)
         memcpy(header + 96 + 32 * i, e->snapshot_fingerprint[i], 32);
+    xe_steering_numeric(s, layout->position, header + 96 + 32 * XE_SNAPSHOT_FP_NUMERIC);
     memcpy(header + 288, boundary, 32);
     format_put_u32le(header + 320, XE_SNAPSHOT_NUMERIC_ABI);
     /* Diagnostic strings are NUL-terminated and truncated to fit. They are
@@ -6755,7 +7016,7 @@ xe_snapshot_status xe_session_snapshot_stream(xe_session *s, FILE *out) {
 
     xe_snapshot_boundary_hash(s->tokens, s->n_tokens, boundary);
     xe_snapshot_encode_directory(&layout, directory);
-    xe_snapshot_encode_header(s->engine, &layout, boundary, directory, header);
+    xe_snapshot_encode_header(s, &layout, boundary, directory, header);
     if (s->visual_context) {
         xe_input input=s->visual_context->owned.input;
         input.tokens=s->tokens;input.count=s->n_tokens;
@@ -6804,11 +7065,14 @@ static int xe_snapshot_all_zero(const uint8_t *p, size_t n) {
 }
 
 static xe_snapshot_status xe_snapshot_parse_header(
-        xe_engine *e, FILE *in, const xe_tokens *expected, const xe_input *mixed,
+        xe_session *session, FILE *in, const xe_tokens *expected, const xe_input *mixed,
         xe_snapshot_layout *layout,
         uint8_t saved_header[XE_SNAPSHOT_HEADER_SIZE],
         uint8_t saved_directory[XE_SNAPSHOT_MAX_SECTIONS *
                                 XE_SNAPSHOT_ENTRY_SIZE]) {
+    xe_engine *e = session->engine;
+    uint8_t steering_numeric[32];
+    xe_steering_numeric(session, (uint64_t)expected->len, steering_numeric);
     uint64_t actual_size;
     if (!format_file_size(in, &actual_size) || !format_seek(in, 0) ||
         !format_read(in, saved_header, XE_SNAPSHOT_HEADER_SIZE))
@@ -6937,10 +7201,11 @@ static xe_snapshot_status xe_snapshot_parse_header(
         if(format_get_u32le(saved_header+352)!=XE_SNAPSHOT_NUMERIC_ABI ||
            memcmp(numeric,visual_numeric,32))return XE_SNAPSHOT_NUMERIC_MISMATCH;
     } else if (version == 1) {
-        if (!xe_snapshot_legacy_numeric_matches(e, numeric))
+        if (memcmp(steering_numeric,e->snapshot_fingerprint[XE_SNAPSHOT_FP_NUMERIC],32) ||
+            !xe_snapshot_legacy_numeric_matches(e, numeric))
             return XE_SNAPSHOT_NUMERIC_MISMATCH;
     } else if (format_get_u32le(saved_header + 320) != XE_SNAPSHOT_NUMERIC_ABI ||
-               memcmp(numeric, e->snapshot_fingerprint[XE_SNAPSHOT_FP_NUMERIC], 32)) {
+               memcmp(numeric, steering_numeric, 32)) {
         return XE_SNAPSHOT_NUMERIC_MISMATCH;
     }
     uint8_t boundary[32];
@@ -7076,7 +7341,7 @@ xe_snapshot_status xe_session_snapshot_check_prefix(xe_session *s, FILE *in,
     uint8_t directory[XE_SNAPSHOT_MAX_SECTIONS * XE_SNAPSHOT_ENTRY_SIZE];
     xe_snapshot_layout layout;
     xe_snapshot_status status = xe_snapshot_parse_header(
-        s->engine, in, &expected, mixed, &layout, header, directory);
+        s, in, &expected, mixed, &layout, header, directory);
     if (status != XE_SNAPSHOT_OK) return status;
     uint8_t *buffer = malloc(XE_SNAPSHOT_BUFFER_SIZE);
     if (!buffer) return XE_SNAPSHOT_NOMEM;
@@ -7098,7 +7363,7 @@ static xe_snapshot_status xe_session_snapshot_load_impl(xe_session *s, FILE *in,
     uint8_t directory[XE_SNAPSHOT_MAX_SECTIONS * XE_SNAPSHOT_ENTRY_SIZE];
     xe_snapshot_layout layout;
     xe_snapshot_status status = xe_snapshot_parse_header(
-        s->engine, in, expected, mixed, &layout, header, directory);
+        s, in, expected, mixed, &layout, header, directory);
     if (status != XE_SNAPSHOT_OK) return status;
     uint8_t *buffer = malloc(XE_SNAPSHOT_BUFFER_SIZE);
     if (!buffer) return XE_SNAPSHOT_NOMEM;
@@ -7186,3 +7451,4 @@ void xe_session_set_layer_observer(xe_session *s, xe_layer_observer observer,
     s->layer_observer = observer;
     s->layer_observer_user = user;
 }
+

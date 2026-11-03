@@ -96,6 +96,15 @@ tests/test_vision_session
 
 /tools/vision_decode_reference
 
+# Locally generated steering artifacts and test executables.
+/steering/local/
+/tests/test_steering
+/tests/test_steering_history
+/tests/test_steering_gpu
+/tests/test_steering_model
+/tests/test_steering_ffn_gpu
+/bench/bench_steering
+
 /tests/test_cli_config
 
 /tests/test_tokenizer_model

@@ -1,0 +1,11 @@
+{
+  "source": "https://github.com/antirez/ds4",
+  "revision": "ee7e8405232c8971000cc7ba2b945b00bf6d20d3",
+  "pairs": 100,
+  "source_sha256": {
+    "LICENSE": "4a8a1358f5b048627d71e4988de0bafd386f4988991929629e6cb9e29b7b9b2f",
+    "verbose.txt": "5778100636dfefc1890da18df5035b8f013227a80d3eec25f069b5b5ff2c84c9",
+    "eval_prompts.txt": "ef74f04d95740daab2f5bf11a95512cce11d7997bd6ce2cb8b02c4db84ae47c1",
+    "succinct.txt": "28fd3fc5319709d31d961343ea7fd6879813b087baaa00543eab1868a2e4fb14"
+  }
+}

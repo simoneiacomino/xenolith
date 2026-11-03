@@ -1,0 +1,37 @@
+{
+  "status": "complete",
+  "summary": [
+    {
+      "context": 65536,
+      "phase": "pp2048",
+      "text_prefill_rows": 512,
+      "baseline_median_tokens_per_second": 419.1692035,
+      "candidate_median_tokens_per_second": 419.229283,
+      "change_percent": 0.014332994766408369
+    },
+    {
+      "context": 65536,
+      "phase": "tg128",
+      "text_prefill_rows": 512,
+      "baseline_median_tokens_per_second": 31.0737755,
+      "candidate_median_tokens_per_second": 31.2073685,
+      "change_percent": 0.42992200931619706
+    },
+    {
+      "context": 131072,
+      "phase": "pp2048",
+      "text_prefill_rows": 512,
+      "baseline_median_tokens_per_second": 417.691905,
+      "candidate_median_tokens_per_second": 417.8231565,
+      "change_percent": 0.03142304134431395
+    },
+    {
+      "context": 131072,
+      "phase": "tg128",
+      "text_prefill_rows": 512,
+      "baseline_median_tokens_per_second": 30.9124895,
+      "candidate_median_tokens_per_second": 30.899126000000003,
+      "change_percent": -0.04323009960099933
+    }
+  ]
+}

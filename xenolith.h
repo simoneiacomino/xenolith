@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "vision.h"
+#include "steering.h"
 
 #ifndef XE_BUILD_COMMIT
 #define XE_BUILD_COMMIT "unknown"
@@ -142,6 +143,25 @@ typedef void (*xe_layer_observer)(void *user, int layer, int position,
 void xe_session_set_layer_observer(xe_session *s, xe_layer_observer observer,
                                    void *user);
 
+/* Ordered prospective transitions. The session retains artifact references.
+ * Replacing history invalidates only a prefix computed under different settings. */
+typedef struct {
+    int position;
+    xe_steering *vector; /* NULL disables steering. */
+    float strength;
+} xe_steering_step;
+int xe_engine_steering_store(xe_engine *e, const char *directory);
+const char *xe_engine_steering_directory(const xe_engine *e);
+int xe_engine_layer_count(const xe_engine *e);
+int xe_engine_hidden_width(const xe_engine *e);
+int xe_session_steering_schedule(xe_session *s, const xe_steering_step *steps, size_t count);
+int xe_session_steering_set(xe_session *s, xe_steering *vector, float strength);
+size_t xe_session_steering_count(const xe_session *s);
+const xe_steering_step *xe_session_steering_steps(const xe_session *s);
+/* Enable unsteered last-token activation capture; rows are session-owned. */
+int xe_session_capture_enable(xe_session *s);
+int xe_session_capture_enable_at(xe_session *s, xe_steering_site site);
+const float *xe_session_capture_rows(const xe_session *s);
 xe_session *xe_session_new(xe_engine *e);
 void xe_session_free(xe_session *s);
 void xe_session_reset(xe_session *s);

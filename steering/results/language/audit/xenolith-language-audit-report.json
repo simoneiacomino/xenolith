@@ -1,0 +1,186 @@
+{
+  "left": "/tmp/xenolith-language-audit-cpu",
+  "right": "/tmp/xenolith-language-audit-gpu",
+  "layers": [
+    {
+      "layer": 0,
+      "max_activation_relative_l2": 0.0016066845704745245,
+      "max_contrast_relative_l2": 0.12726580581068017,
+      "min_contrast_cosine": 0.9918779391063207
+    },
+    {
+      "layer": 1,
+      "max_activation_relative_l2": 0.0028081881580845503,
+      "max_contrast_relative_l2": 0.11269857005218252,
+      "min_contrast_cosine": 0.99367649560285
+    },
+    {
+      "layer": 2,
+      "max_activation_relative_l2": 0.006392568222736143,
+      "max_contrast_relative_l2": 0.13002130857626062,
+      "min_contrast_cosine": 0.9916034727789973
+    },
+    {
+      "layer": 3,
+      "max_activation_relative_l2": 0.005936175320806211,
+      "max_contrast_relative_l2": 0.03736720034047344,
+      "min_contrast_cosine": 0.9993016047231383
+    },
+    {
+      "layer": 4,
+      "max_activation_relative_l2": 0.005687146818460287,
+      "max_contrast_relative_l2": 0.034170901075199586,
+      "min_contrast_cosine": 0.9994161276068783
+    },
+    {
+      "layer": 5,
+      "max_activation_relative_l2": 0.011833174101130314,
+      "max_contrast_relative_l2": 0.034568672823959666,
+      "min_contrast_cosine": 0.9994236590928929
+    },
+    {
+      "layer": 6,
+      "max_activation_relative_l2": 0.012816773697136852,
+      "max_contrast_relative_l2": 0.03363101231478282,
+      "min_contrast_cosine": 0.9994686224012009
+    },
+    {
+      "layer": 7,
+      "max_activation_relative_l2": 0.011104689507215696,
+      "max_contrast_relative_l2": 0.0374891905127331,
+      "min_contrast_cosine": 0.9993715555117636
+    },
+    {
+      "layer": 8,
+      "max_activation_relative_l2": 0.017314935517250787,
+      "max_contrast_relative_l2": 0.07011488949213984,
+      "min_contrast_cosine": 0.9977091158873299
+    },
+    {
+      "layer": 9,
+      "max_activation_relative_l2": 0.016924836613814078,
+      "max_contrast_relative_l2": 0.06615538015949275,
+      "min_contrast_cosine": 0.9978801378816751
+    },
+    {
+      "layer": 10,
+      "max_activation_relative_l2": 0.01691075635639716,
+      "max_contrast_relative_l2": 0.059564514202280906,
+      "min_contrast_cosine": 0.9982420461527353
+    },
+    {
+      "layer": 11,
+      "max_activation_relative_l2": 0.01798097456925249,
+      "max_contrast_relative_l2": 0.06379500400160115,
+      "min_contrast_cosine": 0.9979747694623706
+    },
+    {
+      "layer": 12,
+      "max_activation_relative_l2": 0.014874163254297008,
+      "max_contrast_relative_l2": 0.0658769803630904,
+      "min_contrast_cosine": 0.9978611873387724
+    },
+    {
+      "layer": 13,
+      "max_activation_relative_l2": 0.018031753042024826,
+      "max_contrast_relative_l2": 0.077445884805351,
+      "min_contrast_cosine": 0.9970050300063727
+    },
+    {
+      "layer": 14,
+      "max_activation_relative_l2": 0.01634144575212966,
+      "max_contrast_relative_l2": 0.06829252237309882,
+      "min_contrast_cosine": 0.9976960443844113
+    },
+    {
+      "layer": 15,
+      "max_activation_relative_l2": 0.014939028355547194,
+      "max_contrast_relative_l2": 0.05474651587635199,
+      "min_contrast_cosine": 0.9985040113190152
+    },
+    {
+      "layer": 16,
+      "max_activation_relative_l2": 0.02481572964269918,
+      "max_contrast_relative_l2": 0.054909334101323544,
+      "min_contrast_cosine": 0.9984942028519553
+    },
+    {
+      "layer": 17,
+      "max_activation_relative_l2": 0.019802178911464966,
+      "max_contrast_relative_l2": 0.044990039934121075,
+      "min_contrast_cosine": 0.998987703206525
+    },
+    {
+      "layer": 18,
+      "max_activation_relative_l2": 0.020056846202355302,
+      "max_contrast_relative_l2": 0.044162984653498175,
+      "min_contrast_cosine": 0.9990295506839125
+    },
+    {
+      "layer": 19,
+      "max_activation_relative_l2": 0.016786357954907644,
+      "max_contrast_relative_l2": 0.041908716837727296,
+      "min_contrast_cosine": 0.999122734241934
+    },
+    {
+      "layer": 20,
+      "max_activation_relative_l2": 0.016353542390325368,
+      "max_contrast_relative_l2": 0.038765026988753885,
+      "min_contrast_cosine": 0.9992545086536556
+    },
+    {
+      "layer": 21,
+      "max_activation_relative_l2": 0.018362569554977132,
+      "max_contrast_relative_l2": 0.039269333427222705,
+      "min_contrast_cosine": 0.9992286639735567
+    },
+    {
+      "layer": 22,
+      "max_activation_relative_l2": 0.04431581725907323,
+      "max_contrast_relative_l2": 0.0735163855611378,
+      "min_contrast_cosine": 0.9972942152065419
+    },
+    {
+      "layer": 23,
+      "max_activation_relative_l2": 0.04195734368852058,
+      "max_contrast_relative_l2": 0.06733476888282912,
+      "min_contrast_cosine": 0.9977316794232104
+    },
+    {
+      "layer": 24,
+      "max_activation_relative_l2": 0.04025499029112004,
+      "max_contrast_relative_l2": 0.06193224904366646,
+      "min_contrast_cosine": 0.9980888955313418
+    },
+    {
+      "layer": 25,
+      "max_activation_relative_l2": 0.04764395446574962,
+      "max_contrast_relative_l2": 0.059514868566764405,
+      "min_contrast_cosine": 0.998237910405662
+    },
+    {
+      "layer": 26,
+      "max_activation_relative_l2": 0.05001777154888827,
+      "max_contrast_relative_l2": 0.059776572905585905,
+      "min_contrast_cosine": 0.9982188109674611
+    },
+    {
+      "layer": 27,
+      "max_activation_relative_l2": 0.06343445598081503,
+      "max_contrast_relative_l2": 0.06743264331814398,
+      "min_contrast_cosine": 0.9977271205406395
+    },
+    {
+      "layer": 28,
+      "max_activation_relative_l2": 0.06054354490067782,
+      "max_contrast_relative_l2": 0.06421939655818733,
+      "min_contrast_cosine": 0.9979749393832247
+    },
+    {
+      "layer": 29,
+      "max_activation_relative_l2": 0.039196498360466854,
+      "max_contrast_relative_l2": 0.06570566736357036,
+      "min_contrast_cosine": 0.9978971694512657
+    }
+  ]
+}

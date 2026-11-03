@@ -43,6 +43,8 @@ void json_writer_reset(json_writer *w);
 void json_writer_free(json_writer *w);
 int json_raw(json_writer *w, const char *text);
 int json_rawn(json_writer *w, const void *data, size_t length);
+/* Trailing bytes of a valid, incomplete UTF-8 sequence (zero when complete). */
+size_t json_utf8_incomplete_tail(const char *text, size_t length);
 int json_string(json_writer *w, const char *text, size_t length);
 int json_u64(json_writer *w, uint64_t value);
 int json_i64(json_writer *w, int64_t value);

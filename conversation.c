@@ -7,6 +7,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
@@ -21,7 +22,7 @@ enum {
     CONVERSATION_SETTINGS_OLD_SIZE = 40,
     CONVERSATION_SETTINGS_SIZE = 56,
     CONVERSATION_FRAME_CRITICAL = 1,
-    CONVERSATION_MAX_EVENT_TYPE = 12,
+    CONVERSATION_MAX_EVENT_TYPE = 13,
     CONVERSATION_TOKEN_LIMIT = 262143,
     CONVERSATION_CONTEXT_CAPACITY = 262144
 };
@@ -100,6 +101,8 @@ struct conversation {
     conversation_visible *visible;
     size_t visible_count;
     size_t visible_capacity;
+    uint64_t *steering_events;
+    size_t steering_count, steering_capacity;
     uint64_t applied_events;
     uint64_t appended_tokens;
     uint8_t chain[32];
@@ -593,6 +596,21 @@ static int conversation_node_parse(conversation_node *node) {
     case CONVERSATION_EVENT_CACHE_EPOCH:
         return conversation_fields_parse(payload, length, fields, 1) &&
                conversation_field_u64(&fields[0], &view->epoch);
+    case CONVERSATION_EVENT_STEERING: {
+        uint32_t bits;
+        if (!conversation_fields_parse(payload, length, fields, 5) ||
+            !conversation_field_u64(&fields[0], &view->steering_position) ||
+            !fields[1].present || fields[1].length != 32 ||
+            !conversation_field_u32(&fields[2], &bits) ||
+            !fields[3].present || !fields[4].present || fields[4].length % 8) return 0;
+        view->fingerprint = fields[1].data;
+        memcpy(&view->steering_strength, &bits, 4);
+        if (!isfinite(view->steering_strength) || view->steering_position > CONVERSATION_CONTEXT_CAPACITY) return 0;
+        int parsed = conversation_tokens_decode(node, &fields[3], 2);
+        if (parsed <= 0) return parsed;
+        view->render = fields[4].data; view->render_length = fields[4].length;
+        return 1;
+    }
     case CONVERSATION_EVENT_REWIND:
         return conversation_fields_parse(payload, length, fields, 1) &&
                conversation_field_u64(&fields[0], &view->rewind_target);
@@ -691,6 +709,11 @@ static conversation_status conversation_text_replace(char **slot,
 
 static conversation_status conversation_rewind_apply(conversation *c,
                                                      uint64_t target) {
+    size_t steering_kept = 0;
+    for (size_t i = 0; i < c->steering_count; i++)
+        if (target != CONVERSATION_REWIND_ALL && c->steering_events[i] <= target)
+            c->steering_events[steering_kept++] = c->steering_events[i];
+    c->steering_count = steering_kept;
     if (target == CONVERSATION_REWIND_ALL) {
         c->token_count = 0;
         c->visible_count = 0;
@@ -801,6 +824,33 @@ static conversation_status conversation_apply(conversation *c,
         c->snapshot_boundary = 0;
         status = CONVERSATION_OK;
         break;
+    case CONVERSATION_EVENT_STEERING: {
+        if (c->steering_count >= 4096) break;
+        if (!c->steering_count) {
+            if (view->render_length != c->visible_count * 8) break;
+            if (view->raw_token_count > CONVERSATION_CONTEXT_CAPACITY) break;
+            int32_t *copy = malloc((size_t)(view->raw_token_count ? view->raw_token_count : 1) * sizeof *copy);
+            if (!copy) { status = CONVERSATION_NOMEM; break; }
+            if (view->raw_token_count) memcpy(copy, view->raw_tokens, (size_t)view->raw_token_count * sizeof *copy);
+            uint64_t previous = 0; int valid = 1;
+            for (size_t i = 0; i < c->visible_count; i++) {
+                uint64_t boundary = format_get_u64le(view->render + 8*i);
+                if (boundary < previous || boundary > view->raw_token_count) valid = 0;
+                previous = boundary;
+            }
+            if (!valid || previous != view->raw_token_count) {free(copy); break;}
+            free(c->tokens); c->tokens = copy; c->token_count = view->raw_token_count; c->token_capacity = view->raw_token_count;
+            for (size_t i = 0; i < c->visible_count; i++) c->visible[i].boundary = format_get_u64le(view->render+8*i);
+        } else if (view->raw_token_count || view->render_length) break;
+        if (c->steering_count == c->steering_capacity) {
+            size_t capacity = c->steering_capacity ? 2*c->steering_capacity : 8;
+            uint64_t *grown = realloc(c->steering_events, capacity * sizeof *grown);
+            if (!grown) {status = CONVERSATION_NOMEM; break;}
+            c->steering_events = grown; c->steering_capacity = capacity;
+        }
+        c->steering_events[c->steering_count++] = index;
+        status = CONVERSATION_OK; break;
+    }
     case CONVERSATION_EVENT_REWIND:
         if (view->rewind_target != CONVERSATION_REWIND_ALL &&
             view->rewind_target >= index) break;
@@ -1067,6 +1117,8 @@ static void conversation_state_reset(conversation *c) {
     free(c->workspace);
     free(c->calls);
     free(c->visible);
+    free(c->steering_events);
+    c->steering_events = NULL; c->steering_count = c->steering_capacity = 0;
     c->events = NULL;
     c->event_count = 0;
     c->event_capacity = 0;
@@ -1936,6 +1988,39 @@ conversation_status conversation_append_cache_epoch(conversation *c) {
     return status;
 }
 
+size_t conversation_steering_count(const conversation *c) { return c ? c->steering_count : 0; }
+const conversation_event *conversation_steering_at(const conversation *c, size_t i) {
+    return c && i < c->steering_count ? &c->events[c->steering_events[i]].view : NULL;
+}
+conversation_status conversation_append_steering(conversation *c, uint64_t position,
+                                                 const uint8_t artifact[32], float strength) {
+    if (!c || !artifact || !isfinite(strength) || position > CONVERSATION_CONTEXT_CAPACITY || c->steering_count >= 4096)
+        return CONVERSATION_INVALID_ARGUMENT;
+    if (c->steering_count && position < conversation_steering_at(c,c->steering_count-1)->steering_position)
+        return CONVERSATION_INVALID_ARGUMENT;
+    conversation_buffer payload = {0}, tokens = {0}, boundaries = {0};
+    uint32_t bits; memcpy(&bits,&strength,4);
+    int ok = 1;
+    if (!c->steering_count) {
+        for (uint64_t i = 0; i < c->token_count && ok; i++) {
+            uint8_t b[4]; format_put_u32le(b,(uint32_t)c->tokens[i]);
+            ok = conversation_buffer_put(&tokens,b,4);
+        }
+        for (size_t i = 0; i < c->visible_count && ok; i++) {
+            uint8_t b[8]; format_put_u64le(b,c->visible[i].boundary);
+            ok = conversation_buffer_put(&boundaries,b,8);
+        }
+    }
+    conversation_status status = CONVERSATION_NOMEM;
+    if (ok && conversation_buffer_field_u64(&payload,1,position) &&
+        conversation_buffer_field(&payload,2,artifact,32) &&
+        conversation_buffer_field_u32(&payload,3,bits) &&
+        conversation_buffer_field(&payload,4,tokens.data,tokens.length) &&
+        conversation_buffer_field(&payload,5,boundaries.data,boundaries.length))
+        status = conversation_frame_write(c,CONVERSATION_EVENT_STEERING,CONVERSATION_FRAME_CRITICAL,&payload);
+    free(payload.data); free(tokens.data); free(boundaries.data); return status;
+}
+
 conversation_status conversation_append_rewind(conversation *c,
                                                uint64_t target_event) {
     if (!c) return CONVERSATION_INVALID_ARGUMENT;
@@ -2015,6 +2100,38 @@ static int conversation_event_variant(const conversation_event *event,
     return variant;
 }
 
+static conversation_status conversation_steering_projection(const conversation *c,
+                                                           int32_t **out, uint64_t *count,
+                                                           conversation_visible *visible) {
+    uint64_t first = c->steering_events[0];
+    const conversation_event *freeze = &c->events[first].view;
+    uint64_t total = freeze->raw_token_count;
+    for (size_t i = 0; i < c->visible_count; i++) {
+        if (c->visible[i].index <= first) continue;
+        const conversation_event *e = &c->events[c->visible[i].index].view;
+        uint32_t n = e->raw_tokens ? e->raw_token_count : e->token_count;
+        if (total > CONVERSATION_CONTEXT_CAPACITY - n) return CONVERSATION_LIMIT;
+        total += n;
+    }
+    int32_t *p = malloc((size_t)(total ? total : 1) * sizeof *p);
+    if (!p) return CONVERSATION_NOMEM;
+    uint64_t at = freeze->raw_token_count;
+    if (at) memcpy(p, freeze->raw_tokens, (size_t)at * sizeof *p);
+    size_t baseline = 0;
+    for (size_t i = 0; i < c->visible_count; i++) {
+        if (c->visible[i].index <= first) {
+            if (visible) visible[i].boundary = format_get_u64le(freeze->render + 8*baseline);
+            baseline++; continue;
+        }
+        const conversation_event *e = &c->events[c->visible[i].index].view;
+        const int32_t *src = e->raw_tokens ? e->raw_tokens : e->tokens;
+        uint32_t n = e->raw_tokens ? e->raw_token_count : e->token_count;
+        if (n) memcpy(p+at,src,(size_t)n*sizeof *p);
+        at += n; if (visible) visible[i].boundary = at;
+    }
+    *out = p; *count = total; return CONVERSATION_OK;
+}
+
 conversation_status conversation_project_copy(const conversation *c,
                                                int thinking,
                                                uint32_t reasoning_history,
@@ -2026,6 +2143,7 @@ conversation_status conversation_project_copy(const conversation *c,
         return CONVERSATION_INVALID_ARGUMENT;
     *tokens = NULL;
     *count = 0;
+    if (c->steering_count) return conversation_steering_projection(c,tokens,count,NULL);
     uint64_t last_user = UINT64_MAX;
     for (uint64_t i = 0; i < c->visible_count; i++) {
         const conversation_event *event = &c->events[c->visible[i].index].view;
@@ -2082,6 +2200,17 @@ conversation_status conversation_project(conversation *c, int thinking,
     if (!c || reasoning_history >
               CONVERSATION_REASONING_PRESERVE_TOOL_CALLS)
         return CONVERSATION_INVALID_ARGUMENT;
+    if (c->steering_count) {
+        int32_t *tokens = NULL; uint64_t count = 0;
+        conversation_status status = conversation_steering_projection(c,&tokens,&count,c->visible);
+        if (status != CONVERSATION_OK) return status;
+        if (c->has_snapshot && (c->snapshot_boundary > count ||
+            memcmp(c->tokens,tokens,(size_t)c->snapshot_boundary*sizeof *tokens))) {
+            c->has_snapshot = 0; c->snapshot_boundary = 0;
+        }
+        free(c->tokens); c->tokens = tokens; c->token_count = count; c->token_capacity = count;
+        return CONVERSATION_OK;
+    }
     uint64_t last_user = UINT64_MAX;
     for (uint64_t i = 0; i < c->visible_count; i++) {
         const conversation_event *event = &c->events[c->visible[i].index].view;

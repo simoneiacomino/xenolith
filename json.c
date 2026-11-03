@@ -15,6 +15,20 @@ typedef struct {
     int depth;
 } json_parser;
 
+static int json_utf8_width(unsigned char lead) {
+    if (lead >= 0xc2 && lead <= 0xdf) return 2;
+    if (lead >= 0xe0 && lead <= 0xef) return 3;
+    if (lead >= 0xf0 && lead <= 0xf4) return 4;
+    return 0;
+}
+static int json_utf8_prefix(const unsigned char *p, size_t n) {
+    int width = json_utf8_width(p[0]);
+    if (!width || n > (size_t)width) return 0;
+    for (size_t i=1;i<n;i++) if ((p[i]&0xc0)!=0x80) return 0;
+    if (n>1 && ((p[0]==0xe0 && p[1]<0xa0) || (p[0]==0xed && p[1]>=0xa0) ||
+                (p[0]==0xf0 && p[1]<0x90) || (p[0]==0xf4 && p[1]>=0x90))) return 0;
+    return 1;
+}
 static void json_skip_space(json_parser *ps) {
     while (ps->p < ps->end &&
            (*ps->p == ' ' || *ps->p == '\t' || *ps->p == '\n' ||
@@ -142,6 +156,13 @@ static int json_parse_string(json_parser *ps, char **out,
             }
             if (!json_append_byte(&data, &length, &capacity, plain))
                 goto fail;
+        } else if (c >= 0x80) {
+            int width=json_utf8_width(c);
+            if(!width || ps->end-ps->p<width ||
+               !json_utf8_prefix((const unsigned char *)ps->p,(size_t)width)) goto fail;
+            for(int i=0;i<width;i++)
+                if(!json_append_byte(&data,&length,&capacity,ps->p[i]))goto fail;
+            ps->p+=width;
         } else {
             if (!json_append_byte(&data, &length, &capacity, (char)c))
                 goto fail;
@@ -388,6 +409,16 @@ int json_raw(json_writer *w, const char *text) {
     return json_rawn(w, text, strlen(text));
 }
 
+size_t json_utf8_incomplete_tail(const char *text, size_t length) {
+    const unsigned char *p=(const unsigned char *)text;
+    size_t first=length>3?length-3:0;
+    for(size_t i=first;i<length;i++) {
+        int width=json_utf8_width(p[i]);
+        if(width && length-i<(size_t)width && json_utf8_prefix(p+i,length-i))return length-i;
+    }
+    return 0;
+}
+
 int json_string(json_writer *w, const char *text, size_t length) {
     if (!json_rawn(w, "\"", 1)) return 0;
     const unsigned char *p = (const unsigned char *)text;
@@ -406,6 +437,16 @@ int json_string(json_writer *w, const char *text, size_t length) {
             char escape[8];
             snprintf(escape, sizeof escape, "\\u%04x", c);
             if (!json_rawn(w, escape, 6)) return 0;
+        } else if (c >= 0x80) {
+            int width=json_utf8_width(c);
+            size_t available=length-i;
+            if(width && available>=(size_t)width && json_utf8_prefix(p+i,(size_t)width)) {
+                if(!json_rawn(w,p+i,(size_t)width))return 0;
+                i+=(size_t)width-1;
+            } else {
+                if(!json_raw(w,"\\ufffd"))return 0;
+                if(width && available<(size_t)width && json_utf8_prefix(p+i,available))i=length-1;
+            }
         } else {
             if (!json_rawn(w, &c, 1)) return 0;
         }

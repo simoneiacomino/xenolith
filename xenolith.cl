@@ -2293,3 +2293,88 @@ __kernel void xe_prefill_ffn_finish(__global const float *dense,
                          + residual[index]) * layer_scale[0];
     }
 }
+
+/* Experimental FFN contribution site, before residual addition and layer scale.
+ * In-place scratch normalization is safe: each workgroup owns one row. */
+__kernel void xe_steering_ffn_normalize(__global float *dense,
+                                    __global const float *moe,
+                                    __global const float *dense_weight,
+                                    __global const float *moe_weight,
+                                    __global const float *combine_weight,
+                                    int rows,
+                                    int width,
+                                    float epsilon) {
+    __local float dense_partial[128];
+    __local float moe_partial[128];
+    int row = get_group_id(0);
+    int lid = get_local_id(0);
+    if (row >= rows) return;
+    float dense_sum = 0.0f;
+    float moe_sum = 0.0f;
+    for (int column = lid; column < width; column += 128) {
+        size_t index = (size_t)row * width + column;
+        float dense_value = dense[index];
+        float moe_value = moe[index];
+        dense_sum += dense_value * dense_value;
+        moe_sum += moe_value * moe_value;
+    }
+    dense_partial[lid] = dense_sum;
+    moe_partial[lid] = moe_sum;
+    barrier(CLK_LOCAL_MEM_FENCE);
+    for (int stride = 64; stride > 0; stride >>= 1) {
+        if (lid < stride) {
+            dense_partial[lid] += dense_partial[lid + stride];
+            moe_partial[lid] += moe_partial[lid + stride];
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+    float dense_scale = rsqrt(dense_partial[0] / (float)width + epsilon);
+    float moe_scale = rsqrt(moe_partial[0] / (float)width + epsilon);
+    barrier(CLK_LOCAL_MEM_FENCE);
+    float combine_sum = 0.0f;
+    for (int column = lid; column < width; column += 128) {
+        size_t index = (size_t)row * width + column;
+        float value = dense[index] * dense_scale * dense_weight[column]
+                      + moe[index] * moe_scale * moe_weight[column];
+        dense[index] = value;
+        combine_sum += value * value;
+    }
+    dense_partial[lid] = combine_sum;
+    barrier(CLK_LOCAL_MEM_FENCE);
+    for (int stride = 64; stride > 0; stride >>= 1) {
+        if (lid < stride) dense_partial[lid] += dense_partial[lid + stride];
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+    float combine_scale = rsqrt(dense_partial[0] / (float)width + epsilon);
+    for (int column = lid; column < width; column += 128) {
+        size_t index = (size_t)row * width + column;
+        dense[index] = dense[index] * combine_scale * combine_weight[column];
+    }
+}
+
+__kernel void xe_steering_residual_finish(__global const float *ffn,
+                                           __global const float *residual,
+                                           __global const float *scale,
+                                           __global float *output, int count) {
+    size_t i=get_global_id(0);
+    if(i<(size_t)count)output[i]=(ffn[i]+residual[i])*scale[0];
+}
+
+/* One workgroup per row. The complete input is read before an in-place edit. */
+__kernel void xe_steering_apply(__global float *hidden, __global const float *vector,
+                                int width, int mode, float strength) {
+    __local float partial[128];
+    int lid = get_local_id(0);
+    size_t offset = (size_t)get_group_id(0) * width;
+    float sum = 0.0f;
+    if (mode == 2)
+        for (int i = lid; i < width; i += 128) sum += hidden[offset+i] * vector[i];
+    partial[lid] = sum;
+    barrier(CLK_LOCAL_MEM_FENCE);
+    for (int stride = 64; stride; stride >>= 1) {
+        if (lid < stride) partial[lid] += partial[lid+stride];
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+    float scale = mode == 2 ? -strength * partial[0] : strength;
+    for (int i = lid; i < width; i += 128) hidden[offset+i] += scale * vector[i];
+}

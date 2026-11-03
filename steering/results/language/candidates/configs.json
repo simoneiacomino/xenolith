@@ -1,0 +1,66 @@
+[
+  {
+    "name": "completions_l26_r0.3",
+    "artifact": "260180ad310ccbbd16c95162eb1b74ad61589e64a851966a8f7ac88d6ba7b836",
+    "strength": 0.5219522041607055,
+    "relative_displacement_estimate": 0.3,
+    "layer": 26,
+    "capture_recipe": "completions"
+  },
+  {
+    "name": "completions_l26_r0.6",
+    "artifact": "260180ad310ccbbd16c95162eb1b74ad61589e64a851966a8f7ac88d6ba7b836",
+    "strength": 1.043904408321411,
+    "relative_displacement_estimate": 0.6,
+    "layer": 26,
+    "capture_recipe": "completions"
+  },
+  {
+    "name": "completions_l5_r0.3",
+    "artifact": "03b839f409a19de6c0347f1a9c9156b940ae75307a1ffaeba0b856935a836595",
+    "strength": 0.7921975260601428,
+    "relative_displacement_estimate": 0.3,
+    "layer": 5,
+    "capture_recipe": "completions"
+  },
+  {
+    "name": "completions_l5_r0.6",
+    "artifact": "03b839f409a19de6c0347f1a9c9156b940ae75307a1ffaeba0b856935a836595",
+    "strength": 1.5843950521202856,
+    "relative_displacement_estimate": 0.6,
+    "layer": 5,
+    "capture_recipe": "completions"
+  },
+  {
+    "name": "instructions_l5_r0.3",
+    "artifact": "359e25caa384f2fffe2533105887f5017b45fd9bab3a8146af71bdd36dfe0c0a",
+    "strength": 0.868845063950426,
+    "relative_displacement_estimate": 0.3,
+    "layer": 5,
+    "capture_recipe": "instructions"
+  },
+  {
+    "name": "instructions_l5_r0.6",
+    "artifact": "359e25caa384f2fffe2533105887f5017b45fd9bab3a8146af71bdd36dfe0c0a",
+    "strength": 1.737690127900852,
+    "relative_displacement_estimate": 0.6,
+    "layer": 5,
+    "capture_recipe": "instructions"
+  },
+  {
+    "name": "instructions_l16_r0.3",
+    "artifact": "f866d1f97d1ccd77262810c57db431a90d59a2329c4dc515c6a27604daaeb8dc",
+    "strength": 0.5861355370624906,
+    "relative_displacement_estimate": 0.3,
+    "layer": 16,
+    "capture_recipe": "instructions"
+  },
+  {
+    "name": "instructions_l16_r0.6",
+    "artifact": "f866d1f97d1ccd77262810c57db431a90d59a2329c4dc515c6a27604daaeb8dc",
+    "strength": 1.172271074124981,
+    "relative_displacement_estimate": 0.6,
+    "layer": 16,
+    "capture_recipe": "instructions"
+  }
+]

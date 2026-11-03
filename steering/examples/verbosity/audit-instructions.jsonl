@@ -1,0 +1,2 @@
+{"positive": "Answer in one short sentence: what is binary search?", "negative": "Write a detailed, multi-paragraph explanation of what binary search is, including intuition, preconditions, and a small example."}
+{"positive": "In two concise bullets, explain why databases use indexes.", "negative": "Explain why databases use indexes in a thorough answer with several concrete tradeoffs and examples."}

@@ -88,6 +88,8 @@ def main():
             for module in ("cpu_policy.c", "cpu_topology.c"):
                 if (source / module).is_file():
                     command += [source / module]
+            if (source / "steering.c").is_file():
+                command += [source / "steering.c", source / "json.c"]
             command += [kernel, "-Wl,--gc-sections", "-lm", "-lze_loader", "-o", output]
             run(command)
             return output

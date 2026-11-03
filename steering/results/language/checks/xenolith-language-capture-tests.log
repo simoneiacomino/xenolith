@@ -1,0 +1,4 @@
+native capture valid-eof: PASS
+native capture invalid-pair-eof: PASS
+native capture overflow-eof: PASS
+native completion capture: teacher-forced positions and CPU provenance PASS

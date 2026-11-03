@@ -80,6 +80,24 @@ int main(void) {
     memset(deep + 150, ']', 150);
     CHECK(json_parse(deep, 300) == NULL);
 
+    CHECK(parse("\"\xff\"")==NULL);
+    CHECK(parse("\"\xed\xa0\x80\"")==NULL);
+    CHECK(parse("\"\xf4\x90\x80\x80\"")==NULL);
+    CHECK(parse("\"\xc2\"")==NULL);
+    v=parse("\"\xf0\x9f\x98\x80\"");CHECK(v && v->text_length==4);json_free(v);
+    CHECK(json_utf8_incomplete_tail("abc",3)==0);
+    CHECK(json_utf8_incomplete_tail("\xc2",1)==1);
+    CHECK(json_utf8_incomplete_tail("\xe2\x82",2)==2);
+    CHECK(json_utf8_incomplete_tail("\xf0\x9f\x98",3)==3);
+    CHECK(json_utf8_incomplete_tail("\xc2\xa0",2)==0);
+    CHECK(json_utf8_incomplete_tail("\xed\xa0",2)==0);
+    json_writer utf8={0};
+    CHECK(json_string(&utf8,"\xc2\xa0",2));
+    CHECK(utf8.length==4&&!memcmp(utf8.data,"\"\xc2\xa0\"",4));
+    json_writer_reset(&utf8);CHECK(json_string(&utf8,"\xe2\x82",2));
+    CHECK(!strcmp(utf8.data,"\"\\ufffd\""));
+    json_writer_reset(&utf8);CHECK(json_string(&utf8,"\xff",1));
+    CHECK(!strcmp(utf8.data,"\"\\ufffd\""));json_writer_free(&utf8);
     json_writer out = {0};
     CHECK(json_raw(&out, "{\"s\":"));
     CHECK(json_string(&out, "a\"b\\c\nd\x01", 8));

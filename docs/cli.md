@@ -399,3 +399,11 @@ used without images.
 Commands that load weights or encode images share an exclusive `engine.lock`
 in the default state directory. A custom `--state` or `--socket` does not move
 that lock. Close the current engine before starting another such command.
+
+## Experimental activation steering
+
+`run` and `chat` accept `--steering FILE --steering-strength F`, alongside
+`--workers` and `--cpu-list`. Chat supports `/steer F` and `/steer off`.
+`wire` and `serve` accept `--steering-dir DIR` for a local artifact registry.
+See [the steering guide](../STEERING.md) for `steering-capture`,
+`steering-import`, supported modes/sites, and cache semantics.
