@@ -1,0 +1,125 @@
+{
+  "configuration": {
+    "name": "ds4_ffn_s-0.5",
+    "artifact": "e802259e2f1b4d9507381a2063a232a1c1eed0206c257c45ef16dd894ddda581",
+    "strength": -0.5
+  },
+  "paired_shorter": 15,
+  "pairs": 15,
+  "median_words_reduction_fraction": 0.3383742911153119,
+  "italian_responses": {
+    "baseline": 5,
+    "steering": 5,
+    "cases": 5
+  },
+  "mechanical_brevity_gate": "pass",
+  "required_fact_preservation_gate": "fail",
+  "conclusion": "Visible shortening, not quality-preserving acceptance. Do not tune on this reserved set.",
+  "manual_review": [
+    {
+      "index": 0,
+      "essential_concepts": "retained",
+      "notes": "Distinct strong passwords and encrypted credential storage retained; phishing/breach protection stated too categorically, also overclaimed by baseline.",
+      "baseline_words": 556,
+      "steering_words": 375
+    },
+    {
+      "index": 1,
+      "essential_concepts": "retained",
+      "notes": "Term-to-document lookup retained; constant-time heading overgeneralizes retrieval cost.",
+      "baseline_words": 506,
+      "steering_words": 350
+    },
+    {
+      "index": 2,
+      "essential_concepts": "partial",
+      "notes": "Evaporation/heat rejection cycle retained; external work/electricity requirement no longer explicit as in baseline.",
+      "baseline_words": 496,
+      "steering_words": 273
+    },
+    {
+      "index": 3,
+      "essential_concepts": "partial",
+      "notes": "Overload and sending-rate control retained; feedback loop not explicit.",
+      "baseline_words": 510,
+      "steering_words": 325
+    },
+    {
+      "index": 4,
+      "essential_concepts": "retained",
+      "notes": "Concurrency anomalies and tradeoff retained; blanket heavy-locking and monotonic-performance claims are overgeneralized, also present in baseline.",
+      "baseline_words": 661,
+      "steering_words": 391
+    },
+    {
+      "index": 5,
+      "essential_concepts": "retained",
+      "notes": "Photovoltaic semiconductor mechanism and current retained. Markdown spacing defects.",
+      "baseline_words": 442,
+      "steering_words": 248
+    },
+    {
+      "index": 6,
+      "essential_concepts": "retained",
+      "notes": "Historical recovery versus live replication and propagated corruption retained; RTO/RPO language overgeneralized.",
+      "baseline_words": 570,
+      "steering_words": 399
+    },
+    {
+      "index": 7,
+      "essential_concepts": "retained",
+      "notes": "Seasonal cambium growth and earlywood/latewood retained; applicability varies by tree and climate.",
+      "baseline_words": 471,
+      "steering_words": 239
+    },
+    {
+      "index": 8,
+      "essential_concepts": "retained",
+      "notes": "Prerequisites and scheduling/build planning retained; dead-code example simplified.",
+      "baseline_words": 572,
+      "steering_words": 400
+    },
+    {
+      "index": 9,
+      "essential_concepts": "retained_with_error",
+      "notes": "Core asymptotic/constants distinction retained. Low-order-term paragraph has an unclear/reversed comparison.",
+      "baseline_words": 573,
+      "steering_words": 372
+    },
+    {
+      "index": 10,
+      "essential_concepts": "retained",
+      "notes": "Distribution, health checks and availability retained. Italian maintained.",
+      "baseline_words": 665,
+      "steering_words": 451
+    },
+    {
+      "index": 11,
+      "essential_concepts": "retained",
+      "notes": "Yeast CO2 and gas retention retained. Italian maintained; 323 to 122 words.",
+      "baseline_words": 323,
+      "steering_words": 122
+    },
+    {
+      "index": 12,
+      "essential_concepts": "missing_required_caveat",
+      "notes": "Trusted expected digest requirement omitted; baseline explicitly advises obtaining it from a secure official source. Hash equality wrongly presented as guaranteeing safety/authenticity. Italian maintained.",
+      "baseline_words": 484,
+      "steering_words": 232
+    },
+    {
+      "index": 13,
+      "essential_concepts": "retained_with_error",
+      "notes": "Atomicity/durability and recovery log retained. ARIES redo incorrectly restricted to committed transactions; baseline ARIES section correctly includes operations of later-failing transactions. Italian maintained. Heading says two phases then lists three.",
+      "baseline_words": 674,
+      "steering_words": 401
+    },
+    {
+      "index": 14,
+      "essential_concepts": "retained",
+      "notes": "Source changes versus cached copies, invalidation and TTL retained. Italian maintained.",
+      "baseline_words": 529,
+      "steering_words": 301
+    }
+  ]
+}

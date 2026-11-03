@@ -9,3 +9,5 @@
 - [Benchmarks](../bench/README.md): methods and selected results.
 
 Commands in these pages run from the repository root unless stated otherwise.
+
+- [Experimental activation steering](../STEERING.md): local vector extraction, inference controls, persistence, and evaluation.

@@ -1,0 +1,3 @@
+xenolith: Intel(R) Graphics [0xb080] (8086:b080) is enabled but has not yet been tested with Xenolith; using existing kernels without XMX.
+xenolith: if inference works, please report your results so this device can be marked tested; if it fails, please report the problem. Include your device ID, system/driver versions, Xenolith commit, command and output: https://github.com/simoneiacomino/xenolith/issues
+prefill-session: start 0 M32 CPU 0.848191 s GPU 0.298846 s 2.838x hidden 5.982e-02 logits 1.258e-01 top same KV 8.641e-02/1.151e-01 mismatches 1761785/3604480 handoff 1.272e-01 top same greedy 0/8 first -1 hot no-alloc/one-output FAIL

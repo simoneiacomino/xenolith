@@ -145,6 +145,10 @@ struct runtime {
 };
 
 static void runtime_shadow_drop(runtime *w);
+static runtime_status runtime_steering_schedule(runtime *w, conversation *c, xe_session *session);
+static runtime_status runtime_steering_validate(runtime *w, conversation *c);
+static int runtime_visual_present(const conversation *c);
+static runtime_status runtime_from_conversation(runtime *w, conversation_status s);
 static uint32_t runtime_turn(const conversation *c);
 static const char *runtime_tool_name_of(conversation *c,uint64_t call_id);
 static runtime_status runtime_budget_check(runtime *w,uint64_t total);
@@ -185,6 +189,111 @@ static runtime_status runtime_fail(runtime *w, runtime_status status,
     va_end(args);
     w->error_tokens = 0;
     w->error_context = 0;
+    return status;
+}
+
+int runtime_steering_enabled(const runtime *w) {
+    return w && xe_engine_steering_directory(w->engine) != NULL;
+}
+static runtime_status runtime_steering_load(runtime *w, const char *id, xe_steering **out) {
+    if (!runtime_steering_enabled(w))
+        return runtime_fail(w, RUNTIME_INVALID_ARGUMENT, "steering is not enabled");
+    char error[256];
+    if (!xe_steering_open_id(xe_engine_steering_directory(w->engine), id,
+             xe_engine_layer_count(w->engine), xe_engine_hidden_width(w->engine),
+             xe_engine_model_fingerprint(w->engine), out, error, sizeof error))
+        return runtime_fail(w, RUNTIME_INVALID_ARGUMENT, "steering artifact is missing or incompatible");
+    return RUNTIME_OK;
+}
+static runtime_status runtime_steering_steps(runtime *w, conversation *c,
+                                             xe_steering_step **out, size_t *count) {
+    *out = NULL; *count = conversation_steering_count(c);
+    if (!*count) return RUNTIME_OK;
+    if (runtime_visual_present(c)) return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"steering with visual input is not supported");
+    xe_steering_step *steps = calloc(*count,sizeof *steps);
+    if (!steps) return runtime_fail(w,RUNTIME_NOMEM,"out of memory");
+    runtime_status status = RUNTIME_OK;
+    for (size_t i = 0; i < *count; i++) {
+        const conversation_event *e = conversation_steering_at(c,i);
+        steps[i].position = (int)e->steering_position;
+        steps[i].strength = e->steering_strength;
+        uint8_t zero[32] = {0};
+        if (!memcmp(e->fingerprint,zero,32)) continue;
+        char id[65]; xe_steering_hex(e->fingerprint,id);
+        for (size_t j=0;j<i;j++) if (steps[j].vector && !strcmp(id,xe_steering_id(steps[j].vector))) {
+            steps[i].vector=steps[j].vector;xe_steering_retain(steps[i].vector);break;
+        }
+        if (!steps[i].vector) status=runtime_steering_load(w,id,&steps[i].vector);
+        if (status != RUNTIME_OK) break;
+    }
+    if (status != RUNTIME_OK) {
+        for (size_t i=0;i<*count;i++)xe_steering_release(steps[i].vector);
+        free(steps);return status;
+    }
+    *out=steps;return RUNTIME_OK;
+}
+static runtime_status runtime_steering_schedule(runtime *w, conversation *c, xe_session *session) {
+    xe_steering_step *steps=NULL;size_t count=0;
+    runtime_status status=runtime_steering_steps(w,c,&steps,&count);
+    if(status==RUNTIME_OK && !xe_session_steering_schedule(session,steps,count))
+        status=runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"cannot configure steering schedule");
+    for(size_t i=0;steps && i<count;i++)xe_steering_release(steps[i].vector);
+    free(steps);return status;
+}
+static runtime_status runtime_steering_validate(runtime *w, conversation *c) {
+    xe_steering_step *steps=NULL;size_t count=0;
+    runtime_status status=runtime_steering_steps(w,c,&steps,&count);
+    for(size_t i=0;steps&&i<count;i++)xe_steering_release(steps[i].vector);
+    free(steps);return status;
+}
+runtime_status runtime_session_steering_get(runtime *w, runtime_steering_info *out) {
+    if (!w || !out) return RUNTIME_INVALID_ARGUMENT;
+    if (!w->has_current) return runtime_fail(w,RUNTIME_SESSION_NOT_FOUND,"no open session");
+    memset(out,0,sizeof *out);
+    size_t count=conversation_steering_count(w->current);out->transitions=count;
+    if (count) {
+        const conversation_event *e=conversation_steering_at(w->current,count-1);
+        uint8_t zero[32]={0};
+        if(memcmp(e->fingerprint,zero,32))xe_steering_hex(e->fingerprint,out->artifact);
+        out->strength=e->steering_strength;out->position=e->steering_position;
+    }
+    return RUNTIME_OK;
+}
+runtime_status runtime_session_steering(runtime *w,const char *artifact,float strength,runtime_steering_info *out) {
+    if(!w)return RUNTIME_INVALID_ARGUMENT;
+    if(w->gen_kind!=RUNTIME_GEN_NONE)return runtime_fail(w,RUNTIME_BUSY,"generation in progress");
+    if(!w->has_current)return runtime_fail(w,RUNTIME_SESSION_NOT_FOUND,"no open session");
+    if(!runtime_steering_enabled(w))return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"steering is not enabled");
+    if(!isfinite(strength)||(!artifact&&strength!=0))return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"invalid steering strength");
+    if(!artifact && !conversation_steering_count(w->current))
+        return out ? runtime_session_steering_get(w,out) : RUNTIME_OK;
+    if(runtime_visual_present(w->current))return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"steering with visual input is not supported");
+    xe_steering *vector=NULL;runtime_status status=RUNTIME_OK;uint8_t id[32]={0};
+    if(artifact){status=runtime_steering_load(w,artifact,&vector);if(status!=RUNTIME_OK)return status;xe_steering_unhex(artifact,id);}
+    runtime_shadow_drop(w);
+    uint64_t position=0;const int32_t *tokens=conversation_tokens(w->current,&position);
+    if(w->session) {
+        xe_tokens prefix={(int32_t *)tokens,(int)position,(int)position};
+        int n=xe_session_position(w->session);
+        if(xe_session_common(w->session,&prefix)==n)position=(uint64_t)n;
+    }
+    int generated = 0;
+    for (uint64_t i=0;i<conversation_visible_count(w->current);i++) {
+        uint64_t index=conversation_visible_index(w->current,i);
+        const conversation_event *e=conversation_event_at(w->current,index);
+        if(e->type==CONVERSATION_EVENT_GENERATION_RESULT)generated=1;
+    }
+    if(!generated && !conversation_steering_count(w->current))position=0;
+    /* Old transitions can lie just beyond a pending, not-yet-evaluated suffix. */
+    size_t count=conversation_steering_count(w->current);
+    if(count && position<conversation_steering_at(w->current,count-1)->steering_position)
+        position=conversation_steering_at(w->current,count-1)->steering_position;
+    status=runtime_from_conversation(w,conversation_append_steering(w->current,position,id,strength));
+    if(status==RUNTIME_OK)status=runtime_from_conversation(w,conversation_commit(w->current));
+    xe_steering_release(vector);
+    if(status!=RUNTIME_OK){conversation_rollback(w->current);return status;}
+    if(w->session)xe_session_anchor_clear(w->session);
+    if(status==RUNTIME_OK && out)status=runtime_session_steering_get(w,out);
     return status;
 }
 
@@ -602,6 +711,7 @@ static runtime_status runtime_visual_prepare(runtime *w,const runtime_message *m
                             const char *tool_name,uint32_t turn,uint64_t prefix,
                             profile_render *render,uint8_t **payload,size_t *length,
                             runtime_visual_asset **result,uint32_t *image_offset) {
+
     *payload=NULL;*length=0;
     if(!runtime_visual_numeric(w))return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"vision is not enabled");
     if(!message->image||!message->image_length||message->image_length>RT_IMAGE_LIMIT)
@@ -636,6 +746,8 @@ static runtime_status runtime_visual_prepare(runtime *w,const runtime_message *m
 
 static runtime_status runtime_visual_append(runtime *w,const runtime_message *message,runtime_marker *out) {
     conversation *c=w->current;
+    if(conversation_steering_count(c))
+        return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"steering with visual input is not supported");
     const char *tool=NULL;
     if(message->kind==RUNTIME_MESSAGE_TOOL_RESULT) {
         if(runtime_turn(c)!=PROFILE_TURN_OPEN)return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"no open model turn for a tool result");
@@ -881,7 +993,7 @@ static runtime_status runtime_shadow_tick(runtime *w) {
 
 static void runtime_shadow_begin(runtime *w) {
     runtime_shadow_drop(w);
-    if(w->visual_count)return; /* Keep visual replay synchronous in the first runtime version. */
+    if(w->visual_count || (w->current && conversation_steering_count(w->current)))return; /* Steered history already preserves the raw prefix. */
     w->shadow = xe_session_shadow_new(w->session);
     if (!w->shadow) return;
     w->shadow_cooldown = 0;
@@ -1151,6 +1263,7 @@ static void runtime_checkpoint_now(runtime *w, runtime_checkpoint_report *out) {
         out->reason = RUNTIME_CKPT_REJECTED;
         return;
     }
+    if(runtime_steering_schedule(w,c,w->session)!=RUNTIME_OK){out->reason=RUNTIME_CKPT_REJECTED;return;}
     int position = xe_session_position(w->session);
     if (position <= 0) { out->reason = RUNTIME_CKPT_EMPTY; return; }
     if ((uint64_t)position > total) { out->reason = RUNTIME_CKPT_KV_DIVERGED; return; }
@@ -1317,6 +1430,8 @@ runtime_status runtime_session_open(runtime *w, const conversation_id *id,
         conversation_close(c);
         return status;
     }
+    status = runtime_steering_validate(w,c);
+    if (status != RUNTIME_OK) {conversation_close(c);return status;}
     uint64_t tokens;
     conversation_tokens(c, &tokens);
     if (tokens > (uint64_t)w->context) {
@@ -1557,6 +1672,9 @@ static void runtime_settings_defaults(conversation_settings *settings) {
 
 static int runtime_params_valid(const runtime_gen_params *params) {
     if (!params) return 1;
+    if (params->steering_set && (!isfinite(params->steering_strength) ||
+        (params->steering_id && !xe_steering_valid_id(params->steering_id)) ||
+        (!params->steering_id && params->steering_strength != 0))) return 0;
     if (params->reasoning_set &&
         params->reasoning_effort > CONVERSATION_REASONING_MAX)
         return 0;
@@ -1696,6 +1814,13 @@ static void runtime_utf8_feed(runtime *w, const uint8_t *data, size_t length) {
 
 static runtime_status runtime_gen_prepare(runtime *w, xe_session *session,
                                     conversation *c) {
+    runtime_status steering_status = RUNTIME_OK;
+    if (c) steering_status = runtime_steering_schedule(w,c,session);
+    if (steering_status != RUNTIME_OK) {
+        w->gen_kind = RUNTIME_GEN_NONE;
+        w->gen_session = NULL;
+        return steering_status;
+    }
     w->gen_session = session;
     w->autosave_attempted = 0;
     w->resume_attempted = 0;
@@ -1757,7 +1882,10 @@ runtime_status runtime_generate(runtime *w, const runtime_gen_params *params) {
     if (!runtime_params_valid(params))
         return runtime_fail(w, RUNTIME_INVALID_ARGUMENT,
                          "invalid reasoning settings");
+    if(params && params->steering_set)return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"use the steering operation before generation");
     conversation *c = w->current;
+    runtime_status steering_status = runtime_steering_validate(w,c);
+    if (steering_status != RUNTIME_OK) return steering_status;
 
     conversation_settings settings;
     int stored = conversation_get_settings(c, &settings);
@@ -1837,7 +1965,7 @@ runtime_status runtime_generate(runtime *w, const runtime_gen_params *params) {
                       CONVERSATION_REASONING_OFF;
     w->gen_after_tool = after_tool;
     w->gen_turn = turn;
-    w->capture_anchor = w->gen_thinking && turn == PROFILE_TURN_PADDED;
+    w->capture_anchor = !conversation_steering_count(c) && w->gen_thinking && turn == PROFILE_TURN_PADDED;
     runtime_gen_reset(w, reasoning_open);
     if (json_rawn(&w->render, render.render,
                   render.render_length) == 0)
@@ -1852,7 +1980,7 @@ runtime_status runtime_generate(runtime *w, const runtime_gen_params *params) {
     if (status != RUNTIME_OK) return status;
     if (!w->session) w->session = xe_session_new(w->engine);
     w->gen_kind = RUNTIME_GEN_DURABLE;
-    if (w->session && xe_session_anchor_valid(w->session))
+    if (!conversation_steering_count(c) && w->session && xe_session_anchor_valid(w->session))
         w->replay_from = xe_session_anchor_restore(w->session);
     return runtime_gen_prepare(w, w->session, c);
 }
@@ -1988,6 +2116,15 @@ static runtime_status runtime_ephemeral_generate_impl(runtime *w, const char *sy
     status = runtime_reasoning_policy_load(w);
     if (status != RUNTIME_OK) return status;
     if (!w->ephemeral) w->ephemeral = xe_session_new(w->engine);
+    xe_session_steering_schedule(w->ephemeral,NULL,0);
+    xe_session_reset(w->ephemeral);
+    if (params && params->steering_set && params->steering_id) {
+        if (w->visual_count) return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"steering with visual input is not supported");
+        xe_steering *v=NULL;status=runtime_steering_load(w,params->steering_id,&v);
+        if(status!=RUNTIME_OK)return status;
+        int ok=xe_session_steering_set(w->ephemeral,v,params->steering_strength);xe_steering_release(v);
+        if(!ok)return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"invalid steering configuration");
+    }
     w->gen_kind = RUNTIME_GEN_EPHEMERAL;
     return runtime_gen_prepare(w, w->ephemeral, NULL);
 }
@@ -2681,6 +2818,11 @@ runtime_status runtime_rebuild(runtime *w, const char *system,
     if (!w->has_current)
         return runtime_fail(w, RUNTIME_SESSION_NOT_FOUND, "no open session");
     conversation *c = w->current;
+    runtime_steering_info steering_before;
+    runtime_session_steering_get(w,&steering_before);
+    if (steering_before.transitions) for(size_t i=0;i<count;i++)
+        if(messages[i].image || messages[i].image_length)
+            return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"steering with visual input is not supported");
     runtime_visual_begin(w);
     uint8_t *image_payload=NULL;
     runtime_shadow_drop(w);
@@ -2918,6 +3060,12 @@ runtime_status runtime_rebuild(runtime *w, const char *system,
                c, settings.reasoning_effort != CONVERSATION_REASONING_OFF,
                settings.reasoning_history));
     if (status != RUNTIME_OK) goto abort;
+    if (steering_before.transitions) {
+        uint8_t id[32]={0};
+        if(steering_before.artifact[0])xe_steering_unhex(steering_before.artifact,id);
+        status=runtime_from_conversation(w,conversation_append_steering(c,0,id,steering_before.strength));
+        if(status!=RUNTIME_OK)goto abort;
+    }
     status = runtime_from_conversation(w, conversation_commit(c));
     if (status != RUNTIME_OK) goto abort;
     w->saved_tokens = 0;

@@ -274,3 +274,11 @@ Use `XE_CPU_LIST` instead to supply CPU IDs verified on that machine. XenoPi
 currently has no worker-count or CPU-map field in `xenolith.json`. If a service
 is already running on the socket, XenoPi uses its existing CPU plan. Restart
 Xenolith to apply a new plan; restarting only XenoPi does not change it.
+
+## Experimental activation steering
+
+`run` and `chat` accept `--steering FILE --steering-strength F`, alongside
+`--workers` and `--cpus`. Chat supports `/steer F` and `/steer off`.
+`wire` and `serve` accept `--steering-dir DIR` for a local artifact registry.
+See [the steering guide](../STEERING.md) for `steering-capture`,
+`steering-import`, supported modes/sites, and cache semantics.

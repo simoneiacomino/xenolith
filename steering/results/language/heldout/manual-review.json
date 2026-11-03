@@ -1,0 +1,36 @@
+{
+  "reviewer": "assistant; no independent human annotation study",
+  "predominantly_italian_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19
+  ],
+  "language_defect_indices": {
+    "3": "Mixed English/Italian opening: L'iron ruggine",
+    "7": "Malformed Italian verb scansion",
+    "18": "Grammar: serve a come"
+  },
+  "content_concerns": {
+    "10": "Sensed temperature confused with desired setpoint",
+    "11": "Teeth attributed to slider and described as permanently interlocked",
+    "13": "Misleading gravity-compensation wording"
+  },
+  "conclusion": "Visible language result; no blanket preservation of factuality. Setting remains frozen; no retuning on held-out outputs."
+}

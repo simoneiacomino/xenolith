@@ -1,0 +1,405 @@
+{
+  "arguments": {
+    "model": "/home/devcloud/models/gemma-4-26B-A4B-it-qat/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+    "xenolith": "./xenolith",
+    "registry": "/home/devcloud/dev/xenolith-steering-artifacts",
+    "configs": "/tmp/xenolith-language-candidates/configs.json",
+    "prompts": "steering/examples/language/validation.jsonl",
+    "out": "/tmp/xenolith-language-coarse",
+    "limit": 3,
+    "tokens": 384
+  },
+  "configs": [
+    {
+      "name": "baseline"
+    },
+    {
+      "name": "system_italian",
+      "system": "You are a helpful assistant. Answer the question briefly in two or three sentences. Answer in Italian."
+    },
+    {
+      "name": "completions_l26_r0.01",
+      "artifact": "260180ad310ccbbd16c95162eb1b74ad61589e64a851966a8f7ac88d6ba7b836",
+      "strength": 0.017398406805356852,
+      "relative_displacement_estimate": 0.01,
+      "layer": 26,
+      "capture_recipe": "completions"
+    },
+    {
+      "name": "completions_l26_r0.03",
+      "artifact": "260180ad310ccbbd16c95162eb1b74ad61589e64a851966a8f7ac88d6ba7b836",
+      "strength": 0.052195220416070554,
+      "relative_displacement_estimate": 0.03,
+      "layer": 26,
+      "capture_recipe": "completions"
+    },
+    {
+      "name": "completions_l26_r0.1",
+      "artifact": "260180ad310ccbbd16c95162eb1b74ad61589e64a851966a8f7ac88d6ba7b836",
+      "strength": 0.17398406805356853,
+      "relative_displacement_estimate": 0.1,
+      "layer": 26,
+      "capture_recipe": "completions"
+    },
+    {
+      "name": "completions_l26_r-0.1",
+      "artifact": "260180ad310ccbbd16c95162eb1b74ad61589e64a851966a8f7ac88d6ba7b836",
+      "strength": -0.17398406805356853,
+      "relative_displacement_estimate": -0.1,
+      "layer": 26,
+      "capture_recipe": "completions"
+    },
+    {
+      "name": "completions_l5_r0.01",
+      "artifact": "03b839f409a19de6c0347f1a9c9156b940ae75307a1ffaeba0b856935a836595",
+      "strength": 0.02640658420200476,
+      "relative_displacement_estimate": 0.01,
+      "layer": 5,
+      "capture_recipe": "completions"
+    },
+    {
+      "name": "completions_l5_r0.03",
+      "artifact": "03b839f409a19de6c0347f1a9c9156b940ae75307a1ffaeba0b856935a836595",
+      "strength": 0.07921975260601427,
+      "relative_displacement_estimate": 0.03,
+      "layer": 5,
+      "capture_recipe": "completions"
+    },
+    {
+      "name": "completions_l5_r0.1",
+      "artifact": "03b839f409a19de6c0347f1a9c9156b940ae75307a1ffaeba0b856935a836595",
+      "strength": 0.2640658420200476,
+      "relative_displacement_estimate": 0.1,
+      "layer": 5,
+      "capture_recipe": "completions"
+    },
+    {
+      "name": "completions_l5_r-0.1",
+      "artifact": "03b839f409a19de6c0347f1a9c9156b940ae75307a1ffaeba0b856935a836595",
+      "strength": -0.2640658420200476,
+      "relative_displacement_estimate": -0.1,
+      "layer": 5,
+      "capture_recipe": "completions"
+    },
+    {
+      "name": "instructions_l5_r0.01",
+      "artifact": "359e25caa384f2fffe2533105887f5017b45fd9bab3a8146af71bdd36dfe0c0a",
+      "strength": 0.02896150213168087,
+      "relative_displacement_estimate": 0.01,
+      "layer": 5,
+      "capture_recipe": "instructions"
+    },
+    {
+      "name": "instructions_l5_r0.03",
+      "artifact": "359e25caa384f2fffe2533105887f5017b45fd9bab3a8146af71bdd36dfe0c0a",
+      "strength": 0.08688450639504261,
+      "relative_displacement_estimate": 0.03,
+      "layer": 5,
+      "capture_recipe": "instructions"
+    },
+    {
+      "name": "instructions_l5_r0.1",
+      "artifact": "359e25caa384f2fffe2533105887f5017b45fd9bab3a8146af71bdd36dfe0c0a",
+      "strength": 0.2896150213168087,
+      "relative_displacement_estimate": 0.1,
+      "layer": 5,
+      "capture_recipe": "instructions"
+    },
+    {
+      "name": "instructions_l5_r-0.1",
+      "artifact": "359e25caa384f2fffe2533105887f5017b45fd9bab3a8146af71bdd36dfe0c0a",
+      "strength": -0.2896150213168087,
+      "relative_displacement_estimate": -0.1,
+      "layer": 5,
+      "capture_recipe": "instructions"
+    },
+    {
+      "name": "instructions_l16_r0.01",
+      "artifact": "f866d1f97d1ccd77262810c57db431a90d59a2329c4dc515c6a27604daaeb8dc",
+      "strength": 0.01953785123541635,
+      "relative_displacement_estimate": 0.01,
+      "layer": 16,
+      "capture_recipe": "instructions"
+    },
+    {
+      "name": "instructions_l16_r0.03",
+      "artifact": "f866d1f97d1ccd77262810c57db431a90d59a2329c4dc515c6a27604daaeb8dc",
+      "strength": 0.05861355370624906,
+      "relative_displacement_estimate": 0.03,
+      "layer": 16,
+      "capture_recipe": "instructions"
+    },
+    {
+      "name": "instructions_l16_r0.1",
+      "artifact": "f866d1f97d1ccd77262810c57db431a90d59a2329c4dc515c6a27604daaeb8dc",
+      "strength": 0.19537851235416354,
+      "relative_displacement_estimate": 0.1,
+      "layer": 16,
+      "capture_recipe": "instructions"
+    },
+    {
+      "name": "instructions_l16_r-0.1",
+      "artifact": "f866d1f97d1ccd77262810c57db431a90d59a2329c4dc515c6a27604daaeb8dc",
+      "strength": -0.19537851235416354,
+      "relative_displacement_estimate": -0.1,
+      "layer": 16,
+      "capture_recipe": "instructions"
+    }
+  ],
+  "system": "You are a helpful assistant. Answer the question briefly in two or three sentences.",
+  "prompts_sha256": "059bc2321b9c40fceec43e8b60dfcfbd430f0b78c63310fd3c536dd6ba4b930b",
+  "binary_sha256": "b643ca695e1cc494b7ad2a7d7b1cc19574eac38636f1c91ce9a87604565ffe9c",
+  "evaluator_sha256": "0cb08b5c62fd438677518686d0f9081b04b93393cfec02933be0cc1eb5e74053",
+  "created_unix": 1792864137.588871,
+  "summaries": {
+    "baseline": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "system_italian": {
+      "samples": 3,
+      "italian": 3,
+      "english": 0,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "completions_l26_r0.01": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "completions_l26_r0.03": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "completions_l26_r0.1": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "completions_l26_r-0.1": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "completions_l5_r0.01": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "completions_l5_r0.03": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "completions_l5_r0.1": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "completions_l5_r-0.1": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "instructions_l5_r0.01": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "instructions_l5_r0.03": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "instructions_l5_r0.1": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "instructions_l5_r-0.1": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "instructions_l16_r0.01": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "instructions_l16_r0.03": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "instructions_l16_r0.1": {
+      "samples": 3,
+      "italian": 0,
+      "english": 2,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    },
+    "instructions_l16_r-0.1": {
+      "samples": 3,
+      "italian": 0,
+      "english": 3,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 2,
+      "replacements": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0
+    }
+  },
+  "language_measure": "stopword heuristic; requires manual review",
+  "describe": {
+    "ok": true,
+    "protocol": 1,
+    "model": "gemma-4-26B-A4B-it-qat",
+    "context_window": 4096,
+    "max_output": 4096,
+    "max_frame": 65536,
+    "steering": {
+      "enabled": true,
+      "site": "post_layer_residual_v1",
+      "modes": [
+        "additive",
+        "projection"
+      ],
+      "prospective": true,
+      "preserves_reasoning_history": true
+    },
+    "kvstore": false,
+    "reasoning": {
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "history": [
+        "discard",
+        "preserve_tool_calls"
+      ],
+      "budget_tokens": true
+    }
+  }
+}

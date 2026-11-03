@@ -1,0 +1,203 @@
+{
+  "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+  "created_unix": 1792882482.0021548,
+  "arguments": {
+    "xenolith": "./xenolith",
+    "model": "/home/devcloud/models/gemma-4-26B-A4B-it-qat/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+    "registry": "/home/devcloud/dev/xenolith-steering-artifacts",
+    "artifact": null,
+    "configs": "/tmp/xenolith-verbosity-ds4-ffn-finalists.json",
+    "skip_controls": false,
+    "prompts": "steering/examples/succinct-validation.jsonl",
+    "strengths": "-0.5,-0.25,0.25,0.5",
+    "tokens": 2048,
+    "out": "/tmp/xenolith-verbosity-ds4-ffn-validation",
+    "ctx": 4096,
+    "limit": null
+  },
+  "prompts_sha256": "b9c026f9c3355f196dc68c7722b3beaf0257af44af02100e2ec6d3054c1edb5c",
+  "summaries": {
+    "baseline": {
+      "samples": 10,
+      "median_words": 549.0,
+      "length_stops": 0,
+      "generation_errors": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0,
+      "max_repeated_4gram_fraction": 0.04405286343612336,
+      "max_character_run": 4,
+      "max_replacement_characters": 0,
+      "median_first_text_seconds": 0.463792086506146,
+      "median_decode_tokens_per_second": 28.32856855542545
+    },
+    "system_prompt": {
+      "samples": 10,
+      "median_words": 65.0,
+      "length_stops": 0,
+      "generation_errors": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0,
+      "max_repeated_4gram_fraction": 0.05882352941176472,
+      "max_character_run": 2,
+      "max_replacement_characters": 0,
+      "median_first_text_seconds": 0.6346109275182243,
+      "median_decode_tokens_per_second": 30.060671209544857
+    },
+    "ds4_ffn_s-1": {
+      "samples": 10,
+      "median_words": 98.0,
+      "length_stops": 0,
+      "generation_errors": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0,
+      "max_repeated_4gram_fraction": 0.07476635514018692,
+      "max_character_run": 4,
+      "max_replacement_characters": 0,
+      "median_first_text_seconds": 0.4947288499970455,
+      "median_decode_tokens_per_second": 29.98061183508981
+    },
+    "ds4_ffn_s-0.5": {
+      "samples": 10,
+      "median_words": 333.5,
+      "length_stops": 0,
+      "generation_errors": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0,
+      "max_repeated_4gram_fraction": 0.08978328173374617,
+      "max_character_run": 4,
+      "max_replacement_characters": 0,
+      "median_first_text_seconds": 0.4629011700017145,
+      "median_decode_tokens_per_second": 28.938722933378074
+    }
+  },
+  "interpretation": "Response length is not a correctness score. Review archived answers; no automatic factuality claim.",
+  "configurations": [
+    {
+      "name": "baseline"
+    },
+    {
+      "name": "system_prompt",
+      "system": "You are a helpful assistant. Answer in at most three sentences. Include essential facts. Use no headings, lists, or preamble."
+    },
+    {
+      "name": "ds4_ffn_s-1",
+      "artifact": "e802259e2f1b4d9507381a2063a232a1c1eed0206c257c45ef16dd894ddda581",
+      "strength": -1
+    },
+    {
+      "name": "ds4_ffn_s-0.5",
+      "artifact": "e802259e2f1b4d9507381a2063a232a1c1eed0206c257c45ef16dd894ddda581",
+      "strength": -0.5
+    }
+  ],
+  "artifact_manifests": {
+    "e802259e2f1b4d9507381a2063a232a1c1eed0206c257c45ef16dd894ddda581": {
+      "active_layers": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29
+      ],
+      "dtype": "f32le",
+      "layers": 30,
+      "mode": "projection",
+      "model_sha256": "a7c5bc715f5ff8e99a3e8901ce7d2b42b402c669bf24f7c5250747633d0f5891",
+      "normalization": "unit",
+      "payload": "vectors.f32",
+      "payload_sha256": "526d6e2f8aa5db31a8d9d54907652a6f20f29bd1d44ab0caf059d07d65cbde9b",
+      "provenance": {
+        "dataset_sha256": "9532191d20ff514302d40d54bd06b6b781fb6c2ea33aaef8d443a44c71fd73b6",
+        "engine_commit": "82ae168ce",
+        "evaluation": "unevaluated; no recommended strength",
+        "method": "paired_difference_of_means_orthogonalized_control_v1",
+        "model_revision": "7b92b5b28818151e8669af2e45e88d6086f490dd",
+        "model_source": "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF",
+        "negative_label": "detailed",
+        "numeric_settings": "production_cpu_decode_gpu_prefill; prefill=512; compiler=15.2.0; source=cf1f03f1a30ffc8e2c415c43774565d5fff2db1bbe549c0b0284814012d69e54; flags=2a745642dea153a3544b635f7d98d832ff8206bf8b8df1fe3d3111cac5c259f4; capture_site=post_ffn_output_v1; extractor=59395f63f187485b9d186687b53a5b8bc2ee6cd74b6c34d7b12c90a458c4ec32",
+        "position": "last_rendered_prompt_token_including_assistant_opening",
+        "positive_label": "succinct",
+        "reasoning": "off",
+        "template_sha256": "845f1ee48e39fc942fe190da9df6a1c5db229e17a96ea08966ad1c9274e73d1b"
+      },
+      "site": "post_ffn_output_v1",
+      "token_policy": "all_text",
+      "version": 1,
+      "width": 2816
+    }
+  },
+  "binary_sha256": "f1c712c30eef996513a3d66f594e2a5fdf152d25bd2c2f252b3c7b372b494430",
+  "evaluator_sha256": "ad5f53283d8f83e0a95f888d5b8a7f72a9fd6fb20ed0267daee4afeca65e85b0",
+  "acceptance_targets": {
+    "median_words_reduction_fraction": 0.15,
+    "additional_length_stops": 0,
+    "additional_constraint_failures": 0,
+    "maximum_repeated_4gram_fraction": 0.2,
+    "maximum_identical_character_run": 32,
+    "additional_generation_errors": 0,
+    "maximum_replacement_characters": 0,
+    "note": "Experimental screening targets; factual/code correctness also requires answer review."
+  },
+  "describe": {
+    "ok": true,
+    "protocol": 1,
+    "model": "gemma-4-26B-A4B-it-qat",
+    "context_window": 4096,
+    "max_output": 4096,
+    "max_frame": 65536,
+    "steering": {
+      "enabled": true,
+      "site": "post_layer_residual_v1",
+      "modes": [
+        "additive",
+        "projection"
+      ],
+      "prospective": true,
+      "preserves_reasoning_history": true,
+      "sites": [
+        "post_layer_residual_v1",
+        "post_ffn_output_v1"
+      ]
+    },
+    "kvstore": false,
+    "reasoning": {
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "history": [
+        "discard",
+        "preserve_tool_calls"
+      ],
+      "budget_tokens": true
+    }
+  },
+  "startup_seconds": 9.316168917022878
+}

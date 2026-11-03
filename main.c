@@ -6,6 +6,8 @@
 #include "conversation.h"
 #include "serve.h"
 #include "kvstore.h"
+#include "json.h"
+#include <sys/stat.h>
 
 #include <errno.h>
 #include <inttypes.h>
@@ -32,6 +34,11 @@ static void usage(void) {
 "  chat     image options: --mmproj FILE --image FILE [--image-tokens N] (first message)\n"
 "  run/bench --prefill 512|1024 (default 512)\n"
 "  chat     [-n max] [--temp F] [--top-k N] [--top-p F] [--seed S]\n"
+"  run/chat --steering FILE [--steering-strength F] (experimental, text only)\n"
+"  steering-capture --dataset FILE --out DIR [--ctx N] [--thinking] [--completions] [--cpu]\n"
+"                   [--capture-site post_layer_residual_v1|post_ffn_output_v1]\n"
+"  steering-import --steering FILE --out DIR (prints artifact ID)\n"
+"  wire/serve --steering-dir DIR enables registered steering artifacts\n"
 "  oracle   -t \"id,id,id\" [-o logits.bin] [--layers dir] [--q8]\n"
 "  bench    [-p N] [-n N] [-d N] [-r N] [--delay S] [--no-warmup] [--progress] [-o md|jsonl]\n"
 "  wire     [--state DIR] [--cache DIR] [--cache-budget SIZE] [--mmproj FILE]\n"
@@ -431,9 +438,34 @@ static int cmd_vision_encode(const char *model, int argc, char **argv) {
     free(out); xe_image_free(&image); cli_unlock(); return 0;
 }
 
+static float cli_steering_strength(const char *text) {
+    errno = 0; char *end; float v = strtof(text, &end);
+    if (!*text || errno || *end || !isfinite(v)) {
+        fprintf(stderr, "xenolith: steering strength must be finite\n"); exit(1);
+    }
+    return v;
+}
+static xe_steering *cli_steering_load(xe_engine *e, const char *path) {
+    if (!path) return NULL;
+    xe_steering *v = NULL; char error[256];
+    if (!xe_steering_load(path, xe_engine_layer_count(e), xe_engine_hidden_width(e),
+                           xe_engine_model_fingerprint(e), &v, error, sizeof error)) {
+        fprintf(stderr, "xenolith: %s\n", error); exit(1);
+    }
+    return v;
+}
+static void cli_steering_apply(xe_session *s, xe_steering *v, float strength) {
+    if (v && !xe_session_steering_set(s, v, strength)) {
+        fprintf(stderr, "xenolith: cannot configure steering\n"); exit(1);
+    }
+}
+
 static int cmd_run(const char *model, int argc, char **argv) {
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     cli_cpu_plan cpu = {0};
+    const char *steering_path = NULL;
+    float steering_strength = 1;
+    xe_steering *steering_vector = NULL;
     const char *prompt = NULL;
     const char *mmproj = NULL, *image_path = NULL, *vision_dump = NULL;
     int image_budget = 280, prefill_rows = 512;
@@ -446,7 +478,13 @@ static int cmd_run(const char *model, int argc, char **argv) {
     for (int i = 3; i < argc; i++) {
         if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
             cli_cpu_option(argc, argv, &i, &cpu)) continue;
-        if (!strcmp(argv[i], "--image") || !strcmp(argv[i], "--mmproj") || !strcmp(argv[i], "--vision-dump")) {
+        if (!strcmp(argv[i], "--steering")) {
+            if (++i >= argc || steering_path) usage();
+            steering_path = argv[i];
+        } else if (!strcmp(argv[i], "--steering-strength")) {
+            if (++i >= argc) usage();
+            steering_strength = cli_steering_strength(argv[i]);
+        } else if (!strcmp(argv[i], "--image") || !strcmp(argv[i], "--mmproj") || !strcmp(argv[i], "--vision-dump")) {
             const char *key = argv[i]; if (++i >= argc) usage();
             if (!strcmp(key, "--image")) image_path = argv[i];
             else if (!strcmp(key, "--mmproj")) mmproj = argv[i];
@@ -506,12 +544,15 @@ static int cmd_run(const char *model, int argc, char **argv) {
         fprintf(stderr,"xenolith: initial vision support requires --ctx 65536 or 131072\n");return 1;
     }
 
+    if (steering_path && image_path) {
+        fprintf(stderr, "xenolith: steering with visual input is not supported\n"); return 1;
+    }
     cli_cpu_finish(&cpu, context);
     cli_lock(NULL);
 
     xe_image image = {0}; uint8_t projector_hash[32], model_hash[32]; float *image_embeddings = NULL;
     if (image_path) image_embeddings = cli_encode_image(model, mmproj, image_path, image_budget, vision_dump, &image, projector_hash, model_hash, &cpu.options);
-    xe_engine *e = xe_engine_open_with_options(model, &cpu.options);
+    xe_engine *e = (steering_path ? xe_engine_open_cached_with_options(model, &cpu.options) : xe_engine_open_with_options(model, &cpu.options));
     free(cpu.cpus);
     int ctx = xe_context_size(e);
     int vocab = xe_vocab_size(e);
@@ -530,6 +571,7 @@ static int cmd_run(const char *model, int argc, char **argv) {
         fprintf(stderr, "xenolith: run: prompt has %lld tokens including BOS; context capacity is %d\n",
                 (long long)encoded + 1, ctx);
         free(toks);
+        xe_steering_release(steering_vector);
         xe_engine_close(e);
         cli_unlock();
         return 1;
@@ -565,7 +607,9 @@ static int cmd_run(const char *model, int argc, char **argv) {
     }
 
     xe_tokens tokens = { toks, n, ctx };
+    steering_vector = cli_steering_load(e, steering_path);
     xe_session *s = xe_session_new(e);
+    cli_steering_apply(s, steering_vector, steering_strength);
     if (!xe_session_set_text_prefill(s, prefill_rows)) { fprintf(stderr,"xenolith: cannot set prefill size\n"); exit(1); }
     xe_input input = {toks,n,image_embeddings ? &visual : NULL,image_embeddings ? 1 : 0};
     uint64_t prefill_started=bench_now_ns();
@@ -619,6 +663,7 @@ static int cmd_run(const char *model, int argc, char **argv) {
     free(image_embeddings); xe_image_free(&image);
     xe_tokens_free(&tokens);
     xe_session_free(s);
+    xe_steering_release(steering_vector);
     xe_engine_close(e);
     cli_unlock();
     return 0;
@@ -666,6 +711,9 @@ static void chat_print_stats(int n_gen, double avg_tps) {
 static int cmd_chat(const char *model, int argc, char **argv) {
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     cli_cpu_plan cpu = {0};
+    const char *steering_path = NULL;
+    float steering_strength = 1;
+    xe_steering *steering_vector = NULL;
     const char *mmproj = NULL, *image_path = NULL;
     int image_budget = 280;
     int max_n = 512;
@@ -677,7 +725,13 @@ static int cmd_chat(const char *model, int argc, char **argv) {
     for (int i = 3; i < argc; i++) {
         if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
             cli_cpu_option(argc, argv, &i, &cpu)) continue;
-        if (!strcmp(argv[i], "--image") || !strcmp(argv[i], "--mmproj")) {
+        if (!strcmp(argv[i], "--steering")) {
+            if (++i >= argc || steering_path) usage();
+            steering_path = argv[i];
+        } else if (!strcmp(argv[i], "--steering-strength")) {
+            if (++i >= argc) usage();
+            steering_strength = cli_steering_strength(argv[i]);
+        } else if (!strcmp(argv[i], "--image") || !strcmp(argv[i], "--mmproj")) {
             const char *key = argv[i];
             if (++i >= argc) usage();
             if (!strcmp(key, "--image")) image_path = argv[i];
@@ -732,6 +786,9 @@ static int cmd_chat(const char *model, int argc, char **argv) {
         return 1;
     }
     cli_cpu_finish(&cpu, context);
+    if (steering_path && image_path) {
+        fprintf(stderr, "xenolith: steering with visual input is not supported\n"); return 1;
+    }
     cli_lock(NULL);
 
     xe_image image = {0};
@@ -751,7 +808,7 @@ static int cmd_chat(const char *model, int argc, char **argv) {
                            XE_VISION_NUMERIC_REVISION, visual.identity);
     }
 
-    xe_engine *e = xe_engine_open_with_options(model, &cpu.options);
+    xe_engine *e = (steering_path ? xe_engine_open_cached_with_options(model, &cpu.options) : xe_engine_open_with_options(model, &cpu.options));
     free(cpu.cpus);
     int ctx = xe_context_size(e);
     int vocab = xe_vocab_size(e);
@@ -766,7 +823,9 @@ static int cmd_chat(const char *model, int argc, char **argv) {
         exit(1);
     }
 
+    steering_vector = cli_steering_load(e, steering_path);
     xe_session *s = xe_session_new(e);
+    cli_steering_apply(s, steering_vector, steering_strength);
     xe_tokens transcript = {0};
     xe_sampler sp = { temp, top_k, top_p, seed };
     int32_t eot = xe_eot_id(e);
@@ -793,6 +852,17 @@ static int cmd_chat(const char *model, int argc, char **argv) {
         if (nread < 0) break;
         while (nread > 0 && (line[nread - 1] == '\n' || line[nread - 1] == '\r'))
             line[--nread] = '\0';
+        if (!strncmp(line, "/steer ", 7)) {
+            const char *arg = line + 7;
+            if (!strcmp(arg, "off")) {
+                if (!xe_session_steering_set(s, NULL, 0))
+                    fprintf(stderr, "xenolith: cannot disable steering\n");
+            } else if (steering_vector) {
+                steering_strength = cli_steering_strength(arg);
+                cli_steering_apply(s, steering_vector, steering_strength);
+            } else fprintf(stderr, "xenolith: start chat with --steering FILE\n");
+            continue;
+        }
         if (!strcmp(line, "/exit")) break;
         profile_status user_status;
         if (image_embeddings && !visual_added) {
@@ -911,6 +981,7 @@ static int cmd_chat(const char *model, int argc, char **argv) {
     xe_tokens_free(&transcript);
     xe_session_free(s);
     profile_close(pf);
+    xe_steering_release(steering_vector);
     xe_engine_close(e);
     cli_unlock();
     return 0;
@@ -923,11 +994,15 @@ static int cmd_oracle(const char *model, int argc, char **argv) {
     const char *dump_path = NULL;
     const char *layers_dir = NULL;
     int q8_mode = 0;
+    const char *steering_path = NULL;
+    float steering_strength = 1;
 
     for (int i = 3; i < argc; i++) {
         if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
             cli_cpu_option(argc, argv, &i, &cpu)) continue;
-        if (!strcmp(argv[i], "-t")) {
+        if (!strcmp(argv[i], "--steering")) {if (++i >= argc) usage(); steering_path = argv[i];}
+        else if (!strcmp(argv[i], "--steering-strength")) {if (++i >= argc) usage(); steering_strength = cli_steering_strength(argv[i]);}
+        else if (!strcmp(argv[i], "-t")) {
             if (++i >= argc) usage();
             ids = argv[i];
         } else if (!strcmp(argv[i], "-o")) {
@@ -977,9 +1052,11 @@ static int cmd_oracle(const char *model, int argc, char **argv) {
     cli_cpu_finish(&cpu, context);
     cli_lock(NULL);
 
-    xe_engine *e = xe_engine_open_with_options(model, &cpu.options);
+    xe_engine *e = (steering_path ? xe_engine_open_cached_with_options(model, &cpu.options) : xe_engine_open_with_options(model, &cpu.options));
     free(cpu.cpus);
-    xe_oracle(e, toks, n, dump_path, layers_dir, q8_mode, stdout);
+    xe_steering *vector = cli_steering_load(e, steering_path);
+    xe_oracle_steered(e, toks, n, dump_path, layers_dir, q8_mode, stdout, vector, steering_strength);
+    xe_steering_release(vector);
     xe_engine_close(e);
     cli_unlock();
     return 0;
@@ -1310,13 +1387,17 @@ static int cmd_wire(const char *model, int argc, char **argv) {
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     cli_cpu_plan cpu = {0};
     const char *state_option = NULL;
+    const char *steering_dir = NULL;
     const char *mmproj = NULL;
     const char *cache_dir = NULL;
     uint64_t cache_budget = KVSTORE_DEFAULT_BUDGET;
     for (int i = 3; i < argc; i++) {
         if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
             cli_cpu_option(argc, argv, &i, &cpu)) continue;
-        if (!strcmp(argv[i],"--mmproj")) {
+        if (!strcmp(argv[i], "--steering-dir")) {
+            if (++i >= argc || steering_dir) usage();
+            steering_dir = argv[i];
+        } else if (!strcmp(argv[i],"--mmproj")) {
             if(++i>=argc)usage();
             mmproj=argv[i];
         } else if (!strcmp(argv[i], "--state")) {
@@ -1338,9 +1419,10 @@ static int cmd_wire(const char *model, int argc, char **argv) {
     cli_cpu_finish(&cpu, context);
     cli_lock(NULL);
 
-    xe_engine *e = (cache_budget || mmproj) ? xe_engine_open_cached_with_options(model, &cpu.options)
+    xe_engine *e = (cache_budget || mmproj || steering_dir) ? xe_engine_open_cached_with_options(model, &cpu.options)
                                           : xe_engine_open_with_options(model, &cpu.options);
     free(cpu.cpus);
+    if (steering_dir && !xe_engine_steering_store(e, steering_dir)) { fprintf(stderr,"xenolith: invalid steering directory\n"); return 1; }
     if(mmproj){char error[256];if(!xe_engine_enable_vision(e,mmproj,error,sizeof error)){fprintf(stderr,"xenolith: %s\n",error);xe_engine_close(e);cli_unlock();return 1;}}
     int status = serve_stdio_with_budget(e, state_dir, cache_dir, cache_budget);
     xe_engine_close(e);
@@ -1352,6 +1434,7 @@ static int cmd_serve(const char *model, int argc, char **argv) {
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     cli_cpu_plan cpu = {0};
     const char *state_option = NULL;
+    const char *steering_dir = NULL;
     const char *mmproj = NULL;
     const char *cache_dir = NULL;
     uint64_t cache_budget = KVSTORE_DEFAULT_BUDGET;
@@ -1360,7 +1443,10 @@ static int cmd_serve(const char *model, int argc, char **argv) {
     for (int i = 3; i < argc; i++) {
         if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
             cli_cpu_option(argc, argv, &i, &cpu)) continue;
-        if (!strcmp(argv[i],"--mmproj")) {
+        if (!strcmp(argv[i], "--steering-dir")) {
+            if (++i >= argc || steering_dir) usage();
+            steering_dir = argv[i];
+        } else if (!strcmp(argv[i],"--mmproj")) {
             if(++i>=argc)usage();
             mmproj=argv[i];
         } else if (!strcmp(argv[i], "--state")) {
@@ -1398,15 +1484,196 @@ static int cmd_serve(const char *model, int argc, char **argv) {
     cli_cpu_finish(&cpu, context);
     cli_lock(socket_path);
 
-    xe_engine *e = (cache_budget || mmproj) ? xe_engine_open_cached_with_options(model, &cpu.options)
+    xe_engine *e = (cache_budget || mmproj || steering_dir) ? xe_engine_open_cached_with_options(model, &cpu.options)
                                           : xe_engine_open_with_options(model, &cpu.options);
     free(cpu.cpus);
+    if (steering_dir && !xe_engine_steering_store(e, steering_dir)) { fprintf(stderr,"xenolith: invalid steering directory\n"); return 1; }
     if(mmproj){char error[256];if(!xe_engine_enable_vision(e,mmproj,error,sizeof error)){fprintf(stderr,"xenolith: %s\n",error);xe_engine_close(e);cli_unlock();return 1;}}
     int status = serve_run_with_budget(e, state_dir, cache_dir, socket_path,
                            idle_minutes, cache_budget);
     xe_engine_close(e);
     cli_unlock();
     return status;
+}
+
+static int cmd_steering(const char *model, int argc, char **argv, int capture) {
+    const char *dataset = NULL, *out = NULL, *manifest = NULL;
+    int context = 512, seen = 0, thinking = 0, completions = 0, cpu = 0;
+    xe_steering_site capture_site=XE_STEERING_RESIDUAL;
+    for (int i = 3; i < argc; i++) {
+        if (cli_context_option(argc, argv, &i, &context, &seen)) continue;
+        if (!strcmp(argv[i], "--thinking")) thinking = 1;
+        else if (!strcmp(argv[i], "--completions")) completions = 1;
+        else if (!strcmp(argv[i], "--cpu")) cpu = 1;
+        else if (!strcmp(argv[i],"--capture-site")){
+            if(++i>=argc)usage();
+            if(!strcmp(argv[i],XE_STEERING_SITE))capture_site=XE_STEERING_RESIDUAL;
+            else if(!strcmp(argv[i],XE_STEERING_FFN_SITE))capture_site=XE_STEERING_FFN;
+            else usage();
+        }
+        else if (!strcmp(argv[i], "--dataset")) {if (++i >= argc) usage(); dataset = argv[i];}
+        else if (!strcmp(argv[i], "--out")) {if (++i >= argc) usage(); out = argv[i];}
+        else if (!strcmp(argv[i], "--steering")) {if (++i >= argc) usage(); manifest = argv[i];}
+        else usage();
+    }
+    if (!out || (capture ? !dataset || manifest : !manifest || dataset)) usage();
+    if ((!capture && (completions || cpu)) || (completions && thinking)) usage();
+    if (mkdir(out, 0700) && errno != EEXIST) {perror(out); return 1;}
+    cli_lock(NULL);
+    xe_engine *e = xe_engine_open_cached(model, context);
+    int layers = xe_engine_layer_count(e), width = xe_engine_hidden_width(e), result = 1;
+    if (!capture) {
+        char id[65], error[256];
+        if (!xe_steering_import(out, manifest, layers, width, xe_engine_model_fingerprint(e), id, error, sizeof error))
+            fprintf(stderr, "xenolith: %s\n", error);
+        else {puts(id); result = 0;}
+        goto done;
+    }
+    size_t dataset_size; char *dataset_bytes = read_file(dataset,&dataset_size);
+    uint8_t dataset_hash[32]; char dataset_hex[65];
+    format_sha256_bytes(dataset_bytes,dataset_size,dataset_hash); free(dataset_bytes);
+    xe_steering_hex(dataset_hash,dataset_hex);
+    FILE *input = fopen(dataset, "rb");
+    if (!input) {perror(dataset); goto done;}
+    profile *pf = NULL;
+    if (profile_open(&pf, e) != PROFILE_OK) {fclose(input); goto done;}
+    xe_session *session = xe_session_new(e);
+    if(!xe_session_capture_enable_at(session,capture_site)){xe_session_free(session);profile_close(pf);fclose(input);goto done;}
+    size_t elements = (size_t)layers * width;
+    double *sum = calloc(elements, sizeof *sum);
+    float *pooled = malloc(elements * sizeof *pooled);
+    int32_t *answer_tokens = malloc((size_t)context * sizeof *answer_tokens);
+    if (!sum || !pooled || !answer_tokens) {
+        free(sum); free(pooled); free(answer_tokens);
+        xe_session_free(session); profile_close(pf); fclose(input); goto done;
+    }
+    char *line = NULL; size_t capacity = 0; ssize_t length; int count = 0, capture_failed = 0;
+    while ((length = getline(&line, &capacity, input)) >= 0) {
+        if ((size_t)length > 1048576) {capture_failed = 1; break;}
+        json_value *pair = json_parse(line, (size_t)length);
+        const json_value *positive = json_member(pair,"positive"), *negative = json_member(pair,"negative");
+        const json_value *system = json_member(pair,"system");
+        const json_value *question = json_member(pair,"prompt");
+        if (!positive || positive->type != JSON_STRING || !negative || negative->type != JSON_STRING ||
+            !positive->text_length || !negative->text_length ||
+            (completions ? !question || question->type != JSON_STRING || !question->text_length : question != NULL) ||
+            (system && system->type != JSON_STRING)) {json_free(pair); capture_failed = 1; break;}
+        int ok = 1;
+        for (int pole = 0; pole < 2 && ok; pole++) {
+            xe_tokens tokens = {0}; profile_render render;
+            xe_session_reset(session);
+            const char *text = pole ? negative->text : positive->text;
+            profile_status ps = profile_render_system(pf, system ? system->text : "You are a helpful assistant.", NULL, 0, thinking, &render);
+            if (ps == PROFILE_OK) for (uint32_t k = 0; k < render.token_count; k++) xe_tokens_push(&tokens,render.tokens[k]);
+            if (ps == PROFILE_OK) ps = profile_render_user(pf,completions ? question->text : text,PROFILE_TURN_PADDED,&render);
+            if (ps == PROFILE_OK) for (uint32_t k = 0; k < render.token_count; k++) xe_tokens_push(&tokens,render.tokens[k]);
+            if (ps == PROFILE_OK) ps = profile_render_reply_open(pf,PROFILE_TURN_PADDED,thinking,0,&render);
+            if (ps == PROFILE_OK) for (uint32_t k = 0; k < render.token_count; k++) xe_tokens_push(&tokens,render.tokens[k]);
+            if (ps != PROFILE_OK || tokens.len > context || !tokens.len) ok = 0;
+            int prefix = tokens.len, answer_count = 0;
+            if (ok && completions) {
+                answer_count = xe_encode_text_bounded(e, text, answer_tokens, context - prefix);
+                if (answer_count <= 0 || answer_count > context - prefix) ok = 0;
+            }
+            if (ok) {
+                if (cpu) {
+                    for (int end = 1; end <= prefix; end++) {
+                        tokens.len = end; xe_session_sync(session,&tokens);
+                    }
+                } else xe_session_sync(session,&tokens);
+                if (completions) {
+                    memset(sum, 0, elements * sizeof *sum);
+                    for (int a = 0; a < answer_count; a++) {
+                        xe_tokens_push(&tokens, answer_tokens[a]);
+                        xe_session_sync(session, &tokens);
+                        const float *rows = xe_session_capture_rows(session);
+                        for (size_t k = 0; k < elements; k++) sum[k] += rows[k];
+                    }
+                    for (size_t k = 0; k < elements; k++) pooled[k] = (float)(sum[k] / answer_count);
+                }
+                char path[4096];
+                int n = snprintf(path,sizeof path,"%s/%04d-%s.f32",out,count,pole?"negative":"positive");
+                FILE *f = n > 0 && (size_t)n < sizeof path ? fopen(path,"wbx") : NULL;
+                if (!f) ok = 0;
+                else {
+                    const float *rows = completions ? pooled : xe_session_capture_rows(session);
+                    for (int k = 0; k < layers * width && ok; k++) {
+                        uint32_t bits; uint8_t bytes[4]; memcpy(&bits, rows+k, 4); format_put_u32le(bytes,bits);
+                        if (fwrite(bytes,1,4,f) != 4) ok = 0;
+                    }
+                    if (fclose(f)) ok = 0;
+                }
+                /* Preserve token positions so extraction can be independently audited. */
+                json_writer trace = {0}; json_raw(&trace,"{\"prefix_tokens\":"); json_i64(&trace,prefix);
+                json_raw(&trace,",\"capture_first\":"); json_i64(&trace,completions?prefix:prefix-1);
+                json_raw(&trace,",\"capture_count\":"); json_i64(&trace,completions?answer_count:1);
+                int piece_length; const char *piece=xe_token_piece(e,tokens.v[prefix-1],&piece_length);
+                json_raw(&trace,",\"prefix_last_piece\":"); json_string(&trace,piece,(size_t)piece_length);
+                json_raw(&trace,",\"tokens\":[");
+                for (int k = 0; k < tokens.len; k++) {if(k)json_raw(&trace,",");json_i64(&trace,tokens.v[k]);}
+                json_raw(&trace,"]}\n");
+                n = snprintf(path,sizeof path,"%s/%04d-%s.tokens.json",out,count,pole?"negative":"positive");
+                f = n > 0 && (size_t)n < sizeof path ? fopen(path,"wbx") : NULL;
+                if (!f) ok = 0;
+                else {if(trace.failed || fwrite(trace.data,1,trace.length,f)!=trace.length)ok=0;if(fclose(f))ok=0;}
+                json_writer_free(&trace);
+            }
+            xe_tokens_free(&tokens);
+        }
+        json_free(pair);
+        if (!ok) {capture_failed = 1; break;}
+        count++; fprintf(stderr,"steering capture: pair %d\n",count);
+    }
+    if (!capture_failed && feof(input) && !ferror(input) && count > 0) {
+        char model_hash[65],template_hash[65]; uint8_t hash[32]; uint64_t n;
+        xe_steering_hex(xe_engine_model_fingerprint(e),model_hash);
+        const char *tmpl = xe_chat_template(e,&n); format_sha256_bytes(tmpl,(size_t)n,hash); xe_steering_hex(hash,template_hash);
+        json_writer j = {0}; json_raw(&j,"{\"version\":1,\"layers\":"); json_i64(&j,layers);
+        json_raw(&j,",\"width\":"); json_i64(&j,width); json_raw(&j,",\"pairs\":"); json_i64(&j,count);
+        json_raw(&j,",\"model_sha256\":"); json_string(&j,model_hash,64);
+        json_raw(&j,",\"dataset_sha256\":"); json_string(&j,dataset_hex,64);
+        json_raw(&j,",\"template_sha256\":"); json_string(&j,template_hash,64);
+        json_raw(&j,",\"engine_commit\":"); json_string(&j,XE_BUILD_COMMIT,strlen(XE_BUILD_COMMIT));
+        json_raw(&j,",\"reasoning\":"); json_string(&j,thinking?"on":"off",thinking?2:3);
+        json_raw(&j,",\"capture_kind\":");
+        const char *kind = completions ? "paired_completions_v1" : "paired_instructions_v1";
+        json_string(&j,kind,strlen(kind));
+        json_raw(&j,",\"site\":");
+        const char *site=capture_site==XE_STEERING_FFN?XE_STEERING_FFN_SITE:XE_STEERING_SITE;
+        json_string(&j,site,strlen(site));
+        json_raw(&j,",\"position\":");
+        const char *position = completions ? "mean_assistant_completion_tokens" : "last_rendered_prompt_token_including_assistant_opening";
+        json_string(&j,position,strlen(position));
+        json_raw(&j,",\"backend\":");
+        const char *backend = cpu ? "cpu_tokenwise" : "production_prefill_cpu_completion";
+        json_string(&j,backend,strlen(backend));
+        json_raw(&j,",\"numeric_settings\":");
+        const char *numeric = "production_cpu_decode_gpu_prefill; prefill=512; compiler=" __VERSION__
+#ifdef XE_NUMERIC_SOURCE_HASH
+            "; source=" XE_NUMERIC_SOURCE_HASH
+#endif
+#ifdef XE_NUMERIC_CFLAGS_HASH
+            "; flags=" XE_NUMERIC_CFLAGS_HASH
+#endif
+            ;
+        json_writer settings = {0}; json_raw(&settings,numeric);
+        json_raw(&settings,"; capture_site=");json_raw(&settings,site);
+        if(cpu)json_raw(&settings,"; capture_prefix=cpu_tokenwise");
+#ifdef XE_CAPTURE_SOURCE_HASH
+        json_raw(&settings,"; extractor=" XE_CAPTURE_SOURCE_HASH);
+#endif
+        if(settings.failed)j.failed=1;
+        json_string(&j,settings.data,settings.length); json_writer_free(&settings);
+        json_raw(&j,"}\n");
+        char path[4096]; int npath = snprintf(path,sizeof path,"%s/capture.json",out);
+        FILE *f = npath > 0 && (size_t)npath < sizeof path ? fopen(path,"wbx") : NULL;
+        if (f) {int ok = !j.failed && fwrite(j.data,1,j.length,f)==j.length; if (fclose(f)) ok=0; if(ok)result=0;}
+        json_writer_free(&j);
+    }
+    if (result) fprintf(stderr,"xenolith: capture failed; check dataset, context, and output directory\n");
+    free(sum); free(pooled); free(answer_tokens);
+    free(line); fclose(input); xe_session_free(session); profile_close(pf);
+done: xe_engine_close(e); cli_unlock(); return result;
 }
 
 int main(int argc, char **argv) {
@@ -1417,6 +1684,8 @@ int main(int argc, char **argv) {
 
     if (!strcmp(cmd, "info")) return cmd_info(model, argc, argv);
     if (!strcmp(cmd, "tokenize")) return cmd_tokenize(model, argc, argv);
+    if (!strcmp(cmd, "steering-capture")) return cmd_steering(model, argc, argv, 1);
+    if (!strcmp(cmd, "steering-import")) return cmd_steering(model, argc, argv, 0);
     if (!strcmp(cmd, "run")) return cmd_run(model, argc, argv);
     if (!strcmp(cmd, "vision-encode")) return cmd_vision_encode(model, argc, argv);
     if (!strcmp(cmd, "chat")) return cmd_chat(model, argc, argv);

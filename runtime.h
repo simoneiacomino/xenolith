@@ -107,6 +107,9 @@ typedef struct {
     uint32_t reasoning_history;
     int reasoning_budget_set;
     int32_t reasoning_budget;
+    int steering_set;
+    const char *steering_id; /* NULL explicitly disables steering for ephemeral input. */
+    float steering_strength;
 } runtime_gen_params;
 
 typedef struct {
@@ -236,6 +239,17 @@ runtime_status runtime_open(runtime **out, xe_engine *engine, const char *state_
 void runtime_close(runtime *w);
 
 runtime_status runtime_describe(runtime *w, runtime_info *out);
+
+typedef struct {
+    char artifact[65]; /* Empty means disabled. */
+    float strength;
+    uint64_t position;
+    uint64_t transitions;
+} runtime_steering_info;
+int runtime_steering_enabled(const runtime *w);
+runtime_status runtime_session_steering(runtime *w, const char *artifact, float strength,
+                                        runtime_steering_info *out);
+runtime_status runtime_session_steering_get(runtime *w, runtime_steering_info *out);
 
 runtime_status runtime_session_create(runtime *w, const char *system,
                                 const profile_tool *tools, size_t tool_count,
