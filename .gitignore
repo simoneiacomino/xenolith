@@ -11,6 +11,7 @@
 /benchmark-runs/
 /ocloc_supported_devices_concat.yaml
 /tests/prefill_kernel_trials.jsonl
+/tests/vision/results/
 
 *.o
 __pycache__/

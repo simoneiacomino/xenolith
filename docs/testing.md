@@ -1,9 +1,32 @@
 # Testing
 
+`make check-install check-devices` covers source installation and the lightweight
+hardware diagnostic without accessing a GPU or model. Installation tests use
+temporary user/staging prefixes and verify PATH invocation, unchanged unrelated
+files and no configuration creation. Device tests run the actual CLI with a
+temporary Level Zero preload fixture: tested/untested and unsupported devices,
+runtime failures, denied access, device loss, config bypass and no GPU contexts
+or allocations. These tests require Python 3, a C compiler and Level Zero headers.
+They do not establish actual hardware compatibility. For a real runtime check,
+run `./xenolith check-device` separately; it requires the installed GPU driver
+but performs no model inference.
+
 Run the commands below from the repository root.
 
 ## General checks
 
+- `make check-installer`: shell installation, packaging, build recipe and download
+  resume fixtures, without compiling or loading the engine. Requires Python 3,
+  Node26+, npm, Git, binutils and standard Linux shell tools; tests use temporary
+  homes, pseudo-terminals and loopback HTTP. Simulated hardware/engine responses
+  do not establish inference. See [installation tests](../installer/README.md#tests)
+  for opt-in checks using real packages and models.
+- `make check-config`: pure configuration/argument resolution and actual CLI
+  `config init`/`inspect` checks, without weights or GPU initialization. Covers
+  atomic creation, concurrent initialization, existing files, custom paths,
+  environment selection, malformed files, projector defaults and literal prompt
+  values. Requires Python 3 for the CLI checks; the standalone
+  `tests/test_cli_config` executable needs neither Python nor Level Zero.
 - `make check-unit check-context`: host and CLI checks, without a GPU or model.
   This includes CPU profile and sysfs parsing cases, explicit C options, live
   worker selection, scheduling, affinity restoration and attention scratch
@@ -112,10 +135,11 @@ supported inputs and persistence contracts.
 
 [tests/vision/](../tests/vision) holds checks, fixtures and reference metadata.
 `tools/` holds artifact verification, fixture generation, preprocessing and
-numerical oracles. [Historical reports](../tests/vision/results) describe their
-recorded revisions and environments; filenames such as `final` do not certify
-the current checkout. Keep those reports intact and use a fresh output directory
-for each run. The Python integration checks reject existing output directories.
+numerical oracles. Keep raw execution reports outside the public repository and
+use a fresh output directory for each run. Preserve source revisions, artifact
+identities and environment details with those internal reports; filenames such
+as `final` do not certify the current checkout. The Python integration checks
+reject existing output directories.
 
 ### Input, GPU and preprocessing checks
 

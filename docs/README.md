@@ -1,5 +1,10 @@
 # Xenolith documentation
 
+- [Contributing](../CONTRIBUTING.md): pull requests, commit messages and validation.
+- [Installation](../installer/README.md): guided setup, existing models and clients.
+- [Engine releases and distributions](../installer/RELEASING.md): versions,
+  package qualification and publication.
+- [Build from source](build.md): dependencies, model setup and installation.
 - [CLI](cli.md): commands, options, environment variables and service paths.
 - [C API](api.md): engine configuration, sessions and resource lifetimes.
 - [Wire protocol](protocol.md): requests, events and client integration.

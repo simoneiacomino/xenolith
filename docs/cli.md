@@ -1,11 +1,161 @@
 # Command-line reference
 
 ```text
-xenolith <command> <model.gguf> [options]
+xenolith <command> [model.gguf] [options]
 ```
 
-The model path must follow the command; options follow the model path. Run
+An explicit model path follows the command; otherwise the native configuration
+supplies it. Options follow the command or its explicit model path. Run
 `./xenolith --help` to print the usage summary (it exits with status 1).
+
+## Device check
+
+```sh
+xenolith check-device
+```
+
+This command uses the installed Level Zero runtime to initialize GPU discovery,
+enumerate drivers/devices, read properties and check device status. It validates
+the first driver and first device, matching the engine's current selection. A
+different supported GPU later in enumeration does not make an incompatible
+selected device usable. Device support uses the same classification as inference.
+
+Exit status `0` means the selected enabled GPU is reachable. Output distinguishes
+tested devices from enabled but untested devices. Exit status `1` reports runtime
+initialization/enumeration failures, missing drivers/devices, denied access,
+device loss or an incompatible selected GPU. The runtime must already be
+installed; the engine does not install drivers or change device permissions.
+If `libze_loader.so` itself is missing, the system dynamic loader reports that
+before this command can run.
+
+No model/configuration file, engine weight lock, GPU context, kernel module or
+inference allocation is opened. Invalid `XENOLITH_CONFIG` or CPU inference options
+cannot block this check. Runtime discovery may itself initialize the vendor
+driver. This is a runtime/access diagnostic, not an inference, memory-capacity
+or kernel-compatibility test. `config inspect --json` remains a separate,
+read-only discovery command that never initializes the GPU.
+
+## Native configuration
+
+Configure the engine once, whether using a packaged executable or a source
+build. These commands do not download files or install clients:
+
+```sh
+./xenolith config init --model /absolute/path/model.gguf --ctx 65536
+./xenolith chat
+./xenolith serve
+```
+
+`init` creates `$XDG_CONFIG_HOME/xenolith/config.json` when `XDG_CONFIG_HOME` is
+absolute, otherwise `$HOME/.config/xenolith/config.json`. `XENOLITH_CONFIG` can
+select another absolute path; `--config FILE` takes precedence over that variable.
+No configuration is searched for in the current project directory.
+
+The file is created atomically with mode `0600`. Existing files, including
+symlinks, are never replaced. Edit the existing file to change settings; rerunning
+`init` reports that it was left unchanged. If `--model` is omitted, `init` asks
+for an absolute path on `/dev/tty` when a terminal is available. With all arguments
+provided it is noninteractive, including when called by a shell installer.
+
+```json
+{
+  "schema_version": 1,
+  "model": "/absolute/path/model.gguf",
+  "mmproj": "/absolute/path/mmproj-F16.gguf",
+  "context": 65536,
+  "cache_budget": "4GiB"
+}
+```
+
+| Field | Accepted value / initialization option |
+|---|---|
+| `schema_version` | Required integer `1` |
+| `model` | Absolute GGUF path; `--model FILE` |
+| `mmproj` | Optional absolute projector path; `--mmproj FILE` |
+| `context` | Integer 64–262144; `--ctx N` |
+| `socket` | Absolute Unix socket path; `--socket PATH` |
+| `state_dir` | Absolute conversation storage directory; `--state DIR` |
+| `cache_dir` | Absolute cache directory; `--cache DIR` |
+| `cache_budget` | Unsigned 64-bit byte count or size string; `--cache-budget SIZE` |
+| `idle_shutdown_minutes` | Positive finite number; `--idle-shutdown MIN` |
+
+Omitted fields retain the command defaults documented below. Strings do not
+expand `~`, environment variables or shell expressions. Unknown fields, duplicate
+keys, invalid types and unsupported schema versions are errors. The file must be
+a regular JSON file no larger than 64 KiB. Configuration commands validate the
+structure and paths, without opening model or projector files.
+
+Explicit command options override the corresponding configured defaults.
+`--config FILE` and `--no-config` are mutually exclusive; `--no-config` ignores
+both the native file and `XENOLITH_CONFIG`. This is useful for reproducible runs:
+
+```sh
+./xenolith run /absolute/path/model.gguf --no-config --ctx 16384 -p "Hello"
+```
+
+An absent file is allowed, even with `--config`: an explicit model still works.
+An existing invalid or unreadable file is an error, not a reason to silently
+fall back. A model is required when starting inference but not for discovery.
+Configured context is not applied to vocabulary-only `tokenize` or
+`vision-encode`, which do not accept `--ctx`. CPU options keep their existing
+environment precedence described below.
+
+`serve` and `wire` use the configured projector to enable vision. Text-only
+`chat` and `run` ignore that default; they use it when `--image` is supplied.
+An explicit `--mmproj` retains the existing requirement for an image on those
+commands. If an explicit model differs from the configured model, commands that
+would inherit its projector require an explicit matching `--mmproj` or
+`--no-config`. Model/projector compatibility and vision context limits are still
+validated by the engine when it starts.
+
+### Client discovery
+
+Clients can obtain operational paths without interpreting the configuration:
+
+```sh
+./xenolith config inspect --json
+./xenolith config inspect --json --config /absolute/settings.json --socket /tmp/private/wire.sock
+```
+
+The versioned response contains `schema_version: 1`, `config_path`,
+`config_present`, `endpoint` (`transport: "unix"` and absolute `path`),
+`engine_lock`, `state_dir`, `cache_dir` and `log_path`. `--socket`, `--state` and
+`--cache` override operational paths for this inspection. The lock always stays
+in the default engine state directory, independently of `--state` and `--socket`.
+`log_path` is the suggested `service.log` location for clients redirecting output;
+the engine itself continues writing startup diagnostics to stderr.
+
+Inspection never loads weights, initializes the GPU, creates directories or
+starts a service. It writes only JSON to stdout, diagnostics to stderr, and
+returns nonzero on error. The executable still needs its dynamic libraries,
+including the Level Zero loader, to run this command.
+
+Clients can connect to the resolved endpoint or start `serve` with the same
+`--config`, `--socket`, `--state` and `--cache` paths. Freezing these operational
+paths prevents a concurrent configuration edit from redirecting the new process
+away from the endpoint or log being watched. Other settings are read at startup;
+inspection is not an atomic snapshot of a later engine process.
+
+After connection, wire `describe` is the authority for the running model,
+context and capabilities. Changing the file does not reconfigure an existing
+service. Explicit endpoints can also be used to connect without an installed
+engine executable. Client preferences, tools, permissions and conversation
+bindings remain in their respective client configuration and storage.
+
+### Using the configuration from clients
+
+For ordinary installations, put model, projector, context and storage settings
+in the native JSON file. Clients use the discovery contract above and can start
+`xenolith serve` with explicit CLI options, which override configured defaults.
+Those options apply only to the new process; they do not reconfigure an existing
+service or rewrite the native file. Client startup settings are separate from
+requests sent over the wire protocol after connection.
+
+For client-specific settings and their precedence, see
+[XenoPi configuration](https://github.com/simoneiacomino/xenopi/blob/main/docs/configuration.md)
+and [CodeXe configuration](https://github.com/crrisci/codexe/blob/main/XENOLITH.md#start-and-configure).
+The engine CLI reads the options and environment variables documented here;
+client-specific model, context and projector variables are not engine CLI options.
 
 | Command | Purpose | Shared options |
 |---|---|---|
@@ -239,10 +389,14 @@ rejected; the result must fit an unsigned 64-bit integer.
 | Socket | `$XDG_RUNTIME_DIR/xenolith/wire.sock` | `wire.sock` inside the selected state directory |
 
 `XDG_STATE_HOME` and `XDG_CACHE_HOME` must be absolute; relative values use the
-`HOME` fallbacks. `XDG_RUNTIME_DIR` must be absolute and its socket directory
-usable, otherwise the state fallback is used. Pass an absolute `--state` path;
-absolute cache and socket paths also avoid dependence on the launch directory.
-The parent of an explicit socket path must already exist.
+`HOME` fallbacks. `XDG_RUNTIME_DIR` must be an existing absolute writable/searchable
+directory, and its `xenolith` child must either be absent or a writable/searchable
+directory; otherwise the state fallback is selected. Inspection and CLI service
+startup use the same read-only selection. The CLI then creates the selected
+socket parent, including for an explicit absolute socket. If creation fails it
+reports an error instead of silently choosing a different endpoint. Pass an
+absolute `--state` path; absolute cache and socket paths also avoid dependence
+on the launch directory.
 
 A positive cache budget computes the complete model GGUF SHA-256 before
 repacking, even if the cache directory later fails to open. With `--mmproj`,
@@ -259,18 +413,3 @@ used without images.
 Commands that load weights or encode images share an exclusive `engine.lock`
 in the default state directory. A custom `--state` or `--socket` does not move
 that lock. Close the current engine before starting another such command.
-
-## Launching through XenoPi
-
-When XenoPi starts a new Xenolith process, it inherits the environment fallback
-described above. With the binary and model already configured, launch `xenopi`
-without CPU overrides for automatic selection, or set a count:
-
-```sh
-XE_WORKERS=6 xenopi
-```
-
-Use `XE_CPU_LIST` instead to supply CPU IDs verified on that machine. XenoPi
-currently has no worker-count or CPU-map field in `xenolith.json`. If a service
-is already running on the socket, XenoPi uses its existing CPU plan. Restart
-Xenolith to apply a new plan; restarting only XenoPi does not change it.
