@@ -1,0 +1,58 @@
+name: Linux engine component candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Engine component version label
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  engine-candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ENGINE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Validate engine SemVer version
+        run: python3 installer/tools/engine_version.py "$ENGINE_VERSION"
+      - name: Check engine build, packaging, and release fixtures
+        run: make check-engine-package
+      - name: Build engine in the declared Linux userspace
+        run: |
+          python3 installer/tools/build_linux.py --component engine \
+            --source "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/engine-build" --build-image
+      - name: Check the built engine without inference
+        run: |
+          docker run --rm --network none --user "$(id -u):$(id -g)" \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/source,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/engine-build/artifact,target=/artifact,readonly" \
+            -e HOME=/tmp xenolith-build:ubuntu24-local sh -c '
+              set -eu
+              python3 /source/tests/test_devices.py /artifact/bin/xenolith
+              python3 /source/tests/test_config_cli.py /artifact/bin/xenolith
+            '
+      - name: Package engine component and verify checksum set
+        run: |
+          python3 installer/tools/package_engine.py \
+            --engine-repo "$GITHUB_WORKSPACE" \
+            --engine-bin "$RUNNER_TEMP/engine-build/artifact/bin/xenolith" \
+            --engine-version "$ENGINE_VERSION" \
+            --build-provenance "$RUNNER_TEMP/engine-build/build-provenance.json" \
+            --source-manifest "$RUNNER_TEMP/engine-build/source-manifest.json" \
+            --output "$RUNNER_TEMP/engine-package"
+          (cd "$RUNNER_TEMP/engine-package" && sha256sum --check SHA256SUMS)
+      - name: Retain engine component candidate
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: engine-component-candidate
+          path: ${{ runner.temp }}/engine-package/
+          if-no-files-found: error

@@ -543,8 +543,19 @@ check-config: tests/test_cli_config xenolith
 
 .PHONY: check-config
 
-# Shell/package fixtures only; independent of the engine build and Intel GPU.
+# Engine build/package/release fixtures; no Node, model, GPU or Docker build.
+check-engine-package:
+	python3 -m unittest -v \
+		installer.tests.test_build_profiles \
+		installer.tests.test_build_tools \
+		installer.tests.test_engine_version \
+		installer.tests.test_engine_package \
+		installer.tests.test_component_release \
+		installer.tests.test_release_preflight
+
+# Full installer/distribution suite, including engine packaging fixtures.
+# Requires Node 26+ for existing XenoPi integration; no engine build or GPU.
 check-installer:
 	python3 -m unittest discover -s installer/tests -v
 
-.PHONY: check-installer
+.PHONY: check-engine-package check-installer

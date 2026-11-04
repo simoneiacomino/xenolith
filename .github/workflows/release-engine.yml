@@ -1,0 +1,97 @@
+name: Promote engine component release
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful Linux engine candidate workflow run ID
+        required: true
+        type: string
+      version:
+        description: Exact engine component version in the candidate artifact
+        required: true
+        type: string
+      archive_sha256:
+        description: Approved SHA-256 digest of engine-VERSION-linux-x86_64.tar.gz
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.repository == 'simoneiacomino/xenolith' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
+    runs-on: ubuntu-24.04
+    environment: engine-release
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Validate release label and candidate run metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.candidate_run_id }}
+          VERSION: ${{ inputs.version }}
+          ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+        run: |
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          python3 installer/tools/engine_version.py "$VERSION"
+          [[ "$ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > "$RUNNER_TEMP/run.json"
+          python3 - "$RUNNER_TEMP/run.json" "$GITHUB_REPOSITORY" "$RUN_ID" <<'PY'
+          import json, sys
+          run = json.load(open(sys.argv[1]))
+          if str(run.get('id')) != sys.argv[3]: raise SystemExit('run ID mismatch')
+          if run.get('repository', {}).get('full_name') != sys.argv[2]: raise SystemExit('run belongs to another repository')
+          if run.get('head_repository', {}).get('full_name') != sys.argv[2]: raise SystemExit('candidate source is from another repository')
+          if run.get('path') != '.github/workflows/linux-candidate.yml': raise SystemExit('wrong candidate workflow')
+          if run.get('event') != 'workflow_dispatch' or run.get('status') != 'completed' or run.get('conclusion') != 'success':
+              raise SystemExit('candidate workflow did not complete successfully by manual dispatch')
+          if run.get('head_branch') != 'main' and not run.get('head_branch', '').startswith('release/'):
+              raise SystemExit('candidate must come from main or release/*')
+          print(f"CANDIDATE_SHA={run['head_sha']}", file=open(__import__('os').environ['GITHUB_ENV'], 'a'))
+          PY
+      - name: Download the exact candidate artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.candidate_run_id }}
+        run: gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name engine-component-candidate --dir "$RUNNER_TEMP/engine-package"
+      - name: Verify run, version, archive digest and package payload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+          RUN_ID: ${{ inputs.candidate_run_id }}
+          VERSION: ${{ inputs.version }}
+          ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+        run: |
+          python3 installer/tools/component_release.py \
+            --artifact-dir "$RUNNER_TEMP/engine-package" \
+            --run-metadata "$RUNNER_TEMP/run.json" \
+            --expected-run-id "$RUN_ID" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-source-sha "$CANDIDATE_SHA" \
+            --version "$VERSION" --sha256 "$ARCHIVE_SHA256"
+          python3 installer/tools/release_preflight.py --repository "$GITHUB_REPOSITORY" --tag "$TAG"
+      - name: Create draft for the immutable exact candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.candidate_run_id }}
+          VERSION: ${{ inputs.version }}
+          ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+        run: |
+          printf 'Engine component artifact from candidate run %s.\n\nArchive SHA-256: %s.\n' \
+            "$RUN_ID" "$ARCHIVE_SHA256" > "$RUNNER_TEMP/release-notes.md"
+          args=(--draft --title "Xenolith engine $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" --target "$CANDIDATE_SHA")
+          if [[ "$(python3 installer/tools/engine_version.py "$VERSION" --prerelease-value)" == true ]]; then args+=(--prerelease); fi
+          gh release create "v$VERSION" \
+            "$RUNNER_TEMP/engine-package/engine-$VERSION-linux-x86_64.tar.gz" \
+            "$RUNNER_TEMP/engine-package/SHA256SUMS" \
+            "$RUNNER_TEMP/engine-package/provenance.json" \
+            "$RUNNER_TEMP/engine-package/build-provenance.json" \
+            "$RUNNER_TEMP/engine-package/source-manifest.json" \
+            "${args[@]}" --repo "$GITHUB_REPOSITORY"
+          gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false
