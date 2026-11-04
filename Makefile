@@ -12,15 +12,35 @@ CFLAGS=$(BASE_CFLAGS) -DXE_BUILD_COMMIT='"$(BUILD_COMMIT)"' \
 	-DXE_NUMERIC_CFLAGS_HASH='"$(NUMERIC_CFLAGS_HASH)"'
 LDLIBS=-lm -lze_loader
 
+PREFIX ?= $(HOME)/.local
+DESTDIR ?=
+bindir ?= $(PREFIX)/bin
+INSTALL ?= install
+
 GPU_SPV=xenolith_gpu.spv
 GPU_OBJ=xenolith_gpu_spv.o
 VISION_OBJS=vision.o vision_encoder.o
 CPU_OBJS=cpu_policy.o cpu_topology.o
 
-xenolith: main.o xenolith.o format.o $(VISION_OBJS) json.o profile.o kvstore.o conversation.o runtime.o serve.o $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -o $@ main.o xenolith.o format.o $(VISION_OBJS) json.o profile.o kvstore.o conversation.o runtime.o serve.o $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+xenolith: main.o cli_config.o xenolith.o format.o $(VISION_OBJS) json.o profile.o kvstore.o conversation.o runtime.o serve.o $(GPU_OBJ) $(CPU_OBJS)
+	$(CC) $(CFLAGS) -o $@ main.o cli_config.o xenolith.o format.o $(VISION_OBJS) json.o profile.o kvstore.o conversation.o runtime.o serve.o $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
 
-main.o: main.c xenolith.h format.h profile.h serve.h conversation.h kvstore.h
+# Install only the command. Native configuration belongs to the invoking user.
+install: xenolith
+	@test ! -L "$(DESTDIR)$(bindir)/xenolith" -a ! -d "$(DESTDIR)$(bindir)/xenolith" || { printf '%s\n' 'Refusing to replace a symlink or directory at the xenolith command path.' >&2; exit 1; }
+	$(INSTALL) -d "$(DESTDIR)$(bindir)"
+	$(INSTALL) -m 0755 xenolith "$(DESTDIR)$(bindir)/xenolith"
+
+check-install: xenolith
+	python3 tests/test_install.py ./xenolith
+
+check-devices: xenolith
+	CC="$(CC)" python3 tests/test_devices.py ./xenolith
+
+.PHONY: install check-install check-devices
+
+main.o: main.c xenolith.h format.h profile.h serve.h conversation.h kvstore.h cli_config.h
+cli_config.o: cli_config.c cli_config.h json.h
 xenolith.o: $(NUMERIC_SOURCES) xenolith.h xenolith_internal.h format.h
 cpu_policy.o: cpu_policy.c cpu_policy.h
 cpu_topology.o: cpu_topology.c cpu_topology.h cpu_policy.h
@@ -34,7 +54,7 @@ serve.o: serve.c serve.h format.h runtime.h xenolith.h kvstore.h conversation.h 
 main.o profile.o kvstore.o conversation.o runtime.o serve.o: vision.h
 
 clean:
-	rm -f tests/test_visual_cache tests/test_visual_replay tests/test_workers tests/test_cpu_policy tests/test_cpu_topology
+	rm -f tests/test_cli_config tests/test_visual_cache tests/test_visual_replay tests/test_workers tests/test_cpu_policy tests/test_cpu_topology
 	rm -f *.o xenolith tests/test_cache_policy tests/test_cache_model tests/certify tests/test_kv tests/test_kv_model tests/test_decode tests/test_context_limits \
 		tests/test_model_decode tests/test_fixture_decode bench/bench_decode \
 		tests/test_prefill_projection tests/test_prefill_qkv tests/test_prefill_swa \
@@ -120,8 +140,8 @@ tests/test_cli_context: tests/test_cli_context.c xenolith.h xenolith
 tests/test_cli_workers: tests/test_cli_workers.c xenolith
 	$(CC) $(TEST_CFLAGS) -I. -o $@ $<
 
-tests/test_context_limits: tests/test_context_limits.c main.c xenolith.c xenolith.h xenolith_internal.h runtime.c runtime.h serve.c serve.h profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ $< profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_context_limits: tests/test_context_limits.c cli_config.o main.c xenolith.c xenolith.h xenolith_internal.h runtime.c runtime.h serve.c serve.h profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ $< cli_config.o profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
 
 check-context: tests/test_cli_context tests/test_cli_workers
 	./tests/test_cli_context
@@ -512,3 +532,13 @@ check-workers: tests/test_cpu_policy tests/test_cpu_topology tests/test_workers 
 	./tests/test_cli_workers
 
 .PHONY: check-workers bench/bench_b3b_8e
+
+# Host-only configuration and CLI integration checks; no weights or GPU opened.
+tests/test_cli_config: tests/test_cli_config.c cli_config.c cli_config.h json.c json.h
+	$(CC) $(TEST_CFLAGS) -I. -o $@ tests/test_cli_config.c cli_config.c json.c -lm
+
+check-config: tests/test_cli_config xenolith
+	./tests/test_cli_config
+	python3 tests/test_config_cli.py ./xenolith
+
+.PHONY: check-config

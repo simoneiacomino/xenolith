@@ -45,7 +45,8 @@ static int check(const char *command, char *const *opts, const char *workers,
 
 int main(void) {
     char root[] = "/tmp/xenolith-cli-workers-XXXXXX";
-    if (!mkdtemp(root) || setenv("XDG_RUNTIME_DIR", root, 1) || setenv("XDG_STATE_HOME", root, 1)) return 2;
+    if (!mkdtemp(root) || setenv("XDG_RUNTIME_DIR", root, 1) || setenv("XDG_STATE_HOME", root, 1) ||
+        unsetenv("XENOLITH_CONFIG") || setenv("XDG_CONFIG_HOME", root, 1)) return 2;
     const char *commands[] = {"run", "chat", "oracle", "bench", "wire", "serve", "vision-encode"};
     char *none[] = {NULL};
     char *auto_opt[] = {"--workers", "auto", NULL};

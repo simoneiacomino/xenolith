@@ -11,14 +11,24 @@ static xe_engine fixture_engine;
 static int fixture_expected_cache;
 static int fixture_expected_vision;
 static int fixture_expected_workers, fixture_expected_cpu_count;
+static int fixture_config_active;
+static const char *fixture_model, *fixture_projector, *fixture_state, *fixture_cache, *fixture_socket;
+static int fixture_context;
+static uint64_t fixture_budget;
+static double fixture_idle;
+
+static int same_path(const char *a, const char *b) {
+    return a && b ? !strcmp(a, b) : a == b;
+}
+
 static xe_engine *fixture_open(const char *path, int context) {
-    (void)path;
+    if (fixture_config_active && !same_path(path, fixture_model)) _exit(2);
     if (fixture_expected_cache) _exit(2);
     fixture_engine.context = context;
     return &fixture_engine;
 }
 static xe_engine *fixture_open_cached(const char *path, int context) {
-    (void)path;
+    if (fixture_config_active && !same_path(path, fixture_model)) _exit(2);
     if (!fixture_expected_cache) _exit(2);
     fixture_engine.context = context;
     return &fixture_engine;
@@ -39,17 +49,22 @@ static xe_engine *fixture_open_cached_options(const char *path, const xe_engine_
 }
 static int fixture_serve_stdio(xe_engine *e, const char *state, const char *cache,
                                uint64_t budget) {
+    if (fixture_config_active)
+        return e != &fixture_engine || e->context != fixture_context ||
+               !same_path(state, fixture_state) || !same_path(cache, fixture_cache) ||
+               budget != fixture_budget;
     (void)state; (void)cache;
     return e != &fixture_engine || e->context != (fixture_expected_vision ? 65536 : 64) ||
            ((budget != 0) || fixture_expected_vision) != fixture_expected_cache;
 }
 static int fixture_serve_run(xe_engine *e, const char *state, const char *cache,
                              const char *socket, double idle, uint64_t budget) {
-    (void)socket; (void)idle;
+    if (fixture_config_active && (!same_path(socket, fixture_socket) || idle != fixture_idle)) return 1;
     return fixture_serve_stdio(e, state, cache, budget);
 }
 static int fixture_enable_vision(xe_engine *e,const char *path,char *error,size_t cap) {
-    (void)path;(void)error;(void)cap;
+    (void)error;(void)cap;
+    if (fixture_config_active && !same_path(path, fixture_projector)) _exit(2);
     return e == &fixture_engine && fixture_expected_vision && fixture_expected_cache;
 }
 static void fixture_close(xe_engine *e) { (void)e; }
@@ -83,6 +98,77 @@ static profile_status fixture_profile(profile **out, xe_engine *e) {
 
 static int failures;
 #define CHECK(c) do { if (!(c)) { failures++; fprintf(stderr, "FAIL %d: %s\n", __LINE__, #c); } } while (0)
+
+/* Assert effective options at the engine/service boundary, without opening
+ * weights. Each child independently parses the original CLI arguments. */
+static void config_service_case(char **args, const char *model, const char *projector,
+                                int context, const char *state, const char *cache,
+                                uint64_t budget, const char *socket, double idle) {
+    int argc = 0;
+    while (args[argc]) argc++;
+    fflush(NULL);
+    pid_t child = fork();
+    assert(child >= 0);
+    if (!child) {
+        unsetenv("XE_WORKERS"); unsetenv("XE_CPU_LIST");
+        fixture_config_active = 1;
+        fixture_model = model; fixture_projector = projector;
+        fixture_context = context; fixture_state = state; fixture_cache = cache;
+        fixture_budget = budget; fixture_socket = socket; fixture_idle = idle;
+        fixture_expected_cache = budget != 0 || projector != NULL;
+        fixture_expected_vision = projector != NULL;
+        fixture_expected_workers = fixture_expected_cpu_count = 0;
+        _exit(cli_main(argc, args));
+    }
+    int status;
+    assert(waitpid(child, &status, 0) == child);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
+static void cli_config_defaults(const char *root) {
+    char config[1024], state[1024], cache[1024], socket[1024], fallback[1024], default_socket[1024];
+    snprintf(config, sizeof config, "%s/settings.json", root);
+    snprintf(state, sizeof state, "%s/configured-state", root);
+    snprintf(cache, sizeof cache, "%s/configured-cache", root);
+    snprintf(socket, sizeof socket, "%s/configured.sock", root);
+    snprintf(fallback, sizeof fallback, "%s/xenolith", root);
+    snprintf(default_socket, sizeof default_socket, "%s/xenolith/wire.sock", root);
+    FILE *f = fopen(config, "w"); assert(f);
+    fprintf(f, "{\"schema_version\":1,\"model\":\"/configured.gguf\","
+               "\"mmproj\":\"/projector.gguf\",\"context\":131072,"
+               "\"state_dir\":\"%s\",\"cache_dir\":\"%s\",\"socket\":\"%s\","
+               "\"cache_budget\":\"4GiB\",\"idle_shutdown_minutes\":12.5}", state, cache, socket);
+    assert(!fclose(f));
+    assert(!setenv("XENOLITH_CONFIG", config, 1));
+
+    char *serve[] = {"xenolith", "serve", NULL};
+    config_service_case(serve, "/configured.gguf", "/projector.gguf", 131072,
+                        state, cache, UINT64_C(4294967296), socket, 12.5);
+    char *wire[] = {"xenolith", "wire", NULL};
+    config_service_case(wire, "/configured.gguf", "/projector.gguf", 131072,
+                        state, cache, UINT64_C(4294967296), NULL, 0);
+    char *overrides[] = {"xenolith", "serve", "/other.gguf", "--mmproj", "/other-projector.gguf",
+        "--ctx", "65536", "--state", fallback, "--cache", (char *)root,
+        "--cache-budget", "0", "--socket", default_socket, "--idle-shutdown", "3",
+        "--config", config, NULL};
+    config_service_case(overrides, "/other.gguf", "/other-projector.gguf", 65536,
+                        fallback, root, 0, default_socket, 3);
+    char *disabled[] = {"xenolith", "serve", "/other.gguf", "--no-config", NULL};
+    config_service_case(disabled, "/other.gguf", NULL, XE_CONTEXT_DEFAULT,
+                        fallback, NULL, KVSTORE_DEFAULT_BUDGET, default_socket, 0);
+    /* A service option value that looks like a selector stays literal. */
+    char *literal[] = {"xenolith", "wire", "--cache", "--no-config", NULL};
+    config_service_case(literal, "/configured.gguf", "/projector.gguf", 131072,
+                        state, "--no-config", UINT64_C(4294967296), NULL, 0);
+
+    f = fopen(config, "w"); assert(f);
+    fputs("{\"schema_version\":1,\"model\":\"/configured.gguf\",\"mmproj\":\"/projector.gguf\"}", f);
+    assert(!fclose(f));
+    config_service_case(serve, "/configured.gguf", "/projector.gguf", 65536,
+                        fallback, NULL, KVSTORE_DEFAULT_BUDGET, default_socket, 0);
+    assert(!unsetenv("XENOLITH_CONFIG"));
+    unlink(config);
+}
 
 static void cli_cache_startup(void) {
     const char *commands[] = {"wire", "serve"};
@@ -309,8 +395,11 @@ int main(void) {
     assert(mkdtemp(root));
     assert(setenv("XDG_RUNTIME_DIR", root, 1) == 0);
     assert(setenv("XDG_STATE_HOME", root, 1) == 0);
+    assert(unsetenv("XENOLITH_CONFIG") == 0);
+    assert(setenv("XDG_CONFIG_HOME", root, 1) == 0);
     tokenizer_and_cli();
     cli_cache_startup();
+    cli_config_defaults(root);
     char state[1024];
     snprintf(state, sizeof state, "%s/state", root);
     resume_and_protocol(state);

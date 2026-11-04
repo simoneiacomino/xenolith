@@ -6,6 +6,7 @@
 #include "conversation.h"
 #include "serve.h"
 #include "kvstore.h"
+#include "cli_config.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -20,7 +21,11 @@
 
 static void usage(void) {
     fprintf(stderr,
-"Usage: xenolith <command> <model.gguf> [options]\n"
+"Usage: xenolith <command> [model.gguf] [options]\n"
+"  check-device  check the selected Level Zero GPU without a model\n"
+"  config init --model /path/model.gguf [--mmproj FILE] [--ctx N] [--config FILE]\n"
+"  config inspect --json [--config FILE] [--socket PATH] [--state DIR] [--cache DIR]\n"
+"  --config FILE selects native settings; --no-config runs without them\n"
 "  --ctx N  context capacity for inference commands (64..262144; default 262144)\n"
 "  --workers N|auto  --cpu-list id,id,...  (one worker per physical core)\n"
 "  Without CPU options, XE_WORKERS and XE_CPU_LIST supply the CPU plan.\n"
@@ -101,6 +106,69 @@ static void cli_lock(const char *socket_path) {
 static void cli_unlock(void) {
     if (cli_lock_fd >= 0) close(cli_lock_fd);
     cli_lock_fd = -1;
+}
+
+typedef struct {
+    const char *path;
+    int disabled;
+    cli_config values;
+} cli_defaults;
+
+/* Called inside each command's parser, so values consumed by other options
+ * are never interpreted as configuration selectors. */
+static int cli_config_option(int argc, char **argv, int *index,
+                              cli_defaults *defaults) {
+    const char *option = argv[*index];
+    if (!strcmp(option, "--no-config")) {
+        if (defaults->disabled || defaults->path) {
+            fprintf(stderr, "xenolith: --no-config and --config are exclusive and may appear only once\n");
+            exit(1);
+        }
+        defaults->disabled = 1;
+        return 1;
+    }
+    if (!strcmp(option, "--config")) {
+        if (defaults->path || defaults->disabled || ++*index >= argc) {
+            fprintf(stderr, "xenolith: --config requires one path and conflicts with --no-config\n");
+            exit(1);
+        }
+        defaults->path = argv[*index];
+        return 1;
+    }
+    return 0;
+}
+
+static const char *cli_load_defaults(cli_defaults *defaults, const char *model) {
+    char error[8192];
+    if (!defaults->disabled &&
+        !cli_config_load(defaults->path, &defaults->values, error, sizeof error)) {
+        fprintf(stderr, "xenolith: %s\n", error);
+        exit(1);
+    }
+    if (!model) model = defaults->values.model;
+    if (!model[0]) {
+        fprintf(stderr, "xenolith: no model configured; use xenolith config init --model /absolute/model.gguf or pass a model path\n");
+        exit(1);
+    }
+    return model;
+}
+
+static void cli_default_context(const cli_defaults *defaults, int *context, int *seen) {
+    if (!*seen && defaults->values.context) {
+        *context = defaults->values.context;
+        *seen = 1;
+    }
+}
+
+static const char *cli_default_projector(const cli_defaults *defaults,
+                                        const char *model, const char *mmproj) {
+    const cli_config *cfg = &defaults->values;
+    if (mmproj || !cfg->mmproj[0]) return mmproj;
+    if (cfg->model[0] && strcmp(model, cfg->model)) {
+        fprintf(stderr, "xenolith: explicit model differs from configured model; pass its --mmproj explicitly or use --no-config\n");
+        exit(1);
+    }
+    return cfg->mmproj;
 }
 
 /* Each command parses its own options so option values remain literal. */
@@ -219,9 +287,14 @@ static void cli_cpu_finish(cli_cpu_plan *plan, int context) {
 }
 
 static int cmd_info(const char *model, int argc, char **argv) {
+    cli_defaults defaults = {0};
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
-    for (int i = 3; i < argc; i++)
+    for (int i = model ? 3 : 2; i < argc; i++) {
+        if (cli_config_option(argc, argv, &i, &defaults)) continue;
         if (!cli_context_option(argc, argv, &i, &context, &context_seen)) usage();
+    }
+    model = cli_load_defaults(&defaults, model);
+    cli_default_context(&defaults, &context, &context_seen);
     cli_lock(NULL);
     xe_engine *e = xe_engine_open_with_context(model, context);
     xe_engine_info(e, stdout);
@@ -288,11 +361,13 @@ static int cmd_detokenize(const char *model) {
 }
 
 static int cmd_tokenize(const char *model, int argc, char **argv) {
+    cli_defaults defaults = {0};
     const char *prompt = NULL;
     const char *file = NULL;
-    int pieces = 0;
+    int pieces = 0, detok = 0;
 
-    for (int i = 3; i < argc; i++) {
+    for (int i = model ? 3 : 2; i < argc; i++) {
+        if (cli_config_option(argc, argv, &i, &defaults)) continue;
         if (!strcmp(argv[i], "-p")) {
             if (++i >= argc) usage();
             prompt = argv[i];
@@ -302,11 +377,13 @@ static int cmd_tokenize(const char *model, int argc, char **argv) {
         } else if (!strcmp(argv[i], "--pieces")) {
             pieces = 1;
         } else if (!strcmp(argv[i], "--detok")) {
-            return cmd_detokenize(model);
+            detok = 1;
         } else {
             usage();
         }
     }
+    model = cli_load_defaults(&defaults, model);
+    if (detok) return cmd_detokenize(model);
     if ((!prompt && !file) || (prompt && file)) usage();
 
     char *text;
@@ -397,11 +474,13 @@ static float *cli_encode_image(const char *model, const char *mmproj, const char
 }
 
 static int cmd_vision_encode(const char *model, int argc, char **argv) {
+    cli_defaults defaults = {0};
     const char *mmproj = NULL, *path = NULL, *dump = NULL;
     int budget = 280;
     int final_only = 0;
     cli_cpu_plan cpu = {0};
-    for (int i = 3; i < argc; i++) {
+    for (int i = model ? 3 : 2; i < argc; i++) {
+        if (cli_config_option(argc, argv, &i, &defaults)) continue;
         if (cli_cpu_option(argc, argv, &i, &cpu)) continue;
         if (!strcmp(argv[i], "--final-only")) { final_only = 1; continue; }
         if (++i >= argc) usage();
@@ -411,6 +490,8 @@ static int cmd_vision_encode(const char *model, int argc, char **argv) {
         else if (!strcmp(argv[i-1], "--image-tokens")) budget = cli_visual_budget(argv[i]);
         else usage();
     }
+    model = cli_load_defaults(&defaults, model);
+    mmproj = cli_default_projector(&defaults, model, mmproj);
     if (!mmproj || !path || !dump) usage();
     cli_cpu_finish(&cpu, 0);
     cli_lock(NULL);
@@ -432,6 +513,7 @@ static int cmd_vision_encode(const char *model, int argc, char **argv) {
 }
 
 static int cmd_run(const char *model, int argc, char **argv) {
+    cli_defaults defaults = {0};
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     cli_cpu_plan cpu = {0};
     const char *prompt = NULL;
@@ -443,7 +525,8 @@ static int cmd_run(const char *model, int argc, char **argv) {
     float top_p = 0.95f;
     uint64_t seed = (uint64_t)time(NULL);
 
-    for (int i = 3; i < argc; i++) {
+    for (int i = model ? 3 : 2; i < argc; i++) {
+        if (cli_config_option(argc, argv, &i, &defaults)) continue;
         if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
             cli_cpu_option(argc, argv, &i, &cpu)) continue;
         if (!strcmp(argv[i], "--image") || !strcmp(argv[i], "--mmproj") || !strcmp(argv[i], "--vision-dump")) {
@@ -500,6 +583,9 @@ static int cmd_run(const char *model, int argc, char **argv) {
             usage();
         }
     }
+    model = cli_load_defaults(&defaults, model);
+    cli_default_context(&defaults, &context, &context_seen);
+    if (image_path) mmproj = cli_default_projector(&defaults, model, mmproj);
     if (!prompt || (!!image_path != !!mmproj) || (vision_dump && !image_path)) usage();
     if (image_path && !context_seen) context = 65536;
     if (image_path && context!=65536 && context!=131072) {
@@ -664,6 +750,7 @@ static void chat_print_stats(int n_gen, double avg_tps) {
 }
 
 static int cmd_chat(const char *model, int argc, char **argv) {
+    cli_defaults defaults = {0};
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     cli_cpu_plan cpu = {0};
     const char *mmproj = NULL, *image_path = NULL;
@@ -674,7 +761,8 @@ static int cmd_chat(const char *model, int argc, char **argv) {
     float top_p = 0.95f;
     uint64_t seed = (uint64_t)time(NULL);
 
-    for (int i = 3; i < argc; i++) {
+    for (int i = model ? 3 : 2; i < argc; i++) {
+        if (cli_config_option(argc, argv, &i, &defaults)) continue;
         if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
             cli_cpu_option(argc, argv, &i, &cpu)) continue;
         if (!strcmp(argv[i], "--image") || !strcmp(argv[i], "--mmproj")) {
@@ -725,6 +813,9 @@ static int cmd_chat(const char *model, int argc, char **argv) {
         }
     }
 
+    model = cli_load_defaults(&defaults, model);
+    cli_default_context(&defaults, &context, &context_seen);
+    if (image_path) mmproj = cli_default_projector(&defaults, model, mmproj);
     if (!!image_path != !!mmproj) usage();
     if (image_path && !context_seen) context = 65536;
     if (image_path && context != 65536 && context != 131072) {
@@ -917,6 +1008,7 @@ static int cmd_chat(const char *model, int argc, char **argv) {
 }
 
 static int cmd_oracle(const char *model, int argc, char **argv) {
+    cli_defaults defaults = {0};
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     cli_cpu_plan cpu = {0};
     const char *ids = NULL;
@@ -924,7 +1016,8 @@ static int cmd_oracle(const char *model, int argc, char **argv) {
     const char *layers_dir = NULL;
     int q8_mode = 0;
 
-    for (int i = 3; i < argc; i++) {
+    for (int i = model ? 3 : 2; i < argc; i++) {
+        if (cli_config_option(argc, argv, &i, &defaults)) continue;
         if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
             cli_cpu_option(argc, argv, &i, &cpu)) continue;
         if (!strcmp(argv[i], "-t")) {
@@ -942,6 +1035,8 @@ static int cmd_oracle(const char *model, int argc, char **argv) {
             usage();
         }
     }
+    model = cli_load_defaults(&defaults, model);
+    cli_default_context(&defaults, &context, &context_seen);
     if (!ids) usage();
 
     static int32_t toks[8192];
@@ -1221,10 +1316,12 @@ static void bench_print_md(const char *model, const xe_engine *e,
 }
 
 static int cmd_bench(const char *model, int argc, char **argv) {
+    cli_defaults defaults = {0};
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     cli_cpu_plan cpu = {0};
     bench_params params = { 512, 128, 0, 5, 0, 1, 0, 0, 512 };
-    for (int i = 3; i < argc; i++) {
+    for (int i = model ? 3 : 2; i < argc; i++) {
+        if (cli_config_option(argc, argv, &i, &defaults)) continue;
         if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
             cli_cpu_option(argc, argv, &i, &cpu)) continue;
         if (!strcmp(argv[i], "-p") || !strcmp(argv[i], "--n-prompt")) {
@@ -1261,6 +1358,8 @@ static int cmd_bench(const char *model, int argc, char **argv) {
             usage();
         }
     }
+    model = cli_load_defaults(&defaults, model);
+    cli_default_context(&defaults, &context, &context_seen);
     if (params.n_prompt == 0 && params.n_gen == 0) usage();
 
     cli_cpu_finish(&cpu, context);
@@ -1307,13 +1406,16 @@ static int cmd_bench(const char *model, int argc, char **argv) {
 }
 
 static int cmd_wire(const char *model, int argc, char **argv) {
+    cli_defaults defaults = {0};
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     cli_cpu_plan cpu = {0};
     const char *state_option = NULL;
     const char *mmproj = NULL;
     const char *cache_dir = NULL;
     uint64_t cache_budget = KVSTORE_DEFAULT_BUDGET;
-    for (int i = 3; i < argc; i++) {
+    int cache_budget_seen = 0;
+    for (int i = model ? 3 : 2; i < argc; i++) {
+        if (cli_config_option(argc, argv, &i, &defaults)) continue;
         if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
             cli_cpu_option(argc, argv, &i, &cpu)) continue;
         if (!strcmp(argv[i],"--mmproj")) {
@@ -1327,10 +1429,18 @@ static int cmd_wire(const char *model, int argc, char **argv) {
             cache_dir = argv[i];
         } else if (!strcmp(argv[i], "--cache-budget")) {
             if (++i >= argc || !cli_parse_cache_budget(argv[i], &cache_budget)) usage();
+            cache_budget_seen = 1;
         } else {
             usage();
         }
     }
+    model = cli_load_defaults(&defaults, model);
+    cli_default_context(&defaults, &context, &context_seen);
+    mmproj = cli_default_projector(&defaults, model, mmproj);
+    if (!state_option && defaults.values.state_dir[0]) state_option = defaults.values.state_dir;
+    if (!cache_dir && defaults.values.cache_dir[0]) cache_dir = defaults.values.cache_dir;
+    if (!cache_budget_seen && defaults.values.has_cache_budget)
+        cache_budget = defaults.values.cache_budget;
     if(mmproj&&!context_seen)context=65536;
     if(mmproj&&context!=65536&&context!=131072){fprintf(stderr,"xenolith: vision requires --ctx 65536 or 131072\n");return 1;}
     char state_dir[4096];
@@ -1349,15 +1459,18 @@ static int cmd_wire(const char *model, int argc, char **argv) {
 }
 
 static int cmd_serve(const char *model, int argc, char **argv) {
+    cli_defaults defaults = {0};
     int context = XE_CONTEXT_DEFAULT, context_seen = 0;
     cli_cpu_plan cpu = {0};
     const char *state_option = NULL;
     const char *mmproj = NULL;
     const char *cache_dir = NULL;
     uint64_t cache_budget = KVSTORE_DEFAULT_BUDGET;
+    int cache_budget_seen = 0;
     const char *socket_option = NULL;
     double idle_minutes = 0.0;
-    for (int i = 3; i < argc; i++) {
+    for (int i = model ? 3 : 2; i < argc; i++) {
+        if (cli_config_option(argc, argv, &i, &defaults)) continue;
         if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
             cli_cpu_option(argc, argv, &i, &cpu)) continue;
         if (!strcmp(argv[i],"--mmproj")) {
@@ -1371,6 +1484,7 @@ static int cmd_serve(const char *model, int argc, char **argv) {
             cache_dir = argv[i];
         } else if (!strcmp(argv[i], "--cache-budget")) {
             if (++i >= argc || !cli_parse_cache_budget(argv[i], &cache_budget)) usage();
+            cache_budget_seen = 1;
         } else if (!strcmp(argv[i], "--socket")) {
             if (++i >= argc) usage();
             socket_option = argv[i];
@@ -1385,15 +1499,29 @@ static int cmd_serve(const char *model, int argc, char **argv) {
             usage();
         }
     }
+    model = cli_load_defaults(&defaults, model);
+    cli_default_context(&defaults, &context, &context_seen);
+    mmproj = cli_default_projector(&defaults, model, mmproj);
+    if (!state_option && defaults.values.state_dir[0]) state_option = defaults.values.state_dir;
+    if (!cache_dir && defaults.values.cache_dir[0]) cache_dir = defaults.values.cache_dir;
+    if (!cache_budget_seen && defaults.values.has_cache_budget)
+        cache_budget = defaults.values.cache_budget;
+    if (!socket_option && defaults.values.socket[0]) socket_option = defaults.values.socket;
+    if (!idle_minutes) idle_minutes = defaults.values.idle_shutdown_minutes;
     if(mmproj&&!context_seen)context=65536;
     if(mmproj&&context!=65536&&context!=131072){fprintf(stderr,"xenolith: vision requires --ctx 65536 or 131072\n");return 1;}
     char state_dir[4096];
     cli_state_dir(state_option, state_dir, sizeof state_dir);
     char socket_path[4096];
-    if (!serve_socket_path(socket_option, state_dir, socket_path,
+    if (!cli_config_socket_path(socket_option, state_dir, socket_path,
                            sizeof socket_path)) {
         fprintf(stderr, "xenolith: serve: socket path is too long\n");
         exit(1);
+    }
+    if (socket_path[0] == '/' && !cli_config_socket_parent(socket_path)) {
+        fprintf(stderr, "xenolith: cannot create socket directory for %s: %s\n",
+                socket_path, strerror(errno));
+        return 1;
     }
     cli_cpu_finish(&cpu, context);
     cli_lock(socket_path);
@@ -1409,11 +1537,10 @@ static int cmd_serve(const char *model, int argc, char **argv) {
     return status;
 }
 
-int main(int argc, char **argv) {
+static int cli_dispatch(int argc, char **argv) {
     if (argc < 2) usage();
     const char *cmd = argv[1];
-    if (argc < 3) usage();
-    const char *model = argv[2];
+    const char *model = argc > 2 && argv[2][0] != '-' ? argv[2] : NULL;
 
     if (!strcmp(cmd, "info")) return cmd_info(model, argc, argv);
     if (!strcmp(cmd, "tokenize")) return cmd_tokenize(model, argc, argv);
@@ -1427,4 +1554,14 @@ int main(int argc, char **argv) {
 
     usage();
     return 0;
+}
+
+int main(int argc, char **argv) {
+    if (argc < 2 || !strcmp(argv[1], "--help") || !strcmp(argv[1], "-h")) usage();
+    if (!strcmp(argv[1], "check-device")) {
+        if (argc != 2) usage();
+        return xe_device_check(stdout, stderr);
+    }
+    if (!strcmp(argv[1], "config")) return cli_config_command(argc - 2, argv + 2);
+    return cli_dispatch(argc, argv);
 }

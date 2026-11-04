@@ -58,7 +58,8 @@ static int check(const char *command, const char *model, char **options,
 int main(void) {
     char root[] = "/tmp/xenolith-cli-context-XXXXXX";
     if (!mkdtemp(root) || setenv("XDG_RUNTIME_DIR", root, 1) ||
-        setenv("XDG_STATE_HOME", root, 1)) return 2;
+        setenv("XDG_STATE_HOME", root, 1) ||
+        unsetenv("XENOLITH_CONFIG") || setenv("XDG_CONFIG_HOME", root, 1)) return 2;
     char model[256];
     snprintf(model, sizeof model, "%s/missing.gguf", root);
     const char *commands[] = { "info", "run", "chat", "oracle", "bench", "wire", "serve" };

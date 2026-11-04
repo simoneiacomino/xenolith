@@ -12,6 +12,12 @@
 typedef struct xe_engine xe_engine;
 typedef struct xe_session xe_session;
 
+/* Check the same first Level Zero driver/device selected for inference, without
+ * loading a model, creating a context or allocating GPU memory. Writes human
+ * diagnostics to the supplied streams; returns 0 when the enabled device is
+ * reachable, 1 otherwise. Does not establish kernel/model compatibility. */
+int xe_device_check(FILE *report, FILE *errors);
+
 typedef struct {
     int32_t *v;
     int len;

@@ -538,6 +538,78 @@ static xe_gpu_status xe_gpu_classify(uint32_t id) {
     }
 }
 
+static int xe_device_probe_error(FILE *errors, const char *operation, ze_result_t result) {
+    const char *reason = "Level Zero runtime/device error";
+    switch (result) {
+        case ZE_RESULT_ERROR_UNINITIALIZED:
+            reason = "Level Zero runtime unavailable or no usable GPU driver"; break;
+        case ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE:
+            reason = "Level Zero runtime dependency unavailable"; break;
+        case ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS:
+            reason = "GPU access denied; check permissions on the GPU device nodes"; break;
+        case ZE_RESULT_ERROR_DEVICE_LOST:
+            reason = "GPU device lost; check the kernel driver and device state"; break;
+        default: break;
+    }
+    fprintf(errors, "xenolith: check-device: %s: %s (0x%x)\n", operation, reason, (unsigned)result);
+    return 1;
+}
+
+int xe_device_check(FILE *report, FILE *errors) {
+    if (!report || !errors) return 1;
+    ze_result_t result = zeInit(ZE_INIT_FLAG_GPU_ONLY);
+    if (result != ZE_RESULT_SUCCESS) return xe_device_probe_error(errors, "zeInit", result);
+    uint32_t drivers = 0;
+    result = zeDriverGet(&drivers, NULL);
+    if (result != ZE_RESULT_SUCCESS) return xe_device_probe_error(errors, "zeDriverGet", result);
+    if (!drivers) {
+        fprintf(errors, "xenolith: check-device: Level Zero runtime has no GPU driver; check the Intel compute runtime installation\n");
+        return 1;
+    }
+    /* Match xe_gpu_init exactly: passing count=1 selects the first driver and
+     * first device. Do not accept a later GPU that inference would not use. */
+    ze_driver_handle_t driver = NULL;
+    uint32_t count = 1;
+    result = zeDriverGet(&count, &driver);
+    if (result != ZE_RESULT_SUCCESS) return xe_device_probe_error(errors, "zeDriverGet", result);
+    if (!count || !driver) {
+        fprintf(errors, "xenolith: check-device: Level Zero GPU driver disappeared during enumeration\n");
+        return 1;
+    }
+    uint32_t devices = 0;
+    result = zeDeviceGet(driver, &devices, NULL);
+    if (result != ZE_RESULT_SUCCESS) return xe_device_probe_error(errors, "zeDeviceGet", result);
+    if (!devices) {
+        fprintf(errors, "xenolith: check-device: no GPU device exposed by the selected Level Zero driver; check driver installation and device access\n");
+        return 1;
+    }
+    ze_device_handle_t device = NULL;
+    count = 1;
+    result = zeDeviceGet(driver, &count, &device);
+    if (result != ZE_RESULT_SUCCESS) return xe_device_probe_error(errors, "zeDeviceGet", result);
+    if (!count || !device) {
+        fprintf(errors, "xenolith: check-device: Level Zero GPU device disappeared during enumeration\n");
+        return 1;
+    }
+    ze_device_properties_t properties = { .stype = ZE_STRUCTURE_TYPE_DEVICE_PROPERTIES };
+    result = zeDeviceGetProperties(device, &properties);
+    if (result != ZE_RESULT_SUCCESS) return xe_device_probe_error(errors, "zeDeviceGetProperties", result);
+    xe_gpu_status status = properties.vendorId == 0x8086 ? xe_gpu_classify(properties.deviceId) : XE_GPU_NOT_ENABLED;
+    fprintf(report, "Level Zero: %u driver(s), %u device(s) on selected driver; inference selects the first driver/device.\n",
+            drivers, devices);
+    fprintf(report, "Selected GPU: %.*s (%04x:%04x) — %s\n", (int)sizeof properties.name,
+            properties.name, properties.vendorId, properties.deviceId,
+            status == XE_GPU_TESTED ? "tested" : status == XE_GPU_UNTESTED ? "enabled, not yet verified" : "not enabled");
+    if (status == XE_GPU_NOT_ENABLED) {
+        fprintf(errors, "xenolith: check-device: no compatible GPU selected; see README.md for enabled Intel integrated GPUs\n");
+        return 1;
+    }
+    result = zeDeviceGetStatus(device);
+    if (result != ZE_RESULT_SUCCESS) return xe_device_probe_error(errors, "zeDeviceGetStatus", result);
+    fprintf(report, "GPU runtime access: ready. No model, kernels or inference allocations were loaded.\n");
+    return 0;
+}
+
 void *xe_vision_alloc_shared(xe_engine *e, size_t bytes) {
     return xe_alloc(e, bytes, XE_MEM_SHARED);
 }

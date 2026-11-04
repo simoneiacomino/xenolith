@@ -104,3 +104,5 @@ tests/test_vision_session
 /tests/test_cli_workers
 
 /tools/vision_decode_reference
+
+/tests/test_cli_config
