@@ -77,8 +77,8 @@ $(GPU_SPV): xenolith.cl vision.cl
 	ocloc compile -file $< -device xe-lp -spv_only -output xenolith_gpu \
 		-output_no_suffix -out_dir . -options '-cl-std=CL3.0' -q
 
-$(GPU_OBJ): $(GPU_SPV)
-	ld -r -b binary -o $@ $<
+$(GPU_OBJ): $(GPU_SPV) Makefile
+	ld -r -b binary -z noexecstack -o $@ $<
 	objcopy --rename-section .data=.rodata,alloc,load,readonly,data,contents $@
 
 LLAMA_DIR=../llama.cpp
