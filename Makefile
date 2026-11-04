@@ -542,3 +542,9 @@ check-config: tests/test_cli_config xenolith
 	python3 tests/test_config_cli.py ./xenolith
 
 .PHONY: check-config
+
+# Shell/package fixtures only; independent of the engine build and Intel GPU.
+check-installer:
+	python3 -m unittest discover -s installer/tests -v
+
+.PHONY: check-installer
