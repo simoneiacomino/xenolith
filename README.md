@@ -1,15 +1,45 @@
-# What is Xenolith
-Xenolith is a pure C inference engine designed and optimized for Intel Xe-LP iGPUs (11th–13th gen mobile), 32 GB RAM, Linux, and a single target model (Gemma 4 26B-A4B QAT). Additional Intel Xe integrated GPUs are enabled as listed in the [GPU compatibility matrix](#gpu-compatibility), with tested and untested devices identified separately.
-This project exists because I need it. I want to extract the most I can from my laptop, and so it's tuned for exactly that:
-HP Envy 17, i7-13700H (6 P-core Raptor Lake-H), DDR4-3200 dual channel (51.2 GB/).
-Systems like mine are very interesting for two reasons:
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/xenolith-paper.svg">
+    <img src="assets/xenolith-graphite.svg" alt="Xenolith" width="360">
+  </picture>
+</p>
 
-- First, because they are very common setups, broadly adopted for both work and personal use.
-- Second reason is that they have unified memory but with a very restrained bus.
+<p align="center"><strong>Local inference for Intel integrated GPUs.</strong></p>
 
-This work is inspired by antirez's DwarfStar.
+<p align="center">
+  <a href="https://xenolith.it">Website</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="docs/README.md">Documentation</a> ·
+  <a href="#gpu-compatibility">GPU compatibility</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
-# Why should you use Xenolith
+## About
+
+Xenolith is a pure C inference engine for Intel integrated GPUs on Linux, currently focused on Gemma 4 26B-A4B QAT.
+
+This project exists because I need it. I want to extract the most I can from my laptop: an HP Envy 17 with an i7-13700H and 32 GB of dual-channel DDR4-3200 RAM. Systems like mine are very common, and I find them interesting because the CPU and GPU share memory, but have a very limited memory bandwidth.
+
+I’m building Xenolith for single-machine, single-user inference. I’m not trying to support every model and every backend; I want to make this particular kind of setup useful for everyday local work.
+
+Most of the testing and optimization happens on the hardware I have. Occasionally I can also use machines provided through Intel’s cloud, as I did with Panther Lake. Other supported Intel integrated GPUs are listed in the [GPU compatibility matrix](#gpu-compatibility), which distinguishes tested and untested devices.
+
+## Quick start
+
+```sh
+curl -fsSL https://xenolith.it/install.sh | sh
+```
+
+Setup checks the GPU, configures a model and opens chat or the selected client.
+Run `xenolith chat` for later sessions.
+
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="assets/xenolith-three-clients-v2-poster.png">
+  <img src="assets/xenolith-three-clients-v2.gif" alt="Xenolith chat writes a checklist, XenoPi reads an image, and CodeXe inspects a local manifest through a tool call.">
+</picture>
+
+## Why should you use Xenolith
 If you have the target spec, Xenolith could be interesting because it is specifically designed to take the most out of this hardware.
 In fact, I noticed that general engines like llama.cpp (honestly, the only one I tried) has this problem: either you run it on the CPU or on the GPU. I mean, there are some options that enable to offload some layer to one and some to the other, but that's not the point. The thing is that it makes more sense to separate the two based on the two phases: prefill and decode.
 We know that prefill is mostly compute-bound and decode is bandwidth-bound, so it makes sense to exploit the GPU parallelization during the prefill and use CPU during decode. Why don't use GPU also for decode? Because, for some reason, on this hardware CPU can exploit more bandwidth.
@@ -29,7 +59,7 @@ Again, if you look at the decode and prefill improvements separately, you can se
 
 I want to specify that I didn't write the kernels myself, but I used a mix of Fable and Sol to autoresearch and autoimprove them.
 
-# GPU compatibility
+## GPU compatibility
 
 Xenolith targets Intel integrated GPUs based on the Xe architecture, on Linux using Level Zero (`intel-compute-runtime`). Compatibility is tracked by GPU device ID. Discrete GPUs are not enabled.
 
@@ -68,7 +98,7 @@ Tested configurations:
 
 If inference works on an untested device, please [open an issue](https://github.com/simoneiacomino/xenolith/issues) or submit a PR with your results so its ID can be marked tested in both the code and this table. If it fails, please open an issue describing the problem. Include the GPU device ID, processor, RAM, OS (including WSL if applicable), driver/runtime versions, Xenolith commit, model, command and relevant output. Device detection alone is not an inference test.
 
-# Design choices
+## Design choices
 First of all, I decided to not implement an internal agent/harness because that's another whole piece of software that needs attention and care. Also, harnesses are the new IDEs, so very personal, and everyone should use the one he prefers.
 
 So now we need a way to connect your harness to Xenolith. The standard way is a stateless chat/completions HTTP server that was designed to handle massive multi-user requests to a central server. This is a totally different use case than the one we are handling: single-machine, single-user inference.
@@ -80,10 +110,10 @@ In fact, I also made [Xenopi](https://github.com/simoneiacomino/xenopi), a pi di
 
 There is also [CodeXe](https://github.com/crrisci/codexe), a community-maintained fork of Codex with native Xenolith protocol support, persistent sessions and vision.
 
-# Limits
+## Limits
 Current observed limits are right now in the prefill kernel that doesn't scale as well as the Vulkan one. In fact, we can start see a regression in pp8192 where Vulkan becomes faster. But nothing that isn't improvable by spending some tokens on it.
 
-# Build and run
+## Build from source
 
 On Arch install the build tools, Level Zero, and Intel's GPU runtime:
 
@@ -91,17 +121,35 @@ On Arch install the build tools, Level Zero, and Intel's GPU runtime:
 sudo pacman -S --needed gcc make binutils coreutils level-zero-headers level-zero-loader intel-compute-runtime
 ```
 
-Get Unsloth's [Gemma 4 26B-A4B IT QAT UD-Q4_K_XL GGUF](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF/blob/main/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf) then build and run:
+Clone Xenolith, then build it and configure it with Unsloth's [Gemma 4 26B-A4B IT QAT UD-Q4_K_XL GGUF](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF/blob/main/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf):
 
 ```sh
+git clone https://github.com/simoneiacomino/xenolith.git
+cd xenolith
 make
-./xenolith run /path/to/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf -p "Hello" -n 64
+./xenolith config init --model /absolute/path/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf --ctx 65536
+./xenolith chat
 ```
 
-Run `./xenolith --help` for commands and options. For client integration, see
-the [protocol](docs/protocol.md) and the [C API](xenolith.h).
+To install the built command for your user:
+
+```sh
+make install
+```
+
+See the [source build guide](docs/build.md) for dependencies, install prefixes and staging.
 
 ## Documentation
 
 See the [documentation index](docs/README.md) for CLI usage, C integration,
 vision, tuning and tests.
+
+## Acknowledgments
+
+Thanks to:
+
+- [Raffaele](https://github.com/raffaeleedidonna), for helping build and maintain Xenolith.
+- [Francesco](https://github.com/crrisci), for his work on [CodeXe](https://github.com/crrisci/codexe).
+- [@aziis98](https://github.com/aziis98) and [@madduci](https://github.com/madduci), for being the first to try Xenolith on machines other than mine.
+
+This project was inspired by [antirez’s DwarfStar](https://github.com/antirez/ds4). [llama.cpp](https://github.com/ggml-org/llama.cpp) has also been a useful reference throughout its development.
