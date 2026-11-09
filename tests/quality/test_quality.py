@@ -230,7 +230,7 @@ def write_fake_driver(root: Path, *, truncate=False) -> Path:
     driver = root / "fake-driver.py"
     truncate_line = "data = data[:-1]" if truncate else ""
     driver.write_text(
-        "#!/usr/bin/env python3\n"
+        f"#!{sys.executable}\n"
         "import pathlib, sys\n"
         "import numpy as np\n"
         "model, tsv, raw, context, mode = sys.argv[1:]\n"
@@ -328,9 +328,16 @@ class QualityIntegrationTests(unittest.TestCase):
                 raise AssertionError(f"compare unexpectedly imported {name}")
             return original_import(name, *a, **kwargs)
 
-        with mock.patch("builtins.__import__", side_effect=import_without_reference):
+        # The subprocess must use the test environment, even without Python on PATH.
+        empty_path = self.root / "empty-path"
+        empty_path.mkdir()
+        with (
+            mock.patch("builtins.__import__", side_effect=import_without_reference),
+            mock.patch.dict(os.environ, {"PATH": str(empty_path)}),
+        ):
             quality.compare(args)
         report = json.loads((Path(args.output) / "report.json").read_text())
+        self.assertIn("cases", report, report)
         self.assertFalse(report["reference_loaded"])
         by_source = {case["source"]: case for case in report["cases"]}
         en = by_source["belebele_en"]
