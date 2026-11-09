@@ -2,10 +2,19 @@
 
 This optional package compares the current engine with immutable full-vocabulary
 reference results from **Google Gemma4 FP64**, using the exact represented GGUF
-weights. HF/Torch is a separate independent qualifier of the reference producer.
+weights. The shared fixture suite trusts this pinned Google producer as its
+operational reference. HF/Torch remains an optional independent qualification
+path for separately scoped archives; ordinary fixture generation does not run HF.
 Ordinary comparisons use only Python, NumPy, a compatible reference archive,
 the model GGUF and a current-build native driver. No reference model is loaded
 by a comparison, and an engine-only change does not invalidate reference results.
+
+For the shared, in-repository Google and llama.cpp logits, use the
+[fixture suite](fixtures/README.md). Its `xe-quality-fixtures` commands verify
+and compare the finite public corpus with a zero-margin criterion on the
+equally weighted mean KL across families, retaining local regressions as diagnostics.
+The archive commands below support separately qualified references and
+caller-supplied acceptance bounds.
 The GGUF reader supports F32, F16 and Q4_0 tensors. The Google adapter also
 checks the Gemma4 26B tensor and metadata schema; unsupported layouts fail
 explicitly. Each archive records its exact model identity.
@@ -114,7 +123,10 @@ in `GENERATION.json`. Keep that receipt with the JSONL when using
 `xe_quality.tokenize_panel`. The pinned noise subset does not need downloaded
 NLTK data. Frozen corpora need none of these generation dependencies.
 
-For **new reference generation**, install separate environments:
+For **new fixture reference generation**, install only the reference profile and
+follow the [fixture reproduction instructions](fixtures/README.md#reproduce-the-arrays).
+The following separate environments are for the **optional Google/HF qualification
+and qualified-archive workflow**:
 
 ```sh
 python3.12 tools/quality/setup_environment.py --profile reference --output /tmp/xe-reference

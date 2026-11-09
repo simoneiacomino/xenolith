@@ -17,6 +17,8 @@ corpus = ["numpy==2.3.5", "nltk==3.9.1", "wonderwords==2.2.0", "tqdm==4.67.1"]
 [project.scripts]
 xe-quality = "xe_quality.cli:entrypoint"
 xe-quality-backend = "xe_quality.backend:main"
+xe-quality-fixtures = "xe_quality.fixtures:main"
+xe-quality-llama-backend = "xe_quality.llama_backend:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

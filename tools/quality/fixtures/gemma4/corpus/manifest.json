@@ -1,0 +1,128 @@
+{
+  "schema": "xe-quality-fixture-corpus-v1",
+  "weights_sha256": "a7c5bc715f5ff8e99a3e8901ce7d2b42b402c669bf24f7c5250747633d0f5891",
+  "vocab_size": 262144,
+  "tokenizers": {
+    "xe-tokenizer": "b52e726f08ebbf5ef2e20b0c1a8cda058c194ba01a6f88ba0feed8ce3ad4d28b",
+    "llama-tokenizer": "a8a23ba5b193f3fabf38ad33dd6205761c8ba5ab9a004cf577ac8ad67a9c2303"
+  },
+  "cases": [
+    {
+      "id": "wiki-du-fu",
+      "group": "wiki-du-fu",
+      "stratum": "english-long",
+      "input": {
+        "path": "inputs/wiki-du-fu.json",
+        "sha256": "eb65922e641fc53bab8c0d92004d83bba5d1a6dfe66b81423f4202b686099737"
+      }
+    },
+    {
+      "id": "wiki-frank-headlam",
+      "group": "wiki-frank-headlam",
+      "stratum": "english-medium",
+      "input": {
+        "path": "inputs/wiki-frank-headlam.json",
+        "sha256": "21c0aa7e9527a5da55c94776e28005fadb8a9a7e2d3ad774e0cb85ada578cd16"
+      }
+    },
+    {
+      "id": "instruction-json",
+      "group": "instruction-json",
+      "stratum": "instruction-short",
+      "input": {
+        "path": "inputs/instruction-json.json",
+        "sha256": "602fd372ff7e14234ab42d400d7ba7588e3578b46b08c928f9b51aa57a1e8ca2"
+      }
+    },
+    {
+      "id": "python-close-elements",
+      "group": "python-close-elements",
+      "stratum": "python-short",
+      "input": {
+        "path": "inputs/python-close-elements.json",
+        "sha256": "2c11a97a7c743df1d4fd4312fe53be28d8a5db17b86c3c6480fdde287fca596a"
+      }
+    },
+    {
+      "id": "italian-accordion",
+      "group": "italian-accordion",
+      "stratum": "italian-short",
+      "input": {
+        "path": "inputs/italian-accordion.json",
+        "sha256": "33655e0dbb70feea8b876748674b5fcb6c6177e88961d04cd7709ec193ebd96f"
+      }
+    }
+  ],
+  "documents": [
+    {
+      "id": "wiki-du-fu",
+      "source": "wikitext2_raw",
+      "record_id": "wikitext2:test:Du Fu",
+      "dataset_revision": "b08601e04326c79dfdd32d625aee71d232d685c3",
+      "source_artifact_sha256": "3e956ad632739b3fad50741686083d04a9724cac50564ef723afb6ce58eb2ec4",
+      "text": {
+        "path": "texts/wiki-du-fu.txt",
+        "sha256": "c39c7f115b57ba5ec5b63ce0610b195a67e391a197c365a4a948d95b364e75a4"
+      },
+      "full_raw_token_count": 5347,
+      "used_tokens_including_bos": 5348,
+      "template": "raw unchanged UTF-8, no chat wrapper, one explicit BOS=2"
+    },
+    {
+      "id": "wiki-frank-headlam",
+      "source": "wikitext2_raw",
+      "record_id": "wikitext2:validation:Frank Headlam",
+      "dataset_revision": "b08601e04326c79dfdd32d625aee71d232d685c3",
+      "source_artifact_sha256": "6e7a311715d0496752ad1bc571d9c708ba570dcb47ba6db9ce48770f0f22076a",
+      "text": {
+        "path": "texts/wiki-frank-headlam.txt",
+        "sha256": "911de72a284826725bf2930d9e24da5fed50683b462287fd1077eed911c8a90c"
+      },
+      "full_raw_token_count": 3414,
+      "used_tokens_including_bos": 2048,
+      "template": "raw unchanged UTF-8, no chat wrapper, one explicit BOS=2"
+    },
+    {
+      "id": "instruction-json",
+      "source": "ifeval",
+      "record_id": "13",
+      "dataset_revision": "26d8ccdab6fec61b5c83ad6327ea8bda9e580288",
+      "source_artifact_sha256": "67ffeee0fcb87c317c5b08a2de85557b4a7e96ada6178aa645b4954fe4b53d49",
+      "text": {
+        "path": "texts/instruction-json.txt",
+        "sha256": "ec4814a8a3c30d6b24107419c79fa0166e083b644bd57d0bbd6dca27d2cfce9c"
+      },
+      "full_raw_token_count": 41,
+      "used_tokens_including_bos": 42,
+      "template": "raw unchanged UTF-8, no chat wrapper, one explicit BOS=2"
+    },
+    {
+      "id": "python-close-elements",
+      "source": "humaneval_plus",
+      "record_id": "HumanEval/0",
+      "dataset_revision": "68cd26d53a0dec69f85eafe1f82a2a74155a2bd6",
+      "source_artifact_sha256": "e62f4130146963d969da64553f407a66e52d095adbfed4ee6733b4d59e14a3ed",
+      "text": {
+        "path": "texts/python-close-elements.txt",
+        "sha256": "00b2e074e127a6a9d1376278bef732933760ab706057ec755a8c2642217b557a"
+      },
+      "full_raw_token_count": 131,
+      "used_tokens_including_bos": 132,
+      "template": "raw unchanged UTF-8, no chat wrapper, one explicit BOS=2"
+    },
+    {
+      "id": "italian-accordion",
+      "source": "belebele_it",
+      "record_id": "ita_Latn:https://en.wikibooks.org/wiki/Accordion/Right_hand:q1",
+      "dataset_revision": "7899cdfa4e1e0d733fd77c848e2c273cb1d32be2",
+      "source_artifact_sha256": "ff1185228bbf11c1d381e26a687ff7c53b0a333c6b9d203feb23d83188ee4c69",
+      "text": {
+        "path": "texts/italian-accordion.txt",
+        "sha256": "5654245b679df07cc044e9dd2bc5b4ed971756cd68c5242a59c9197be55efcbe"
+      },
+      "full_raw_token_count": 205,
+      "used_tokens_including_bos": 206,
+      "template": "raw unchanged UTF-8, no chat wrapper, one explicit BOS=2"
+    }
+  ]
+}

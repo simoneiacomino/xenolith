@@ -60,6 +60,8 @@ jobs:
         run: python3.12 tools/quality/setup_environment.py --profile compare --output /tmp/xe-quality
       - name: Check importer, corpus, metrics, archive and gate outcomes
         run: make check-quality-unit PYTHON=/tmp/xe-quality/bin/python
+      - name: Verify committed Google and llama fixture integrity
+        run: make verify-quality-fixtures PYTHON=/tmp/xe-quality/bin/python
       - name: Check comparison package outside source tree
         run: |
           cd /tmp

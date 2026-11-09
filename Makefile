@@ -554,6 +554,14 @@ quality-build-info:
 check-quality-unit:
 	$(PYTHON) -m unittest discover -s tests/quality -p 'test_*.py' -v
 
+QUALITY_FIXTURES ?=tools/quality/fixtures/gemma4
+verify-quality-fixtures:
+	$(PYTHON) -m xe_quality.fixtures verify --fixtures "$(QUALITY_FIXTURES)"
+
+check-quality-fixtures: require-model
+	@test -f "$(BACKEND_CONFIG)" -a -n "$(QUALITY_OUTPUT)" || { printf '%s\n' 'Set BACKEND_CONFIG and a new QUALITY_OUTPUT; see tools/quality/fixtures/README.md.' >&2; exit 2; }
+	$(PYTHON) -m xe_quality.fixtures compare --fixtures "$(QUALITY_FIXTURES)" --model "$(MODEL)" --backend-config "$(BACKEND_CONFIG)" --output "$(QUALITY_OUTPUT)"
+
 # An explicit policy is required for acceptance. Without one the gate exits 3.
 REFERENCE ?=
 BACKEND_CONFIG ?=
@@ -573,3 +581,4 @@ reference: require-model
 tests/test_decode tests/test_kv tests/test_model_decode tests/test_prefill_layer: tests/support/scalar_ops.h
 
 .PHONY: quality-driver quality-tokenizer quality-llama-tokenizer quality-build-info check-quality-unit check-quality reference
+.PHONY: verify-quality-fixtures check-quality-fixtures

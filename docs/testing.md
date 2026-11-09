@@ -18,9 +18,26 @@ Run the commands below from the repository root.
 The maintained text fidelity path is [tools/quality](../tools/quality/README.md):
 exact represented GGUF weights, a streamed **Google FP64** reference, frozen
 corpus, immutable full-vocabulary archives, and a driver built from the current
-Xenolith checkout. HF/Torch is an independent qualification control in a separate
-environment. An engine change can reuse a compatible reference archive without
+Xenolith checkout. The [shared fixture suite](../tools/quality/fixtures/README.md)
+commits exact inputs and Google/llama logits directly in the repository. It
+trusts the pinned Google producer and applies a zero-margin relative acceptance
+criterion to the equally weighted mean across families in the finite public
+corpus. Individual family/position regressions remain visible as nonblocking
+diagnostics. HF/Torch is an optional independent
+qualification control for the separate qualified-archive workflow. An engine
+change can reuse a compatible reference without
 JAX, Flax or Torch. The engine itself needs none of these Python dependencies.
+
+After installing the compare profile, `make verify-quality-fixtures` checks the
+committed data without a model. `make check-quality-fixtures MODEL=...
+BACKEND_CONFIG=... QUALITY_OUTPUT=...` compares a current-build backend with the
+committed baseline. Supply `PYTHON=/path/to/compare-venv/bin/python` for both
+targets. PASS is scoped to the fixed suite, not unseen-text statistical
+equivalence or free-response quality. See the fixture guide for repetitions,
+numerical resolution and explicit reproduction commands.
+
+For a separately qualified reference archive, use these commands with an
+explicit acceptance policy:
 
 ```sh
 # Use Python 3.12 on Linux x86_64 for the tested hashed installation profiles.
@@ -143,7 +160,8 @@ The [CI workflow](../.github/workflows/ci.yml) runs on pull requests, pushes to
   distribution fixtures.
 - `validation-tools` tests the Python package in the NumPy-only comparison
   environment and with the CPU JAX/Flax reference runtime, including an installed
-  package outside the checkout. These checks use synthetic inputs and stored arrays;
+  package outside the checkout. It also verifies the committed Google/llama
+  fixtures. These checks use synthetic inputs and stored arrays;
   model and GPU numerical acceptance runs separately through the commands above.
 
 To reproduce the engine checks, install the workflow's build dependencies and
