@@ -91,7 +91,9 @@ LLAMA_LDLIBS=-lllama -lggml -lggml-base
 
 TEST_CFLAGS=-O2 -std=c11 -Wall -Wextra -pthread
 
-UNIT_TESTS=tests/test_cpu_policy tests/test_cpu_topology tests/test_workers tests/test_inference tests/test_format tests/test_sha256 tests/test_json tests/test_decode tests/test_conversation tests/test_gpu_alloc tests/test_prefill_host tests/test_context_limits tests/test_visual_cache tests/test_visual_replay tests/test_vision_input
+HOST_UNIT_TESTS=tests/test_cpu_policy tests/test_cpu_topology tests/test_inference tests/test_format tests/test_sha256 tests/test_json tests/test_conversation tests/test_gpu_alloc tests/test_prefill_host tests/test_context_limits tests/test_visual_cache tests/test_visual_replay tests/test_vision_input
+# These execute the engine's worker ISA check or VNNI arithmetic.
+VNNI_TESTS=tests/test_workers tests/test_decode
 GPU_TESTS=tests/test_kv tests/test_snapshot tests/test_kvstore tests/test_prefill_session tests/test_vision_gpu
 PERSISTENCE_TESTS=tests/test_cache_model tests/test_snapshot_model tests/test_conversation_model tests/test_session_sync
 PREFILL_TESTS=tests/test_prefill_projection tests/test_prefill_qkv tests/test_prefill_swa \
@@ -319,9 +321,17 @@ check-snapshot-compat-model: require-model $(GPU_OBJ) $(CPU_OBJS)
 check-vision-weights:
 	CC='$(CC)' python3 tests/check_vision_weights.py
 
-check-unit: check-vision-weights tests/test_cache_policy $(UNIT_TESTS) check-kv-load-bounds check-snapshot-compat-host
+check-host-unit: check-vision-weights tests/test_cache_policy $(HOST_UNIT_TESTS) check-kv-load-bounds check-snapshot-compat-host
 	./tests/test_cache_policy
-	@set -e; for test in $(UNIT_TESTS); do ./$$test; done
+	@set -e; for test in $(HOST_UNIT_TESTS); do ./$$test; done
+
+check-vnni: $(VNNI_TESTS)
+	@set -e; for test in $(VNNI_TESTS); do ./$$test; done
+
+check-unit: check-host-unit check-vnni
+
+# No GPU, model or VNNI execution. Compilation still uses the engine ISA flags.
+check-host: check-host-unit check-context check-config check-install check-devices
 
 check-gpu: $(GPU_TESTS)
 	./tests/test_kv
@@ -477,7 +487,7 @@ require-weights-identity-inputs:
 require-model:
 	@test -f "$(MODEL)" || { printf '%s\n' 'Set MODEL to the path of the Gemma 4 GGUF file.' >&2; exit 2; }
 
-.PHONY: check-cache-large require-model clean check check-inference check-unit check-gpu check-context check-persistence check-prefill check-all check-snapshot-compat-host check-snapshot-compat \
+.PHONY: check-cache-large require-model clean check check-inference check-host check-host-unit check-vnni check-unit check-gpu check-context check-persistence check-prefill check-all check-snapshot-compat-host check-snapshot-compat \
 	check-snapshot-compat-model check-kv check-kv-edges check-kv-load-bounds check-runtime check-serve golden test-tools test-tools-clean \
 	bench-b3b bench-b14 bench-prefill-gemm check-vision check-vision-weights
 

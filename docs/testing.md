@@ -27,17 +27,23 @@ Run the commands below from the repository root.
   environment selection, malformed files, projector defaults and literal prompt
   values. Requires Python 3 for the CLI checks; the standalone
   `tests/test_cli_config` executable needs neither Python nor Level Zero.
-- `make check-unit check-context`: host and CLI checks, without a GPU or model.
-  This includes CPU profile and sysfs parsing cases, explicit C options, live
-  worker selection, scheduling, affinity restoration and attention scratch
-  allocation with fewer than six workers.
-  `make check-workers` runs those CPU checks alone.
-  Both `check-workers` and `check-context` include `tests/test_cli_workers`,
-  which checks CLI option syntax and precedence over environment settings.
-  Requires Python 3 and a C compiler with AddressSanitizer support.
+- `make check-host`: host unit and CLI checks, including configuration,
+  installation, mocked devices, synthetic cache/snapshot and vision checks,
+  and ASan checks of kernel load loops. No GPU, model or VNNI execution is needed.
+- `make check-vnni`: worker scheduling/affinity and CPU decode arithmetic checks.
+  Requires a CPU compatible with the compiled engine ISA, including VNNI;
+  no GPU or model is needed.
+- `make check-unit check-context`: the complete unit suite plus CLI context and
+  worker-option checks. `check-unit` combines `check-host-unit` and `check-vnni`.
+  For focused CPU policy, topology, worker and CLI worker-option checks, use
+  `make check-workers`.
 - `make check-gpu`: numerical GPU regressions, requiring a supported GPU but no model.
 - `make check-all MODEL=/path/to/model.gguf`: the standard suite, including model,
   persistence, prefill, runtime and server checks; requires a supported GPU and model.
+
+The host suite requires Python 3, a C compiler with AddressSanitizer support,
+Level Zero headers/loader and `ocloc`. See the [source build guide](build.md)
+for build dependencies.
 
 Benchmark methods and selected results are indexed in [bench/README.md](../bench/README.md).
 
