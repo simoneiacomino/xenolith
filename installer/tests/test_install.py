@@ -253,7 +253,9 @@ ln -sfn "$root/current/bin/codex" "$bindir/codexe"
         self.assertIn("supply the corresponding option", missing.stderr)
 
     def run_pipe_tty(self, options, prompts, expected_exit=0):
-        command = 'cat -- ' + shlex.quote(str(SCRIPT)) + ' | sh -s -- --source ' + shlex.quote(str(self.source)) + ' ' + shlex.join(options)
+        # Keep the supervising shell alive while the installer handles Ctrl+C.
+        # A caught signal is reset for children, unlike an ignored signal.
+        command = "trap ':' INT; cat -- " + shlex.quote(str(SCRIPT)) + ' | sh -s -- --source ' + shlex.quote(str(self.source)) + ' ' + shlex.join(options)
         pid, master = pty.fork()
         if pid == 0:
             os.execvpe('sh', ['sh', '-c', command], self.env)

@@ -29,7 +29,9 @@ jobs:
           printf '\003\002\043\007' > xenolith_gpu.spv
           make xenolith_gpu_spv.o
       - name: Check config, installation, and mocked device behavior
-        run: make check-config check-install check-devices
+        run: |
+          baseline=$(python3 -c 'import sys; sys.path.insert(0, "installer/tools"); from build_baseline import ENGINE_CFLAGS; print(ENGINE_CFLAGS)')
+          make BASE_CFLAGS="$baseline" check-config check-install check-devices
 
   installer:
     runs-on: ubuntu-24.04
