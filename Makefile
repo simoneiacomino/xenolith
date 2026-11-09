@@ -17,6 +17,7 @@ DESTDIR ?=
 bindir ?= $(PREFIX)/bin
 INSTALL ?= install
 
+OCLOC_DEVICE?=xe-lp
 GPU_SPV=xenolith_gpu.spv
 GPU_OBJ=xenolith_gpu_spv.o
 VISION_OBJS=vision.o vision_encoder.o
@@ -74,7 +75,7 @@ clean:
 
 $(GPU_SPV): xenolith.cl vision.cl
 	# Xe-LP is the SPIR-V feature baseline; native code is compiled at startup.
-	ocloc compile -file $< -device xe-lp -spv_only -output xenolith_gpu \
+	ocloc compile -file $< -device $(OCLOC_DEVICE) -spv_only -output xenolith_gpu \
 		-output_no_suffix -out_dir . -options '-cl-std=CL3.0' -q
 
 $(GPU_OBJ): $(GPU_SPV) Makefile
@@ -305,15 +306,15 @@ check-cache-large: tests/test_cache_policy
 	./tests/test_cache_policy --large
 
 check-snapshot-compat-host: $(GPU_OBJ) $(CPU_OBJS)
-	python3 tests/check_snapshot_compat.py --current-only --cc '$(CC)' --base-cflags '$(BASE_CFLAGS)'
+	python3 tests/check_snapshot_compat.py --current-only --cc '$(CC)' --base-cflags '$(BASE_CFLAGS)' --ocloc-device '$(OCLOC_DEVICE)'
 
 # Needs the historical commit in local Git history, or LEGACY_SOURCE pointing
 # to an unmodified export of it. No model or GPU device is needed.
 check-snapshot-compat: $(GPU_OBJ) $(CPU_OBJS)
-	python3 tests/check_snapshot_compat.py --cc '$(CC)' --base-cflags '$(BASE_CFLAGS)' $(if $(LEGACY_SOURCE),--legacy-source '$(LEGACY_SOURCE)')
+	python3 tests/check_snapshot_compat.py --cc '$(CC)' --base-cflags '$(BASE_CFLAGS)' --ocloc-device '$(OCLOC_DEVICE)' $(if $(LEGACY_SOURCE),--legacy-source '$(LEGACY_SOURCE)')
 
 check-snapshot-compat-model: require-model $(GPU_OBJ) $(CPU_OBJS)
-	python3 tests/check_snapshot_compat.py --cc '$(CC)' --base-cflags '$(BASE_CFLAGS)' $(if $(LEGACY_SOURCE),--legacy-source '$(LEGACY_SOURCE)') --model '$(MODEL)'
+	python3 tests/check_snapshot_compat.py --cc '$(CC)' --base-cflags '$(BASE_CFLAGS)' --ocloc-device '$(OCLOC_DEVICE)' $(if $(LEGACY_SOURCE),--legacy-source '$(LEGACY_SOURCE)') --model '$(MODEL)'
 
 check-vision-weights:
 	CC='$(CC)' python3 tests/check_vision_weights.py

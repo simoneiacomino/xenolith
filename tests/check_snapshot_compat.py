@@ -46,6 +46,8 @@ def crc64(data):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--current-only", action="store_true")
+    parser.add_argument("--ocloc-device", default="xe-lp",
+                        help="OpenCL compilation target (Ubuntu 24.04: tgllp)")
     parser.add_argument("--legacy-source", type=Path)
     parser.add_argument("--metadata-source", type=Path)
     parser.add_argument("--model", type=Path, help="also check GPU inference continuation")
@@ -198,7 +200,7 @@ def main():
                 legacy_kernel = gpu_object
                 if (legacy / "xenolith.cl").read_bytes() != (ROOT / "xenolith.cl").read_bytes():
                     # Compile the actual historical producer, including its kernel.
-                    run(["ocloc", "compile", "-file", "xenolith.cl", "-device", "xe-lp",
+                    run(["ocloc", "compile", "-file", "xenolith.cl", "-device", args.ocloc_device,
                          "-spv_only", "-output", "xenolith_gpu", "-output_no_suffix",
                          "-out_dir", ".", "-options", "-cl-std=CL3.0", "-q"], cwd=legacy)
                     run(["ld", "-r", "-b", "binary", "-o", "xenolith_gpu_spv.o", "xenolith_gpu.spv"], cwd=legacy)
