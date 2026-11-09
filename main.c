@@ -37,7 +37,6 @@ static void usage(void) {
 "  chat     image options: --mmproj FILE --image FILE [--image-tokens N] (first message)\n"
 "  run/bench --prefill 512|1024 (default 512)\n"
 "  chat     [-n max] [--temp F] [--top-k N] [--top-p F] [--seed S]\n"
-"  oracle   -t \"id,id,id\" [-o logits.bin] [--layers dir] [--q8]\n"
 "  bench    [-p N] [-n N] [-d N] [-r N] [--delay S] [--no-warmup] [--progress] [-o md|jsonl]\n"
 "  wire     [--state DIR] [--cache DIR] [--cache-budget SIZE] [--mmproj FILE]\n"
 "  serve    [--state DIR] [--cache DIR] [--cache-budget SIZE] [--socket PATH] [--idle-shutdown MIN] [--mmproj FILE]\n"
@@ -1007,78 +1006,6 @@ static int cmd_chat(const char *model, int argc, char **argv) {
     return 0;
 }
 
-static int cmd_oracle(const char *model, int argc, char **argv) {
-    cli_defaults defaults = {0};
-    int context = XE_CONTEXT_DEFAULT, context_seen = 0;
-    cli_cpu_plan cpu = {0};
-    const char *ids = NULL;
-    const char *dump_path = NULL;
-    const char *layers_dir = NULL;
-    int q8_mode = 0;
-
-    for (int i = model ? 3 : 2; i < argc; i++) {
-        if (cli_config_option(argc, argv, &i, &defaults)) continue;
-        if (cli_context_option(argc, argv, &i, &context, &context_seen) ||
-            cli_cpu_option(argc, argv, &i, &cpu)) continue;
-        if (!strcmp(argv[i], "-t")) {
-            if (++i >= argc) usage();
-            ids = argv[i];
-        } else if (!strcmp(argv[i], "-o")) {
-            if (++i >= argc) usage();
-            dump_path = argv[i];
-        } else if (!strcmp(argv[i], "--layers")) {
-            if (++i >= argc) usage();
-            layers_dir = argv[i];
-        } else if (!strcmp(argv[i], "--q8")) {
-            q8_mode = 1;
-        } else {
-            usage();
-        }
-    }
-    model = cli_load_defaults(&defaults, model);
-    cli_default_context(&defaults, &context, &context_seen);
-    if (!ids) usage();
-
-    static int32_t toks[8192];
-    int n = 0;
-    const char *p = ids;
-
-    while (*p) {
-        char *end;
-        long v = strtol(p, &end, 10);
-        if (end == p) {
-            fprintf(stderr, "xenolith: oracle: bad token list \"%s\"\n", ids);
-            exit(1);
-        }
-        if (v < 0 || v > 262143) {
-            fprintf(stderr, "xenolith: oracle: token id %ld out of range [0, 262143]\n", v);
-            exit(1);
-        }
-        if (n >= 8192) {
-            fprintf(stderr, "xenolith: oracle: too many token ids (max 8192)\n");
-            exit(1);
-        }
-        toks[n++] = (int32_t)v;
-        p = end;
-        if (*p == ',') {
-            p++;
-        } else if (*p) {
-            fprintf(stderr, "xenolith: oracle: bad token list \"%s\"\n", ids);
-            exit(1);
-        }
-    }
-    if (n == 0) usage();
-
-    cli_cpu_finish(&cpu, context);
-    cli_lock(NULL);
-
-    xe_engine *e = xe_engine_open_with_options(model, &cpu.options);
-    free(cpu.cpus);
-    xe_oracle(e, toks, n, dump_path, layers_dir, q8_mode, stdout);
-    xe_engine_close(e);
-    cli_unlock();
-    return 0;
-}
 
 typedef struct {
     int n_prompt;
@@ -1547,7 +1474,6 @@ static int cli_dispatch(int argc, char **argv) {
     if (!strcmp(cmd, "run")) return cmd_run(model, argc, argv);
     if (!strcmp(cmd, "vision-encode")) return cmd_vision_encode(model, argc, argv);
     if (!strcmp(cmd, "chat")) return cmd_chat(model, argc, argv);
-    if (!strcmp(cmd, "oracle")) return cmd_oracle(model, argc, argv);
     if (!strcmp(cmd, "bench")) return cmd_bench(model, argc, argv);
     if (!strcmp(cmd, "wire")) return cmd_wire(model, argc, argv);
     if (!strcmp(cmd, "serve")) return cmd_serve(model, argc, argv);

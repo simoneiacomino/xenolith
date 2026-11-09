@@ -14,7 +14,6 @@ static int check(const char *command, char *const *opts, const char *workers,
     int n = 3;
     for (int i = 0; opts[i]; i++) args[n++] = opts[i];
     if (!strcmp(command, "run")) { args[n++] = "-p"; args[n++] = "--workers"; }
-    if (!strcmp(command, "oracle")) { args[n++] = "-t"; args[n++] = "2"; }
     if (!strcmp(command, "vision-encode")) {
         args[n++] = "--mmproj"; args[n++] = "--workers";
         args[n++] = "--image"; args[n++] = "/missing-xenolith-image";
@@ -47,7 +46,7 @@ int main(void) {
     char root[] = "/tmp/xenolith-cli-workers-XXXXXX";
     if (!mkdtemp(root) || setenv("XDG_RUNTIME_DIR", root, 1) || setenv("XDG_STATE_HOME", root, 1) ||
         unsetenv("XENOLITH_CONFIG") || setenv("XDG_CONFIG_HOME", root, 1)) return 2;
-    const char *commands[] = {"run", "chat", "oracle", "bench", "wire", "serve", "vision-encode"};
+    const char *commands[] = {"run", "chat", "bench", "wire", "serve", "vision-encode"};
     char *none[] = {NULL};
     char *auto_opt[] = {"--workers", "auto", NULL};
     char *numeric[] = {"--workers", "2", "--cpu-list", "0,2", NULL};

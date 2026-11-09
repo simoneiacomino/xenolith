@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xenolith-quality"
+version = "0.1.0"
+description = "Exact-GGUF Google FP64 reference archives and Xenolith fidelity diagnostics"
+requires-python = ">=3.12"
+dependencies = ["numpy>=2.3.5,<3"]
+
+[project.optional-dependencies]
+reference = ["numpy==2.3.5", "jax==0.8.2", "jaxlib==0.8.2", "flax==0.12.2"]
+qualification = ["numpy==2.3.5", "torch==2.14.0", "transformers==5.19.0", "tokenizers==0.23.3", "safetensors==0.8.0"]
+corpus = ["numpy==2.3.5", "nltk==3.9.1", "wonderwords==2.2.0", "tqdm==4.67.1"]
+
+[project.scripts]
+xe-quality = "xe_quality.cli:entrypoint"
+xe-quality-backend = "xe_quality.backend:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"xe_quality.reference" = ["*.json", "*LICENSE*", "*NOTICE*"]

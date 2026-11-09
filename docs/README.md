@@ -14,3 +14,6 @@
 - [Benchmarks](../bench/README.md): methods and selected results.
 
 Commands in these pages run from the repository root unless stated otherwise.
+
+The [numerical fidelity workflow](testing.md#numerical-fidelity) uses optional
+Python environments and reusable Google FP64 archives.

@@ -1,4 +1,5 @@
 #include "../xenolith.c"
+#include "support/scalar_ops.h"
 
 static double layer_now(void) {
     struct timespec time;
@@ -15,6 +16,63 @@ static double layer_rel(const float *a, const float *b, size_t n) {
         reference += (double)b[i] * b[i];
     }
     return sqrt(error / (reference + 1e-30));
+}
+
+/* Atomic route scatter may permute rows within an expert's packed segment.
+ * Validate the complete inverse mapping before using it to compare payloads. */
+static int layer_route_map_valid(const int *experts, const int *route_packed,
+                                 const int *packed_route, const int *counts,
+                                 const int *offsets, int routes) {
+    int observed[XE_EXPERTS] = {0};
+    if (offsets[0] != 0 || offsets[XE_EXPERTS] != routes) return 0;
+    for (int expert = 0; expert < XE_EXPERTS; expert++)
+        if (counts[expert] < 0 || offsets[expert] < 0 ||
+            offsets[expert+1] > routes ||
+            offsets[expert+1] - offsets[expert] != counts[expert]) return 0;
+    for (int route = 0; route < routes; route++) {
+        int expert = experts[route], packed = route_packed[route];
+        if (expert < 0 || expert >= XE_EXPERTS || packed < 0 || packed >= routes)
+            return 0;
+        if (packed_route[packed] != route || packed < offsets[expert]
+            || packed >= offsets[expert+1]) return 0;
+        observed[expert]++;
+    }
+    for (int expert = 0; expert < XE_EXPERTS; expert++)
+        if (observed[expert] != counts[expert]) return 0;
+    return 1;
+}
+
+static size_t layer_remapped_rows(const void *before, const void *after,
+                                  const int *before_map, const int *after_map,
+                                  int routes, size_t stride) {
+    const unsigned char *a = before, *b = after;
+    size_t mismatches = 0;
+    for (int route = 0; route < routes; route++)
+        mismatches += memcmp(a + (size_t)before_map[route] * stride,
+                             b + (size_t)after_map[route] * stride, stride) != 0;
+    return mismatches;
+}
+
+static int layer_mapping_self_test(void) {
+    const int experts[] = {0, 1, 0, 1};
+    const int before_map[] = {0, 2, 1, 3}, before_inverse[] = {0, 2, 1, 3};
+    const int after_map[] = {1, 3, 0, 2}, after_inverse[] = {2, 0, 3, 1};
+    int counts[XE_EXPERTS] = {2, 2}, offsets[XE_EXPERTS+1] = {0, 2};
+    for (int i = 2; i <= XE_EXPERTS; i++) offsets[i] = 4;
+    int before[] = {11, 33, 22, 44}, after[] = {33, 11, 44, 22};
+    int ok = layer_route_map_valid(experts, before_map, before_inverse, counts, offsets, 4)
+             && layer_route_map_valid(experts, after_map, after_inverse, counts, offsets, 4)
+             && !layer_remapped_rows(before, after, before_map, after_map, 4, sizeof(int));
+    after[0]++;
+    ok &= layer_remapped_rows(before, after, before_map, after_map, 4, sizeof(int)) == 1;
+    int bad_inverse[] = {2, 0, 1, 3};
+    ok &= !layer_route_map_valid(experts, after_map, bad_inverse, counts, offsets, 4);
+    int wrong_experts[] = {1, 1, 0, 0};
+    ok &= !layer_route_map_valid(wrong_experts, after_map, after_inverse, counts, offsets, 4);
+    int out_of_range[] = {4, 3, 0, 2};
+    ok &= !layer_route_map_valid(experts, out_of_range, after_inverse, counts, offsets, 4);
+    printf("prefill-layer: semantic packed-route permutation/corruption %s\n", ok ? "PASS" : "FAIL");
+    return ok;
 }
 
 static int layer_run(xe_engine *e, int layer_index, int rows) {
@@ -251,6 +309,31 @@ static int layer_run(xe_engine *e, int layer_index, int rows) {
         tile_m0_repeat_mismatches +=
             workspace.routes.tile_m0[i] != tile_m0_snapshot[i];
     }
+    int routes = rows * XE_EXPERTS_USED;
+    int mapping_ok = layer_route_map_valid(route_expert_snapshot,
+        route_packed_snapshot, packed_route_snapshot, expert_count_snapshot,
+        token_offset_snapshot, routes)
+        && layer_route_map_valid(workspace.route_expert,
+        workspace.routes.route_packed, workspace.routes.packed_route,
+        workspace.routes.expert_count, workspace.routes.token_offset, routes);
+    size_t semantic_mismatches = 0;
+    if (mapping_ok) {
+#define CHECK_PACKED(before, after, width) \
+        semantic_mismatches += layer_remapped_rows((before), (after), \
+            route_packed_snapshot, workspace.routes.route_packed, routes, \
+            (size_t)(width) * sizeof(*(before)))
+        CHECK_PACKED(expert_snapshot, workspace.expert_down, XE_EMBD);
+        CHECK_PACKED(expert_gate_snapshot, workspace.expert_gate_up, 2 * XE_EXPERT_FFN);
+        CHECK_PACKED(expert_activation_q_snapshot, workspace.expert_activation.qs, XE_EXPERT_FFN);
+        CHECK_PACKED(expert_activation_d_snapshot, workspace.expert_activation.d, XE_EXPERT_FFN/32);
+        CHECK_PACKED(expert_activation_s_snapshot, workspace.expert_activation.sigma, XE_EXPERT_FFN/32);
+        CHECK_PACKED(packed_moe_q_snapshot, workspace.packed_moe.qs, XE_EMBD);
+        CHECK_PACKED(packed_moe_d_snapshot, workspace.packed_moe.d, XE_EMBD/32);
+        CHECK_PACKED(packed_moe_s_snapshot, workspace.packed_moe.sigma, XE_EMBD/32);
+#undef CHECK_PACKED
+    }
+    printf("prefill-layer: packed mapping %s semantic-row-mismatches %zu\n",
+           mapping_ok ? "PASS" : "FAIL", semantic_mismatches);
     double error = 0.0;
     double attention_error = 0.0;
     double router_input_error = 0.0;
@@ -268,9 +351,8 @@ static int layer_run(xe_engine *e, int layer_index, int rows) {
     int route_set_mismatches = 0;
     float mismatched_margin = 0.0f;
     if (rows == 32) {
-        ref_state reference_state = {0};
-        ref_state_init(&reference_state, rows);
-        reference_state.q8 = 2;
+        xe_session *reference_state = xe_session_new(e);
+        xe_workers_begin(e);
         float *reference_output = xe_alloc(
             NULL, (size_t)rows * XE_EMBD * sizeof(*reference_output),
             XE_MEM_HOST);
@@ -366,26 +448,27 @@ static int layer_run(xe_engine *e, int layer_index, int rows) {
                 }
             }
         for (int row = 0; row < rows; row++) {
-            ref_embed(e, 2 + row, reference_state.hidden);
-            ref_attention_half(e, layer_index, row, &reference_state);
+            xe_embed_decode(e, 2 + row, reference_state->hidden);
+            xe_rope_prepare(reference_state, row);
+            xe_attention_half_decode(reference_state, layer_index, row);
             for (int head = 0; head < XE_Q_HEADS; head++) {
                 memcpy(reference_q + ((size_t)head * rows + row) * dimension,
-                       reference_state.q + (size_t)head * dimension,
+                       reference_state->q + (size_t)head * dimension,
                        (size_t)dimension * sizeof(float));
                 memcpy(reference_heads
                            + ((size_t)head * rows + row) * dimension,
-                       reference_state.attn_heads + (size_t)head * dimension,
+                       reference_state->attn_heads + (size_t)head * dimension,
                        (size_t)dimension * sizeof(float));
             }
             memcpy(reference_projection + (size_t)row * XE_EMBD,
-                   reference_state.attn_proj, XE_EMBD * sizeof(float));
+                   reference_state->attn_proj, XE_EMBD * sizeof(float));
             memcpy(reference_attention + (size_t)row * XE_EMBD,
-                   reference_state.attn_out, XE_EMBD * sizeof(float));
-            ref_ffn_half(e, layer_index, &reference_state);
+                   reference_state->attn_out, XE_EMBD * sizeof(float));
+            xe_ffn_half_decode(reference_state, layer_index, XE_MOE_GENERIC_BATCHED, 1);
             memcpy(reference_output + (size_t)row * XE_EMBD,
-                   reference_state.hidden, XE_EMBD * sizeof(float));
+                   reference_state->hidden, XE_EMBD * sizeof(float));
             memcpy(reference_router + (size_t)row * XE_EMBD,
-                   reference_state.router_in, XE_EMBD * sizeof(float));
+                   reference_state->router_in, XE_EMBD * sizeof(float));
             float best_value[XE_EXPERTS_USED + 1];
             int best_index[XE_EXPERTS_USED + 1];
             for (int slot = 0; slot <= XE_EXPERTS_USED; slot++) {
@@ -393,7 +476,7 @@ static int layer_run(xe_engine *e, int layer_index, int rows) {
                 best_index[slot] = -1;
             }
             for (int expert = 0; expert < XE_EXPERTS; expert++) {
-                float value = reference_state.router_probs[expert];
+                float value = reference_state->router_logits[expert];
                 if (value <= best_value[XE_EXPERTS_USED]) continue;
                 int slot = XE_EXPERTS_USED;
                 while (slot > 0 && best_value[slot - 1] < value) {
@@ -472,10 +555,19 @@ static int layer_run(xe_engine *e, int layer_index, int rows) {
         xe_free(NULL, reference_router, XE_MEM_HOST);
         xe_free(NULL, reference_attention, XE_MEM_HOST);
         xe_free(NULL, reference_output, XE_MEM_HOST);
-        ref_state_free(&reference_state);
+        xe_workers_end(e);
+        xe_session_free(reference_state);
     }
     int routes_ok = route_set_mismatches == 0 || mismatched_margin < 5e-4f;
     int ok = finite && repeat_mismatches == 0
+             && q_repeat_mismatches == 0 && heads_repeat_mismatches == 0
+             && projection_repeat_mismatches == 0 && attention_repeat_mismatches == 0
+             && dense_repeat_mismatches == 0 && moe_repeat_mismatches == 0
+             && mapping_ok && semantic_mismatches == 0
+             && route_expert_repeat_mismatches == 0 && route_weight_repeat_mismatches == 0
+             && expert_count_repeat_mismatches == 0
+             && token_offset_repeat_mismatches == 0 && tile_expert_repeat_mismatches == 0
+             && tile_m0_repeat_mismatches == 0
              && (rows != 32 || (routes_ok && error < 5e-3));
     printf("prefill-layer-sigma: expert %zu packed %zu\n",
            expert_activation_s_repeat_mismatches,
@@ -531,6 +623,8 @@ static int layer_run(xe_engine *e, int layer_index, int rows) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--mapping-self-test"))
+        return layer_mapping_self_test() ? 0 : 1;
     if (argc < 2 || !argv[1][0]) {
         fprintf(stderr, "usage: %s <model.gguf> [rows]\n", argv[0]);
         return 2;
@@ -539,7 +633,10 @@ int main(int argc, char **argv) {
     int rows = argc > 2 ? (int)strtol(argv[2], NULL, 10) : 32;
     if (rows < 1 || rows > 512)
         xe_fatal("prefill layer test supports M1 through M512");
-    xe_engine *e = xe_engine_open(model);
+    /* This isolated block uses only positions [0, rows). Bound the decode
+     * comparison cache instead of allocating the CLI's default 64K context. */
+    xe_engine_options options = { .context = rows < XE_CONTEXT_MIN ? XE_CONTEXT_MIN : rows };
+    xe_engine *e = xe_engine_open_with_options(model, &options);
     ze_kernel_properties_t properties = {
         .stype = ZE_STRUCTURE_TYPE_KERNEL_PROPERTIES
     };
