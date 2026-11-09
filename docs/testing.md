@@ -43,7 +43,8 @@ Run the commands below from the repository root.
 
 The host suite requires Python 3, a C compiler with AddressSanitizer support,
 Level Zero headers/loader and `ocloc`. See the [source build guide](build.md)
-for build dependencies.
+for build dependencies and [CI instructions](#continuous-integration) below
+for compiler flags on hosts without VNNI.
 
 Benchmark methods and selected results are indexed in [bench/README.md](../bench/README.md).
 
@@ -57,6 +58,30 @@ its OpenCL companion are an experimental kernel lab pinned to device `a7a0`,
 including candidate kernels that are not used by the engine. They are not a
 portable regression suite. The end-to-end benchmark procedure remains in
 [bench/compare_pp_tg.md](../bench/compare_pp_tg.md).
+
+## Continuous integration
+
+The [CI workflow](../.github/workflows/ci.yml) runs on pull requests, pushes to
+`main` and manual dispatch:
+
+- `engine-tests` compiles the engine and OpenCL kernels, then runs `check-host`
+  and `check-snapshot-compat` on Ubuntu 24.04.
+- `installer` runs `check-installer`, including client integration and
+  distribution fixtures.
+
+To reproduce the engine checks, install the workflow's build dependencies and
+fetch full Git history for the historical snapshot producers. Use a clean build
+when changing compiler flags; Make does not track flag changes.
+
+```sh
+baseline=$(python3 -c 'import sys; sys.path.insert(0, "installer/tools"); from build_baseline import ENGINE_CFLAGS; print(ENGINE_CFLAGS)')
+make OCLOC_DEVICE=tgllp BASE_CFLAGS="$baseline" check-host check-snapshot-compat
+```
+
+Run VNNI, GPU and model checks separately on compatible hardware before merging
+changes to the affected code. [Vision preprocessing](#input-gpu-and-preprocessing-checks),
+`make check-cache-large` and [performance benchmarks](../bench/README.md)
+are also explicit runs.
 
 ## KV regression checks and kernel optimization guidance
 
