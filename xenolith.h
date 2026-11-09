@@ -130,9 +130,6 @@ void xe_tokens_push(xe_tokens *tokens, int32_t token);
 void xe_tokens_free(xe_tokens *tokens);
 const char *xe_chat_template(const xe_engine *e, uint64_t *length);
 
-void xe_oracle(xe_engine *e, const int32_t *tokens, int n_tokens, const char *dump_path,
-               const char *layers_dir, int q8_mode, FILE *out);
-
 /* Optional diagnostic observation of the real execution path after each layer.
  * hidden contains count floats, borrowed until callback returns; position is
  * absolute. Callbacks must not mutate data or reenter engine/session APIs.

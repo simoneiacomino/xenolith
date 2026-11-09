@@ -1,4 +1,5 @@
 #include "../xenolith.c"
+#include "support/scalar_ops.h"
 
 static uint16_t test_half_bits(_Float16 x) {
     uint16_t bits;
@@ -328,6 +329,71 @@ static int test_sampler(void) {
     return ok;
 }
 
+/* CPU router contract with analytic distributions, independent of the model
+ * and of the engine's returned probabilities/selected IDs/weights. Sparse
+ * basis products are exact. All denominators are powers of two until the
+ * final selected-weight division, so no fidelity epsilon is needed. */
+static int test_router_contract(void) {
+    float *weights = calloc((size_t)XE_EXPERTS * XE_EMBD, sizeof(*weights));
+    if (!weights) return 0;
+    float input[XE_EMBD], probabilities[XE_EXPERTS];
+    for (int i = 0; i < XE_EMBD; i++) input[i] = 1.0f;
+    xe_layer layer = { .router_w = weights };
+    xe_session s = { .router_in = input, .router_logits = probabilities };
+    memset(s.expert_trace, -1, sizeof s.expert_trace);
+    xe_router(&s, &layer, 3);
+    int ok = 1;
+    /* All logits zero: exact uniform distribution, stable ascending tie
+     * order and renormalization over exactly eight selected experts. */
+    for (int expert = 0; expert < XE_EXPERTS; expert++)
+        ok &= probabilities[expert] == 1.0f / XE_EXPERTS;
+    for (int slot = 0; slot < XE_EXPERTS_USED; slot++) {
+        ok &= s.experts[slot] == slot && s.expert_weights[slot] == 0.125f;
+        ok &= s.expert_trace[3][slot] == slot
+              && s.expert_weight_trace[3][slot] == 0.125f;
+        ok &= s.expert_trace[2][slot] == -1;
+    }
+    static const int high[] = {17, 29, 63, 127};
+    static const int low[] = {0, 1, 3, 4, 6, 9, 12, 15};
+    static const int selected[] = {17, 29, 63, 127, 0, 1, 3, 4};
+    /* Four logits0, eight logits-log(2), all others -infinity: unnormalized
+     * masses4*1 + 8*0.5=8, selected mass4*1 + 4*0.5=6.
+     * This float argument's correctly rounded expf is exactly0.5. */
+    const float half_logit = -0x1.62e43p-1f;
+    ok &= expf(half_logit) == 0.5f;
+    for (int expert = 0; expert < XE_EXPERTS; expert++) {
+        int coordinate = (expert * 19 + 37) % XE_EMBD;
+        float logit = -INFINITY;
+        for (size_t j = 0; j < sizeof high / sizeof high[0]; j++)
+            if (expert == high[j]) logit = 0.0f;
+        for (size_t j = 0; j < sizeof low / sizeof low[0]; j++)
+            if (expert == low[j]) logit = half_logit;
+        weights[(size_t)expert * XE_EMBD + coordinate] = logit;
+    }
+    xe_router(&s, &layer, 5);
+    for (int expert = 0; expert < XE_EXPERTS; expert++) {
+        float expected = 0.0f;
+        for (size_t j = 0; j < sizeof high / sizeof high[0]; j++)
+            if (expert == high[j]) expected = 0.125f;
+        for (size_t j = 0; j < sizeof low / sizeof low[0]; j++)
+            if (expert == low[j]) expected = 0.0625f;
+        ok &= probabilities[expert] == expected;
+    }
+    for (int slot = 0; slot < XE_EXPERTS_USED; slot++) {
+        float expected_weight = slot < 4 ? 1.0f/6.0f : 1.0f/12.0f;
+        ok &= s.experts[slot] == selected[slot]
+              && s.expert_weights[slot] == expected_weight;
+        ok &= s.expert_trace[5][slot] == selected[slot]
+              && s.expert_weight_trace[5][slot] == expected_weight;
+        ok &= s.expert_trace[3][slot] == slot
+              && s.expert_weight_trace[3][slot] == 0.125f;
+    }
+    free(weights);
+    printf("decode: CPU router analytic uniform/nonuniform/ties/weights/traces %s\n",
+           ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 static void observer_fixture(void *user, int layer, int position,
                              const float *hidden, int count) {
     (void)user; (void)layer; (void)position; (void)hidden; (void)count;
@@ -357,6 +423,7 @@ int main(void) {
     ok = test_gelu_contract() && ok;
     ok = test_norm_rope() && ok;
     ok = test_sampler() && ok;
+    ok = test_router_contract() && ok;
     ok = test_observer_registration() && ok;
     return ok ? 0 : 1;
 }
