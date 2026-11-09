@@ -261,6 +261,8 @@ int main(int argc, char **argv) {
     large_mode = argc == 2;
 
     xe_engine e = {.context = large_mode ? 65536 : 2049, .pool_initialized = 1, .owner = pthread_self(), .scalar_rms = 1};
+    /* Match the snapshot fixture's fixed identity without probing host CPUs. */
+    e.worker_count = XE_WORKERS;
     xe_session s = {.engine = &e};
     s.tokens = calloc((size_t)e.context, sizeof *s.tokens); s.logits = calloc(XE_VOCAB, sizeof *s.logits);
     s.swa_k = calloc(XE_SWA_SLAB_ELEMS, sizeof *s.swa_k); s.swa_v = calloc(XE_SWA_SLAB_ELEMS, sizeof *s.swa_v);
@@ -354,6 +356,7 @@ int main(int argc, char **argv) {
 
     clear_cache(&store);
 done:
+    CHECK(e.worker_count == XE_WORKERS && e.worker_cpus == NULL);
     kvstore_close(store);
     char lock[4200]; snprintf(lock, sizeof lock, "%s/.lock", path); CHECK(unlink(lock) == 0); CHECK(rmdir(path) == 0);
     free(s.tokens); free(s.logits); free(s.swa_k); free(s.swa_v); free(s.global_k); free(s.global_v);

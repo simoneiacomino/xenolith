@@ -10,28 +10,27 @@ permissions:
   contents: read
 
 jobs:
-  host-cli:
+  engine-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install engine build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            build-essential binutils git python3 libze-dev
-      - name: Build host CLI with a non-inference kernel placeholder
-        run: |
-          # These CLI checks never initialize a kernel. Keep the build independent
-          # of ocloc and GPU hardware; inference requires a real compiled kernel.
-          printf '\003\002\043\007' > xenolith_gpu.spv
-          make xenolith_gpu_spv.o
-      - name: Check config, installation, and mocked device behavior
+            build-essential binutils git python3 libze-dev intel-ocloc libigdfcl1 libigc1
+      - name: Compile engine and kernels; run host checks
         run: |
           baseline=$(python3 -c 'import sys; sys.path.insert(0, "installer/tools"); from build_baseline import ENGINE_CFLAGS; print(ENGINE_CFLAGS)')
-          make BASE_CFLAGS="$baseline" check-config check-install check-devices
+          make OCLOC_DEVICE=tgllp BASE_CFLAGS="$baseline" check-host
+      - name: Check snapshots written by historical engine versions
+        run: |
+          baseline=$(python3 -c 'import sys; sys.path.insert(0, "installer/tools"); from build_baseline import ENGINE_CFLAGS; print(ENGINE_CFLAGS)')
+          make OCLOC_DEVICE=tgllp BASE_CFLAGS="$baseline" check-snapshot-compat
 
   installer:
     runs-on: ubuntu-24.04
