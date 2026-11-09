@@ -65,7 +65,7 @@ def main():
         tmp = Path(tmp)
 
         def compile_fixture(name, source, commit, numeric_hash, cflags_hash, compiler=None,
-                            fixture="snapshot_compat_fixture.c", kernel=gpu_object):
+                            fixture="snapshot_compat_fixture.c", kernel=gpu_object, legacy=False):
             output = tmp / name
             defines = {
                 "SNAPSHOT_ENGINE_SOURCE": str(source / "xenolith.c"),
@@ -75,6 +75,8 @@ def main():
             }
             command = shlex.split(args.cc) + shlex.split(args.base_cflags)
             command += ["-ffunction-sections", "-fdata-sections"]
+            if legacy:
+                command += ["-DSNAPSHOT_LEGACY_ENGINE"]
             command += [f'-D{key}="{value}"' for key, value in defines.items()]
             if compiler:
                 command += ["-U__VERSION__", f'-D__VERSION__="{compiler}"']
@@ -208,7 +210,8 @@ def main():
                          "xenolith_gpu_spv.o"], cwd=legacy)
                     legacy_kernel = legacy / "xenolith_gpu_spv.o"
                 old = compile_fixture(f"metadata-v{version}-writer", legacy, commit[:9],
-                                      source_hash(legacy), flags_hash, kernel=legacy_kernel)
+                                      source_hash(legacy), flags_hash,
+                                      kernel=legacy_kernel, legacy=True)
                 saved = tmp / f"metadata-v{version}.xkv"
                 exercise(old, "write", saved)
                 legacy_bytes = saved.read_bytes()

@@ -58,6 +58,11 @@ int main(int argc, char **argv) {
     CHECK(capacity >= 64 && capacity <= 4097 && n > 0 && n <= capacity);
     xe_engine engine = {.context = capacity, .pool_initialized = 1,
                         .owner = pthread_self(), .scalar_rms = 1};
+#ifndef SNAPSHOT_LEGACY_ENGINE
+    /* Snapshot identities need a worker count, not CPU discovery or a live pool.
+     * Historical engines already use the fixed XE_WORKERS count. */
+    engine.worker_count = XE_WORKERS;
+#endif
     /* Synthetic header/payload bytes exercise model identity independently of
      * GPU inference and GGUF schema validation, also with historical writers. */
     const char *model_path = getenv("SNAPSHOT_MODEL_FILE");
@@ -117,6 +122,9 @@ int main(int argc, char **argv) {
          * after first use, preparation must not access model bytes again. */
         xe_snapshot_fingerprints_init(&engine);
     }
+#ifndef SNAPSHOT_LEGACY_ENGINE
+    CHECK(engine.worker_count == XE_WORKERS && engine.worker_cpus == NULL);
+#endif
     CHECK(fclose(file) == 0);
     free(s.tokens); free(s.logits);
     free(s.swa_k); free(s.swa_v); free(s.global_k); free(s.global_v);
