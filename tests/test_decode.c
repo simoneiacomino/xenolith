@@ -328,6 +328,27 @@ static int test_sampler(void) {
     return ok;
 }
 
+static void observer_fixture(void *user, int layer, int position,
+                             const float *hidden, int count) {
+    (void)user; (void)layer; (void)position; (void)hidden; (void)count;
+}
+
+static int test_observer_registration(void) {
+    xe_engine e = { .pool_initialized = 1, .owner = pthread_self() };
+    xe_session s = { .engine = &e };
+    int user = 17;
+    xe_session_set_layer_observer(&s, observer_fixture, &user);
+    int ok = s.layer_observer == observer_fixture && s.layer_observer_user == &user;
+    s.n_tokens = 7;
+    xe_session_reset(&s);
+    ok &= s.n_tokens == 0 && s.layer_observer == observer_fixture
+          && s.layer_observer_user == &user;
+    xe_session_set_layer_observer(&s, NULL, NULL);
+    ok &= !s.layer_observer && !s.layer_observer_user;
+    printf("decode: observer registration/reset/disable %s\n", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 int main(void) {
     int ok = 1;
     ok = test_q8_contract() && ok;
@@ -336,5 +357,6 @@ int main(void) {
     ok = test_gelu_contract() && ok;
     ok = test_norm_rope() && ok;
     ok = test_sampler() && ok;
+    ok = test_observer_registration() && ok;
     return ok ? 0 : 1;
 }

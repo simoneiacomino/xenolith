@@ -329,6 +329,8 @@ static int xe_session_rewind_input(xe_session *s, int position);
 
 struct xe_session {
     xe_engine *engine;
+    xe_layer_observer layer_observer;
+    void *layer_observer_user;
     _Float16 *swa_k;
     _Float16 *swa_v;
     _Float16 *swa_spare_k;
@@ -5355,6 +5357,13 @@ static void xe_prefill_batch_append_input(xe_session *s,
             tile.hidden[1] += (size_t)start * XE_EMBD;
             xe_prefill_ffn_append(e, layer, &tile, tile_rows);
         }
+        if (s->layer_observer) {
+            xe_ze_check("layer observer synchronize",
+                        zeCommandListHostSynchronize(e->gpu.commands, UINT64_MAX));
+            for (int row = 0; row < rows; row++)
+                s->layer_observer(s->layer_observer_user, layer, batch_start + row,
+                                 w.hidden[1] + (size_t)row * XE_EMBD, XE_EMBD);
+        }
         float *hidden = w.hidden[0];
         w.hidden[0] = w.hidden[1];
         w.hidden[1] = hidden;
@@ -5426,6 +5435,8 @@ static void xe_decode_token_mode(xe_session *s, int32_t token, int pos,
     for (int layer = 0; layer < XE_LAYERS; layer++) {
         xe_attention_half_decode(s, layer, pos);
         xe_ffn_half_decode(s, layer, moe_mode, overlap_router);
+        if (s->layer_observer)
+            s->layer_observer(s->layer_observer_user, layer, pos, s->hidden, XE_EMBD);
     }
     if (output_logits) xe_output_decode(s, softcap_mode);
 #ifdef XE_BENCH_TG_PROFILE
@@ -7166,6 +7177,14 @@ const char *xe_snapshot_status_name(xe_snapshot_status status) {
     };
     return (unsigned)status < sizeof names / sizeof names[0]
            ? names[status] : "unknown";
+}
+
+
+void xe_session_set_layer_observer(xe_session *s, xe_layer_observer observer,
+                                   void *user) {
+    xe_require_owner(s->engine);
+    s->layer_observer = observer;
+    s->layer_observer_user = user;
 }
 
 static const float ref_kq_scale = 1.0f;
