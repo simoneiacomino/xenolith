@@ -118,6 +118,8 @@ int main(int argc, char **argv) {
 
     CHECK(profile_reasoning_prefix_valid("  È un prefisso.\n"));
     CHECK(!profile_reasoning_prefix_valid("<channel|>"));
+    CHECK(!profile_reasoning_prefix_valid("<bos>"));
+    CHECK(!profile_reasoning_prefix_valid("<eos>"));
     CHECK(!profile_reasoning_prefix_valid("\xc0\x80"));
     profile_render prefixed;
     CHECK(profile_render_reasoning_prefix(p,"  È un prefisso.\n",PROFILE_TURN_PADDED,&prefixed) == PROFILE_OK);

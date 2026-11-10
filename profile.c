@@ -848,7 +848,8 @@ profile_status profile_render_reply_open(profile *p, uint32_t turn,
 int profile_reasoning_prefix_valid(const char *prefix) {
     if (!prefix) return 1;
     size_t n = strlen(prefix);
-    if (n > 4096 || strstr(prefix, "<|") || strstr(prefix, "|>")) return 0;
+    if (n > 4096 || strstr(prefix, "<|") || strstr(prefix, "|>") ||
+        strstr(prefix,"<bos>") || strstr(prefix,"<eos>") || strstr(prefix,"<pad>")) return 0;
     const unsigned char *s = (const unsigned char *)prefix;
     for (size_t i = 0; i < n;) {
         unsigned c = s[i++], cp, need;

@@ -584,7 +584,7 @@ check this capability before sending `reasoning.prefix` in `generate` or
 `ephemeral`. The field is a UTF-8 string, preserved including whitespace, and
 applies only to this request. Omission or an empty string requests no new prefix.
 It is not an inherited generation setting. NUL, invalid UTF-8, model framing
-sequences (`<|` or `|>`) and values over 4096 bytes are rejected.
+sequences (`<|`, `|>`, `<bos>`, `<eos>` or `<pad>`) and values over 4096 bytes are rejected.
 
 ```json
 {"op":"generate","reasoning":{"effort":"high","prefix":"First identify the assumptions.\n"}}
