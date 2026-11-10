@@ -634,3 +634,10 @@ main.o: CFLAGS += -DXE_CAPTURE_SOURCE_HASH='"$(shell sha256sum main.c profile.c 
 
 tests/test_steering_ffn_gpu: tests/test_steering_ffn_gpu.c tests/steering_fixture.h $(NUMERIC_SOURCES) format.o steering.o json.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
 	$(CC) $(CFLAGS) -I. -o $@ $< format.o steering.o json.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+
+# Native model/session checks for text reasoning prefixes.
+check-reasoning-prefix: require-model xenolith tests/test_profile tests/test_runtime
+	./tests/test_profile "$(MODEL)"
+	./tests/test_runtime "$(MODEL)"
+	python3 tests/check_reasoning_prefix.py --xenolith ./xenolith --model "$(MODEL)"
+.PHONY: check-reasoning-prefix

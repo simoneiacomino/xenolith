@@ -63,6 +63,7 @@ struct profile {
     size_t run_length;
     size_t run_capacity;
     int failed;
+    int exact_reasoning;
 
     int state;
     int in_string;
@@ -277,6 +278,7 @@ static profile_status prof_finish(profile *p, profile_render *out) {
     out->render_length = p->render_length;
     out->tokens = p->tokens;
     out->token_count = p->token_count;
+    out->reasoning_prefix_tokens = 0;
     return PROFILE_OK;
 }
 
@@ -746,6 +748,21 @@ static profile_status prof_model_open(profile *p, uint32_t turn) {
     return PROFILE_OK;
 }
 
+profile_status profile_render_assistant_exact(profile *p, const char *reasoning,
+                                        int reasoning_complete,
+                                        const char *text,
+                                        const profile_call *calls,
+                                        size_t call_count, uint32_t turn,
+                                        int turn_complete,
+                                        profile_render *out) {
+    if (!p) return PROFILE_INVALID_ARGUMENT;
+    p->exact_reasoning = 1;
+    profile_status status = profile_render_assistant(p,reasoning,reasoning_complete,text,
+                                                     calls,call_count,turn,turn_complete,out);
+    p->exact_reasoning = 0;
+    return status;
+}
+
 profile_status profile_render_assistant(profile *p, const char *reasoning,
                                         int reasoning_complete,
                                         const char *text,
@@ -763,7 +780,8 @@ profile_status profile_render_assistant(profile *p, const char *reasoning,
     if (reasoning) {
         const char *begin;
         size_t length;
-        prof_trim(reasoning, &begin, &length);
+        if (p->exact_reasoning) { begin=reasoning; length=strlen(reasoning); }
+        else prof_trim(reasoning, &begin, &length);
         if (!prof_marker(p, PROFILE_ID_CHANNEL_BEGIN) ||
             !prof_run_text(p, "thought\n") ||
             !prof_run_put(p, begin, length))
@@ -824,6 +842,42 @@ profile_status profile_render_reply_open(profile *p, uint32_t turn,
             return PROFILE_NOMEM;
     }
     return prof_finish(p, out);
+}
+
+/* Prefixes are plain UTF-8 text; framing is supplied only by the profile. */
+int profile_reasoning_prefix_valid(const char *prefix) {
+    if (!prefix) return 1;
+    size_t n = strlen(prefix);
+    if (n > 4096 || strstr(prefix, "<|") || strstr(prefix, "|>")) return 0;
+    const unsigned char *s = (const unsigned char *)prefix;
+    for (size_t i = 0; i < n;) {
+        unsigned c = s[i++], cp, need;
+        if (c < 0x80) continue;
+        if (c >= 0xc2 && c <= 0xdf) { cp=c&31; need=1; }
+        else if (c >= 0xe0 && c <= 0xef) { cp=c&15; need=2; }
+        else if (c >= 0xf0 && c <= 0xf4) { cp=c&7; need=3; }
+        else return 0;
+        unsigned count=need;
+        while (need--) { if(i>=n || (s[i]&0xc0)!=0x80)return 0; cp=(cp<<6)|(s[i++]&63); }
+        if ((count==2 && cp<0x800) || (count==3 && cp<0x10000) ||
+            cp>0x10ffff || (cp>=0xd800 && cp<=0xdfff)) return 0;
+    }
+    return 1;
+}
+
+profile_status profile_render_reasoning_prefix(profile *p, const char *prefix,
+                                               uint32_t turn, profile_render *out) {
+    if (!p || !out || !prefix || !*prefix || turn == PROFILE_TURN_OPEN ||
+        !profile_reasoning_prefix_valid(prefix)) return PROFILE_INVALID_ARGUMENT;
+    prof_begin(p);
+    profile_status status = prof_model_open(p, turn);
+    if (status != PROFILE_OK) return status;
+    if (!prof_marker(p, PROFILE_ID_CHANNEL_BEGIN) || !prof_run_text(p,"thought\n") || !prof_flush(p)) return PROFILE_NOMEM;
+    uint32_t framing = p->token_count;
+    if (!prof_run_text(p,prefix)) return PROFILE_NOMEM;
+    status = prof_finish(p,out);
+    if (status == PROFILE_OK) out->reasoning_prefix_tokens = out->token_count - framing;
+    return status;
 }
 
 void profile_parser_reset(profile *p, int reasoning_open) {

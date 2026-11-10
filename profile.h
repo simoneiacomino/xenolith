@@ -53,6 +53,7 @@ typedef struct {
     uint64_t render_length;
     const int32_t *tokens;
     uint32_t token_count;
+    uint32_t reasoning_prefix_tokens;
 } profile_render;
 
 profile_status profile_open(profile **out, const xe_engine *engine);
@@ -75,6 +76,13 @@ profile_status profile_render_tool_result(profile *p, const char *name,
                                           const char *value,
                                           profile_render *out);
 profile_status profile_render_assistant(profile *p, const char *reasoning,
+                                        int reasoning_complete,
+                                        const char *text,
+                                        const profile_call *calls,
+                                        size_t call_count, uint32_t turn,
+                                        int turn_complete,
+                                        profile_render *out);
+profile_status profile_render_assistant_exact(profile *p, const char *reasoning,
                                         int reasoning_complete,
                                         const char *text,
                                         const profile_call *calls,
@@ -109,6 +117,10 @@ typedef struct {
     uint32_t stop_reason;
     int include_token;
 } profile_parse_event;
+
+profile_status profile_render_reasoning_prefix(profile *p, const char *prefix,
+                                               uint32_t turn, profile_render *out);
+int profile_reasoning_prefix_valid(const char *prefix);
 
 void profile_parser_reset(profile *p, int reasoning_open);
 profile_status profile_parser_feed(profile *p, int32_t token,

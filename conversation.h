@@ -122,6 +122,8 @@ typedef struct {
 typedef struct {
     uint64_t generation_id;
     conversation_settings settings;
+    const char *reasoning_prefix;
+    uint32_t preserve_raw_reasoning;
 } conversation_generation;
 
 typedef struct {
@@ -153,6 +155,9 @@ typedef struct {
     uint32_t raw_token_count;
     const uint8_t *reasoning;
     uint64_t reasoning_length;
+    const uint8_t *reasoning_prefix;
+    uint64_t reasoning_prefix_length;
+    uint32_t preserve_raw_reasoning;
     uint32_t reasoning_close;
     conversation_settings settings;
     uint64_t generation_id;
@@ -221,6 +226,15 @@ conversation_status conversation_append_message_variants(
     const int32_t *alternate_tokens, uint32_t alternate_token_count,
     const void *reasoning, uint64_t reasoning_length,
     uint32_t reasoning_close);
+conversation_status conversation_append_message_variants_prefix(
+    conversation *c, uint32_t role,
+    const conversation_block *blocks, uint32_t block_count,
+    const void *render, uint64_t render_length,
+    const int32_t *tokens, uint32_t token_count,
+    const void *alternate_render, uint64_t alternate_render_length,
+    const int32_t *alternate_tokens, uint32_t alternate_token_count,
+    const void *reasoning, uint64_t reasoning_length,
+    uint32_t reasoning_close, const char *reasoning_prefix);
 conversation_status conversation_append_generation_started(
     conversation *c, const conversation_generation *generation);
 conversation_status conversation_append_generation_result(

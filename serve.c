@@ -636,6 +636,12 @@ static int serve_messages_parse(serve *s,const json_value *request,
         } else if (!strcmp(role, "assistant")) {
             m->kind = RUNTIME_MESSAGE_ASSISTANT;
             m->reasoning = serve_str(v, "reasoning");
+            const json_value *prefix_field = json_member(v,"reasoning_prefix");
+            if (prefix_field && (prefix_field->type != JSON_STRING ||
+                memchr(prefix_field->text,0,prefix_field->text_length))) return 0;
+            m->reasoning_prefix = serve_str(v,"reasoning_prefix");
+            if (m->reasoning_prefix && (!profile_reasoning_prefix_valid(m->reasoning_prefix) ||
+                !m->reasoning || strncmp(m->reasoning,m->reasoning_prefix,strlen(m->reasoning_prefix)))) return 0;
             const json_value *calls = json_member(v, "calls");
             if (calls && calls->type == JSON_ARRAY && calls->child) {
                 m->calls = &out->calls[call_at];
@@ -733,6 +739,12 @@ static int serve_params_parse(const json_value *request,
         params->reasoning_effort = CONVERSATION_REASONING_MAX;
     else
         return 0;
+    const json_value *prefix = json_member(v,"prefix");
+    if (prefix) {
+        if (prefix->type != JSON_STRING || memchr(prefix->text,0,prefix->text_length) ||
+            !profile_reasoning_prefix_valid(prefix->text)) return 0;
+        params->reasoning_prefix = prefix->text;
+    }
     const json_value *budget = json_member(v, "budget_tokens");
     if (budget) {
         if (budget->type != JSON_NUMBER || budget->number < 0 ||
@@ -838,7 +850,14 @@ static void serve_emit_event(serve *s, serve_conn *c,
     json_writer_reset(out);
     switch (event->kind) {
     case RUNTIME_EVENT_START:
-        json_raw(out, "{\"event\":\"start\"}");
+        json_raw(out, "{\"event\":\"start\"");
+        if (event->reasoning_prefix_length) {
+            json_raw(out,",\"reasoning_prefix\":");
+            json_string(out,event->reasoning_prefix,event->reasoning_prefix_length);
+            json_raw(out,",\"reasoning_prefix_tokens\":");
+            json_u64(out,event->usage.reasoning_prefix);
+        }
+        json_raw(out,"}");
         break;
     case RUNTIME_EVENT_INFERENCE_PROGRESS:
         json_raw(out, "{\"event\":\"inference_progress\",\"phase\":\"");
@@ -890,6 +909,8 @@ static void serve_emit_event(serve *s, serve_conn *c,
         json_u64(out, event->usage.output);
         json_raw(out, ",\"reasoning\":");
         json_u64(out, event->usage.reasoning);
+        json_raw(out,",\"reasoning_prefix\":");
+        json_u64(out,event->usage.reasoning_prefix);
         json_raw(out, ",\"replayed\":");
         json_u64(out, event->usage.replayed);
         json_raw(out, ",\"shadow_prefilled\":");
@@ -995,7 +1016,7 @@ static int serve_dispatch(serve *s, serve_conn *c,
         json_raw(out, ",\"reasoning\":{\"efforts\":[\"low\","
                       "\"medium\",\"high\",\"max\"],\"history\":["
                       "\"discard\",\"preserve_tool_calls\"],"
-                      "\"budget_tokens\":true}");
+                      "\"budget_tokens\":true,\"prefix\":{\"max_bytes\":4096}}");
         json_raw(out, "}");
         serve_emit(s, c);
         return 0;
@@ -1390,6 +1411,10 @@ static int serve_dispatch(serve *s, serve_conn *c,
             json_string(out, entry.text ? entry.text : "",
                         entry.text_length);
             if(entry.image)serve_image_description(out,&entry);
+            if (entry.reasoning_prefix_length) {
+                json_raw(out,",\"reasoning_prefix\":");
+                json_string(out,entry.reasoning_prefix,entry.reasoning_prefix_length);
+            }
             if (entry.reasoning) {
                 json_raw(out, ",\"reasoning\":");
                 json_string(out, entry.reasoning,

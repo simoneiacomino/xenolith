@@ -576,3 +576,38 @@ omission means unsteered. For durable generations use `steer` before `generate`,
 rather than a `steering` field on `generate`. Steering applies to text-only
 sessions in this version; combining it with visual history/input is rejected.
 See [STEERING.md](../STEERING.md) for the artifact contract and numerical semantics.
+
+## Reasoning prefixes
+
+`describe.reasoning.prefix: {"max_bytes":4096}` advertises support. Clients must
+check this capability before sending `reasoning.prefix` in `generate` or
+`ephemeral`. The field is a UTF-8 string, preserved including whitespace, and
+applies only to this request. Omission or an empty string requests no new prefix.
+It is not an inherited generation setting. NUL, invalid UTF-8, model framing
+sequences (`<|` or `|>`) and values over 4096 bytes are rejected.
+
+```json
+{"op":"generate","reasoning":{"effort":"high","prefix":"First identify the assumptions.\n"}}
+```
+
+A nonempty prefix requires thinking and a fresh user turn. It is rejected on
+continuation after a tool or an interrupted assistant segment. The engine opens
+`thought`, prefills the prefix, and samples only its continuation. Context
+overflow is rejected without truncation. Prefix tokens occupy input context;
+`max_tokens`, `budget_tokens`, `usage.output` and `usage.reasoning` count generated
+tokens. `usage.reasoning_prefix` reports prefix text tokens (excluding framing),
+already accounted for in input/cache context, not an additional usage total.
+
+The `start` event includes `reasoning_prefix` and `reasoning_prefix_tokens` when
+present. `reasoning_delta` contains only generated continuation. History contains
+the complete `reasoning` and a separate `reasoning_prefix` indicating its supplied
+initial segment. Clients importing assistant messages with `rebuild` can retain
+this provenance using the same field; it must match the beginning of `reasoning`.
+The prefix follows existing reasoning-history projection policies.
+
+Cancellation preserves the logical prefix even before prefill completes. Resume
+continues the existing segment without reinjection. A process crash before a
+result is committed rolls back to the user boundary and reuses the prefix recorded
+at generation start; a conflicting replacement is rejected. Rewind removes the
+prefix with its discarded branch. New prefix records contain critical fields,
+so older engines reject them rather than silently losing their meaning.

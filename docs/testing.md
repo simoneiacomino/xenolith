@@ -369,3 +369,11 @@ dumps with `python3 tools/vision_compare.py REFERENCE_DIR CANDIDATE_DIR --output
 its default checks all 30 selected stages with fixed RMS/cosine limits.
 The decoder oracle accepts `MODEL IDS EMBEDDING START ROWS CONTEXT OUTPUT_PREFIX`;
 use the same prompt/span and projected rows as the candidate.
+
+## Reasoning prefixes
+
+`make check-reasoning-prefix MODEL=/path/to/model.gguf` checks profile rendering,
+plain UTF-8 validation, generated-token accounting, continuation without duplicate
+framing, cold replay, reopen, rewind, cancellation before prefill, crash recovery,
+rebuild provenance and ephemeral isolation. It requires the supported Linux/Intel
+runtime and model. Xenopi command and adapter checks run in its own `npm test`.

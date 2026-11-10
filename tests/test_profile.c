@@ -116,6 +116,16 @@ int main(int argc, char **argv) {
     if (!p) return 1;
     CHECK(strcmp(profile_model(p), "gemma-4-26B-A4B-it-qat") == 0);
 
+    CHECK(profile_reasoning_prefix_valid("  È un prefisso.\n"));
+    CHECK(!profile_reasoning_prefix_valid("<channel|>"));
+    CHECK(!profile_reasoning_prefix_valid("\xc0\x80"));
+    profile_render prefixed;
+    CHECK(profile_render_reasoning_prefix(p,"  È un prefisso.\n",PROFILE_TURN_PADDED,&prefixed) == PROFILE_OK);
+    CHECK(prefixed.reasoning_prefix_tokens > 0);
+    CHECK(prefixed.render_length >= strlen("  È un prefisso.\n"));
+    CHECK(!memcmp(prefixed.render + prefixed.render_length - strlen("  È un prefisso.\n"),
+                  "  È un prefisso.\n",strlen("  È un prefisso.\n")));
+
     profile_reasoning_policy policy;
     CHECK(profile_get_reasoning_policy(
               p, PROFILE_REASONING_LOW, -1, 1000, 2000, &policy) ==
