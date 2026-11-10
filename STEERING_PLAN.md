@@ -1,3 +1,7 @@
+> Historical implementation plan. The legacy oracle described below was removed
+> by numerical validation PR #14. Current diagnostics use native session layer
+> observers and Google FP64 comparisons; see [STEERING.md](STEERING.md).
+
 # Activation steering implementation plan
 
 Status: implementation complete as an experimental feature. The bundled

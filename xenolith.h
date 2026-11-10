@@ -133,7 +133,8 @@ const char *xe_chat_template(const xe_engine *e, uint64_t *length);
 
 /* Optional diagnostic observation of the real execution path after each layer.
  * hidden contains count floats, borrowed until callback returns; position is
- * absolute. Callbacks must not mutate data or reenter engine/session APIs.
+ * absolute. Observations include active FFN and residual steering interventions.
+ * Callbacks must not mutate data or reenter engine/session APIs.
  * Prefill observations synchronize the GPU and can substantially affect timing.
  * Registration survives reset/rewind, is not inherited by new shadow sessions,
  * and is not snapshot state. Keep user valid until disabling or session free.

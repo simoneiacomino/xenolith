@@ -7451,4 +7451,3 @@ void xe_session_set_layer_observer(xe_session *s, xe_layer_observer observer,
     s->layer_observer = observer;
     s->layer_observer_user = user;
 }
-

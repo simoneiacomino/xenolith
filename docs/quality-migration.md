@@ -5,7 +5,7 @@ The following API, CLI and test changes affect existing integrations.
 
 | Previous entry point | Replacement |
 | --- | --- |
-| `xenolith oracle`, `xe_oracle` | Use the session API for inference and `xe-quality` for full-vocabulary reference comparisons. The removed C API has no compatibility wrapper. |
+| `xenolith oracle`, `xe_oracle`, `xe_oracle_steered` | Use the session API for inference and `xe-quality` for full-vocabulary reference comparisons. The removed C API has no compatibility wrapper. |
 | `certify` numerical stage | Use a qualified reference archive and an explicit acceptance policy. The former RMS 0.6 bound is not a KL threshold. |
 | `certify` tokenizer/template stages | Run `tests/test_tokenizer_model` with a model path or `XENOLITH_MODEL`; it checks vocabulary fixtures, prompt IDs, byte roundtrips and chat templates. |
 | `make golden` | Prepare new corpora explicitly with `xe_quality.tokenize_panel`. Existing token fixtures remain unchanged; tests do not regenerate expectations. |
@@ -31,7 +31,8 @@ passing text fidelity checks does not qualify vision inference.
 ## Observer and snapshot compatibility
 
 The layer observer is disabled by default and receives borrowed hidden-state
-rows at absolute token positions. Callbacks must not mutate the data or reenter
+rows at absolute token positions, after active FFN and residual steering
+interventions. Callbacks must not mutate the data or reenter
 the engine. Registration survives reset/rewind, is not inherited by a shadow,
 and is not serialized. GPU observations synchronize execution and must be
 disabled for throughput measurements.

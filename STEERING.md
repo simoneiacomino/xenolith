@@ -120,8 +120,19 @@ validation and is not automatically a useful direction.
 Use `chat` or the wire service for the model's chat template. During interactive
 chat, `/steer F` changes the loaded vector's strength and `/steer off` disables
 new interventions. Loading a different artifact in a durable session is
-available through the service. The oracle accepts the same steering options
-for numerical reference work.
+available through the service. Numerical diagnostics use the native session API
+and the [Google FP64 comparison workflow](docs/testing.md#numerical-fidelity).
+The legacy `oracle` command and `xe_oracle_steered` API have been removed.
+Register `xe_session_set_layer_observer` on a steered session to inspect layer
+outputs after both FFN and residual interventions.
+
+The standard quality driver evaluates the unsteered engine against frozen Google
+logits. Its fixture gate compares equally weighted mean-family
+`KL(Google || Xenolith)` with the explicitly selected Vulkan baseline. The former
+RMS bounds are not KL thresholds. Nonzero steering intentionally changes the
+model distribution; evaluate its numerical implementation with the steering
+operator/session tests and its behavior with the paired evaluations below.
+An unsteered-reference KL score alone does not measure steering effectiveness.
 
 For instruction-following questions, use `chat`, which renders the conversational
 template. Text-only `run -p` performs raw completion of the literal prompt.

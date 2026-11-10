@@ -1,6 +1,15 @@
 #include "../xenolith.c"
 #include "steering_fixture.h"
 
+/* Observe the state passed to the next layer/output, including steering. */
+typedef struct { int calls; float last[XE_EMBD]; } steering_observation;
+static void observe_steering(void *user,int layer,int position,const float *hidden,int width){
+    steering_observation *o=user;
+    assert(layer>=0&&layer<XE_LAYERS&&position>=0&&width==XE_EMBD);
+    o->calls++;
+    if(layer==XE_LAYERS-1)memcpy(o->last,hidden,sizeof o->last);
+}
+
 int main(int argc,char **argv){
     if(argc!=2){fprintf(stderr,"usage: %s MODEL.gguf\n",argv[0]);return 2;}
     xe_engine *e=xe_engine_open_cached(argv[1],1024);
@@ -40,7 +49,11 @@ int main(int argc,char **argv){
         assert(xe_session_steering_set(b,v,0));
     }
     int32_t ids[12];for(int i=0;i<12;i++)ids[i]=i+2;
+    steering_observation observed={0};
+    xe_session_set_layer_observer(a,observe_steering,&observed);
     xe_tokens prefix={ids,8,12};xe_session_sync(a,&prefix);xe_session_sync(b,&prefix);
+    assert(observed.calls==8*XE_LAYERS);
+    assert(!memcmp(observed.last,a->hidden,sizeof observed.last));
     assert(!memcmp(a->logits,b->logits,XE_VOCAB*sizeof(float)));
     assert(!memcmp(a->hidden,b->hidden,XE_EMBD*sizeof(float)));
     if(site==XE_STEERING_FFN){
@@ -52,6 +65,8 @@ int main(int argc,char **argv){
         xe_session_free(capture);
     }
     prefix.len=9;xe_session_sync(a,&prefix);xe_session_sync(b,&prefix);
+    assert(observed.calls==9*XE_LAYERS);
+    assert(!memcmp(observed.last,a->hidden,sizeof observed.last));
     assert(!memcmp(a->logits,b->logits,XE_VOCAB*sizeof(float)));
     assert(!memcmp(a->hidden,b->hidden,XE_EMBD*sizeof(float)));
     float *logits=malloc(XE_VOCAB*sizeof *logits);assert(logits);memcpy(logits,a->logits,XE_VOCAB*sizeof *logits);
@@ -64,6 +79,9 @@ int main(int argc,char **argv){
     int x,y;do{x=fgetc(before);y=fgetc(pending);assert(x==y);}while(x!=EOF);
     fclose(before);fclose(pending);
     prefix.len=10;xe_session_sync(a,&prefix);xe_session_sync(b,&prefix);
+    assert(observed.calls==10*XE_LAYERS);
+    assert(!memcmp(observed.last,a->hidden,sizeof observed.last));
+    xe_session_set_layer_observer(a,NULL,NULL);
     assert(memcmp(a->logits,b->logits,XE_VOCAB*sizeof(float)));
     FILE *snapshot=tmpfile();assert(snapshot);assert(xe_session_snapshot_save(a,snapshot)==XE_SNAPSHOT_OK);
     memcpy(logits,b->logits,XE_VOCAB*sizeof *logits);int old=b->n_tokens;
