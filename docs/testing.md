@@ -220,6 +220,23 @@ detect out-of-bounds reads in three temporary mutations: removed ordinary
 tile bound, removed COW tile bound, and removed COW fallback row bound.
 Production sources are never mutated by the check.
 
+On Linux hosts with monitoring libraries injected through `/etc/ld.so.preload`,
+ASan may fail before tests start with `ASan runtime does not come first in initial
+library list`. Run the tests in a private mount namespace using bubblewrap:
+
+```sh
+tools/without_system_preload.sh make check-kv-load-bounds
+tools/without_system_preload.sh make check-host
+```
+
+The wrapper hides the system preload file only inside the test process tree;
+it does not edit the host file or stop the monitoring agent. ASan remains enabled
+and the three deliberately invalid load variants must still be detected. The
+checkout and `/tmp` are writable; system paths are read-only. The wrapper requires
+Linux and a working `bwrap` installation. Explicit `LD_PRELOAD` environment
+settings are retained, including fixtures installed by individual tests.
+
+
 This checks the extracted load footprint; it does not emulate GPU scheduling,
 barriers, subgroup operations or compiler transformations. Unsupported refactors
 (including K-pointer uses outside the extracted block) fail and require review
