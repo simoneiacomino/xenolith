@@ -646,6 +646,6 @@ same rules as reasoning prefixes. A pending generation cannot be retried with a
 different prefix or by switching its destination channel. Response-prefix
 records use critical fields so older engines reject incompatible history.
 
-Xenopi's `/lobotomy` selects `reasoning.prefix` when thinking is enabled and
+Xenopi's `/brainwash` selects `reasoning.prefix` when thinking is enabled and
 `response.prefix` when it is off. The same saved text therefore follows the
 thinking setting on each new user turn.

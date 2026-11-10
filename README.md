@@ -147,7 +147,7 @@ sampling its continuation, retaining its provenance across sessions and replay.
 See [the protocol](docs/protocol.md#reasoning-prefixes) for capability detection,
 limits and accounting. With thinking disabled, `response.prefix` supplies the
 opening text of the visible answer instead. The companion Xenopi command
-`/lobotomy` selects the appropriate channel from the current thinking setting.
+`/brainwash` selects the appropriate channel from the current thinking setting.
 
 ## Experimental activation steering
 
