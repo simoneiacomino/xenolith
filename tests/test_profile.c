@@ -116,6 +116,27 @@ int main(int argc, char **argv) {
     if (!p) return 1;
     CHECK(strcmp(profile_model(p), "gemma-4-26B-A4B-it-qat") == 0);
 
+    CHECK(profile_reasoning_prefix_valid("  È un prefisso.\n"));
+    CHECK(!profile_reasoning_prefix_valid("<channel|>"));
+    CHECK(!profile_reasoning_prefix_valid("<bos>"));
+    CHECK(!profile_reasoning_prefix_valid("<eos>"));
+    CHECK(!profile_reasoning_prefix_valid("\xc0\x80"));
+    profile_render prefixed;
+    CHECK(profile_render_reasoning_prefix(p,"  È un prefisso.\n",PROFILE_TURN_PADDED,&prefixed) == PROFILE_OK);
+    CHECK(prefixed.reasoning_prefix_tokens > 0);
+    CHECK(prefixed.render_length >= strlen("  È un prefisso.\n"));
+    CHECK(!memcmp(prefixed.render + prefixed.render_length - strlen("  È un prefisso.\n"),
+                  "  È un prefisso.\n",strlen("  È un prefisso.\n")));
+
+    CHECK(profile_render_response_prefix(p,"  È la risposta.\n",PROFILE_TURN_PADDED,&prefixed) == PROFILE_OK);
+    CHECK(prefixed.response_prefix_tokens > 0 && prefixed.reasoning_prefix_tokens == 0);
+    CHECK(memcmp(prefixed.render + prefixed.render_length - strlen("  È la risposta.\n"),
+                 "  È la risposta.\n", strlen("  È la risposta.\n")) == 0);
+    check_render(&prefixed,"<|turn>model\n<|channel>thought\n<channel|>  È la risposta.\n",__LINE__);
+    CHECK(profile_render_response_prefix(p,"prefix",PROFILE_TURN_OPEN,&prefixed) == PROFILE_INVALID_ARGUMENT);
+    CHECK(profile_render_assistant_response_exact(p,NULL,1,"  È la risposta.\n",NULL,0,PROFILE_TURN_PADDED,1,&prefixed) == PROFILE_OK);
+    check_render(&prefixed,"<|turn>model\n  È la risposta.\n<turn|>",__LINE__);
+
     profile_reasoning_policy policy;
     CHECK(profile_get_reasoning_policy(
               p, PROFILE_REASONING_LOW, -1, 1000, 2000, &policy) ==

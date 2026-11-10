@@ -208,6 +208,9 @@ typedef struct {
     ze_kernel_handle_t prefill_attn_online_b8_swa_visual;
     ze_kernel_handle_t prefill_heads_q8;
     ze_kernel_handle_t prefill_rms_residual;
+    ze_kernel_handle_t steering;
+    ze_kernel_handle_t steering_ffn_normalize;
+    ze_kernel_handle_t steering_residual_finish;
     ze_kernel_handle_t prefill_swa_stage;
     ze_kernel_handle_t prefill_swa_commit;
     ze_kernel_handle_t prefill_ffn_input_q8;
@@ -232,6 +235,7 @@ typedef struct {
 } xe_gpu;
 
 struct xe_engine {
+    char *steering_directory;
     int context;
     xe_vision_model vision_model;
     void *vision_weights;
@@ -329,6 +333,8 @@ static int xe_session_rewind_input(xe_session *s, int position);
 
 struct xe_session {
     xe_engine *engine;
+    xe_layer_observer layer_observer;
+    void *layer_observer_user;
     _Float16 *swa_k;
     _Float16 *swa_v;
     _Float16 *swa_spare_k;
@@ -387,11 +393,37 @@ struct xe_session {
     int cow;
     int cow_split;
     int cow_capacity;
+    xe_steering_step *steering_steps;
+    float **steering_device;
+    size_t steering_count;
+    float *capture_rows;
+    xe_steering_site capture_site;
     int prefill_pending;
     int prefill_pending_start;
     int prefill_pending_rows;
     float *prefill_pending_hidden;
 };
+
+static int xe_steering_index(const xe_session *s, int position) {
+    int selected = -1;
+    for (size_t i = 0; i < s->steering_count; i++) {
+        if (s->steering_steps[i].position > position) break;
+        selected = (int)i;
+    }
+    return selected;
+}
+
+static void xe_steering_cpu_at(xe_session *s, int layer, int position, float *hidden, xe_steering_site site) {
+    int i = xe_steering_index(s, position);
+    if (i >= 0) {
+        const xe_steering_step *step = &s->steering_steps[i];
+        if(xe_steering_get_site(step->vector)==site)
+            xe_steering_apply(hidden, xe_steering_row(step->vector, layer),
+                             XE_EMBD, xe_steering_get_mode(step->vector), step->strength);
+    }
+    if (s->capture_rows && s->capture_site==site)
+        memcpy(s->capture_rows + (size_t)layer * XE_EMBD, hidden, XE_EMBD * sizeof(float));
+}
 
 static size_t xe_global_layer_elems(const xe_engine *e) {
     return (size_t)XE_GLOBAL_KV_HEADS * e->context * XE_GLOBAL_HEAD_DIM;
@@ -489,7 +521,7 @@ static xe_gpu_status xe_gpu_classify(uint32_t id) {
     switch (id) {
         case 0xa7a0: /* Maintainer's Core i7-13700H. */
         case 0x7d51: /* Core Ultra 7 255H, reported by aziis98 in PR #2. */
-        case 0x64a0: /* Core Ultra 7 268V; Raffaele's WSL report in PR #6, 64k capacity. */
+        case 0x64a0: /* Core Ultra 7 268V; WSL compatibility report in PR #6, 64k capacity. */
         case 0xb080: /* Core Ultra X7 358H / Arc B390; see bench/cpu-workers.md. */
             return XE_GPU_TESTED;
         /* Tiger Lake. */
@@ -821,6 +853,18 @@ static void xe_gpu_init(xe_engine *e) {
                     zeKernelSetGroupSize(*prefill_handles[i],
                                          prefill_group_sizes[i], 1, 1));
     }
+    ze_kernel_desc_t steering_desc = {
+        .stype = ZE_STRUCTURE_TYPE_KERNEL_DESC, .pKernelName = "xe_steering_apply"
+    };
+    xe_ze_check("zeKernelCreate steering", zeKernelCreate(e->gpu.module, &steering_desc, &e->gpu.steering));
+    xe_ze_check("zeKernelSetGroupSize steering", zeKernelSetGroupSize(e->gpu.steering, 128, 1, 1));
+    const char *steering_names[]={"xe_steering_ffn_normalize","xe_steering_residual_finish"};
+    ze_kernel_handle_t *steering_handles[]={&e->gpu.steering_ffn_normalize,&e->gpu.steering_residual_finish};
+    for(int i=0;i<2;i++){
+        steering_desc.pKernelName=steering_names[i];
+        xe_ze_check("zeKernelCreate FFN steering",zeKernelCreate(e->gpu.module,&steering_desc,steering_handles[i]));
+        xe_ze_check("zeKernelSetGroupSize FFN steering",zeKernelSetGroupSize(*steering_handles[i],128,1,1));
+    }
     ze_kernel_desc_t kernel_desc = {
         .stype = ZE_STRUCTURE_TYPE_KERNEL_DESC,
         .pKernelName = "xe_probe"
@@ -915,6 +959,9 @@ static void xe_gpu_destroy(xe_engine *e) {
     if (e->gpu.prefill_swa_stage)
         xe_ze_check("zeKernelDestroy prefill swa stage",
                     zeKernelDestroy(e->gpu.prefill_swa_stage));
+    if (e->gpu.steering) xe_ze_check("zeKernelDestroy steering", zeKernelDestroy(e->gpu.steering));
+    if(e->gpu.steering_ffn_normalize)xe_ze_check("zeKernelDestroy FFN normalize",zeKernelDestroy(e->gpu.steering_ffn_normalize));
+    if(e->gpu.steering_residual_finish)xe_ze_check("zeKernelDestroy residual finish",zeKernelDestroy(e->gpu.steering_residual_finish));
     if (e->gpu.prefill_rms_residual)
         xe_ze_check("zeKernelDestroy prefill rms residual",
                     zeKernelDestroy(e->gpu.prefill_rms_residual));
@@ -4328,6 +4375,7 @@ int xe_engine_vision_numeric_fingerprint(xe_engine *e,uint8_t out[32]) {
 }
 
 void xe_engine_close(xe_engine *e) {
+    if (e) { free(e->steering_directory); e->steering_directory = NULL; }
     if (!e) return;
     xe_worker_pool_destroy(e);
     free(e->worker_cpus);
@@ -5226,7 +5274,7 @@ static void xe_attention_half_decode(xe_session *s, int layer, int pos) {
 #endif
 }
 
-static void xe_ffn_half_decode(xe_session *s, int layer, int moe_mode, int overlap_router) {
+static void xe_ffn_half_decode_at(xe_session *s, int layer, int moe_mode, int overlap_router, int position) {
 #ifdef XE_BENCH_TG_PROFILE
     double profile_start = xe_tg_profile_now();
 #endif
@@ -5261,12 +5309,17 @@ static void xe_ffn_half_decode(xe_session *s, int layer, int moe_mode, int overl
     xe_rmsnorm_engine(s->engine, s->moe_out, l->post_ffw_norm2, XE_EMBD, s->moe_out);
     for (int i = 0; i < XE_EMBD; i++) s->combined[i] = s->dense_out[i] + s->moe_out[i];
     xe_rmsnorm_engine(s->engine, s->combined, l->post_ffw_norm, XE_EMBD, s->combined);
+    xe_steering_cpu_at(s,layer,position,s->combined,XE_STEERING_FFN);
     float out_scale = l->layer_out_scale[0];
     for (int i = 0; i < XE_EMBD; i++)
         s->hidden[i] = (s->combined[i] + s->attn_out[i]) * out_scale;
 #ifdef XE_BENCH_TG_PROFILE
     xe_tg_profile_data.glue += xe_tg_profile_now() - profile_start;
 #endif
+}
+
+static void __attribute__((unused)) xe_ffn_half_decode(xe_session *s, int layer, int moe_mode, int overlap_router) {
+    xe_ffn_half_decode_at(s,layer,moe_mode,overlap_router,s->n_tokens);
 }
 
 typedef struct {
@@ -5321,6 +5374,90 @@ static void xe_output_decode(xe_session *s, int softcap_mode) {
 #endif
 }
 
+static void xe_steering_gpu_at(xe_session *s, int layer, float *hidden,
+                             int rows, int position, xe_steering_site site) {
+    xe_engine *e = s->engine;
+    int start = 0;
+    while (start < rows) {
+        int index = xe_steering_index(s, position + start);
+        int end = rows;
+        if ((size_t)(index + 1) < s->steering_count) {
+            int boundary = s->steering_steps[index + 1].position - position;
+            if (boundary < end) end = boundary;
+        }
+        if (index >= 0) {
+            const xe_steering_step *step = &s->steering_steps[index];
+            if (step->strength != 0 && xe_steering_get_site(step->vector)==site && xe_steering_active(step->vector, layer)) {
+                ze_kernel_handle_t k = e->gpu.steering;
+                float *data = hidden + (size_t)start * XE_EMBD;
+                const float *v = s->steering_device[index] + (size_t)layer * XE_EMBD;
+                xe_gpu_pointer_arg(k, 0, data);
+                xe_gpu_pointer_arg(k, 1, v);
+                xe_gpu_int_arg(k, 2, XE_EMBD);
+                xe_gpu_int_arg(k, 3, xe_steering_get_mode(step->vector));
+                xe_gpu_float_arg(k, 4, step->strength);
+                ze_group_count_t groups = { (uint32_t)(end - start), 1, 1 };
+                xe_ze_check("steering GPU launch", zeCommandListAppendLaunchKernel(
+                    e->gpu.commands, k, &groups, NULL, 0, NULL));
+            }
+        }
+        start = end;
+    }
+    if (s->capture_rows && s->capture_site==site)
+        xe_ze_check("capture layer output", zeCommandListAppendMemoryCopy(e->gpu.commands,
+            s->capture_rows + (size_t)layer * XE_EMBD,
+            hidden + (size_t)(rows - 1) * XE_EMBD, XE_EMBD * sizeof(float), NULL, 0, NULL));
+}
+
+static void xe_steering_gpu(xe_session *s,int layer,float *hidden,int rows,int position) {
+    xe_steering_gpu_at(s,layer,hidden,rows,position,XE_STEERING_RESIDUAL);
+}
+
+/* Recompute the FFN contribution into a scratch buffer. The existing fused
+ * finish and unsteered hidden states remain untouched, including during capture.
+ * Only rows with an active FFN intervention are recomposed with their residual. */
+static void xe_steering_ffn_gpu(xe_session *s,int layer,xe_prefill_workspace *w,int rows,int position) {
+    int needed=s->capture_rows && s->capture_site==XE_STEERING_FFN;
+    if(!needed){int possible=0;
+        for(size_t i=0;i<s->steering_count;i++)if(s->steering_steps[i].strength!=0 &&
+            xe_steering_get_site(s->steering_steps[i].vector)==XE_STEERING_FFN &&
+            xe_steering_active(s->steering_steps[i].vector,layer)){possible=1;break;}
+        if(!possible)return;
+    }
+    for(int row=0;row<rows && !needed;row++) {
+        int i=xe_steering_index(s,position+row);
+        if(i>=0){const xe_steering_step *step=&s->steering_steps[i];
+            needed=step->strength!=0 && xe_steering_get_site(step->vector)==XE_STEERING_FFN && xe_steering_active(step->vector,layer);}
+    }
+    if(!needed)return;
+    xe_engine *e=s->engine;const xe_layer *l=&e->layers[layer];
+    ze_kernel_handle_t k=e->gpu.steering_ffn_normalize;
+    xe_gpu_pointer_arg(k,0,w->dense_down);xe_gpu_pointer_arg(k,1,w->moe_output);
+    xe_gpu_pointer_arg(k,2,l->post_ffw_norm1);xe_gpu_pointer_arg(k,3,l->post_ffw_norm2);
+    xe_gpu_pointer_arg(k,4,l->post_ffw_norm);xe_gpu_int_arg(k,5,rows);
+    xe_gpu_int_arg(k,6,XE_EMBD);xe_gpu_float_arg(k,7,XE_RMS_EPS);
+    ze_group_count_t groups={(uint32_t)rows,1,1};
+    xe_ze_check("FFN capture normalize",zeCommandListAppendLaunchKernel(e->gpu.commands,k,&groups,NULL,0,NULL));
+    xe_steering_gpu_at(s,layer,w->dense_down,rows,position,XE_STEERING_FFN);
+    for(int start=0;start<rows;) {
+        int i=xe_steering_index(s,position+start),end=rows;
+        if((size_t)(i+1)<s->steering_count){int boundary=s->steering_steps[i+1].position-position;if(boundary<end)end=boundary;}
+        if(i>=0){const xe_steering_step *step=&s->steering_steps[i];
+            if(step->strength!=0 && xe_steering_get_site(step->vector)==XE_STEERING_FFN && xe_steering_active(step->vector,layer)) {
+                k=e->gpu.steering_residual_finish;
+                xe_gpu_pointer_arg(k,0,w->dense_down+(size_t)start*XE_EMBD);
+                xe_gpu_pointer_arg(k,1,w->attention_output+(size_t)start*XE_EMBD);
+                xe_gpu_pointer_arg(k,2,l->layer_out_scale);
+                xe_gpu_pointer_arg(k,3,w->hidden[1]+(size_t)start*XE_EMBD);
+                xe_gpu_int_arg(k,4,(end-start)*XE_EMBD);
+                groups.groupCountX=(uint32_t)(((end-start)*XE_EMBD+127)/128);
+                xe_ze_check("FFN steering residual",zeCommandListAppendLaunchKernel(e->gpu.commands,k,&groups,NULL,0,NULL));
+            }
+        }
+        start=end;
+    }
+}
+
 static void xe_prefill_batch_append_input(xe_session *s,
                                         const int32_t *tokens,
                                         int rows, int batch_start, const float *visual,
@@ -5354,6 +5491,15 @@ static void xe_prefill_batch_append_input(xe_session *s,
             tile.attention_output += (size_t)start * XE_EMBD;
             tile.hidden[1] += (size_t)start * XE_EMBD;
             xe_prefill_ffn_append(e, layer, &tile, tile_rows);
+            xe_steering_ffn_gpu(s,layer,&tile,tile_rows,batch_start+start);
+        }
+        xe_steering_gpu(s, layer, w.hidden[1], rows, batch_start);
+        if (s->layer_observer) {
+            xe_ze_check("layer observer synchronize",
+                        zeCommandListHostSynchronize(e->gpu.commands, UINT64_MAX));
+            for (int row = 0; row < rows; row++)
+                s->layer_observer(s->layer_observer_user, layer, batch_start + row,
+                                 w.hidden[1] + (size_t)row * XE_EMBD, XE_EMBD);
         }
         float *hidden = w.hidden[0];
         w.hidden[0] = w.hidden[1];
@@ -5425,7 +5571,10 @@ static void xe_decode_token_mode(xe_session *s, int32_t token, int pos,
     xe_workers_begin(s->engine);
     for (int layer = 0; layer < XE_LAYERS; layer++) {
         xe_attention_half_decode(s, layer, pos);
-        xe_ffn_half_decode(s, layer, moe_mode, overlap_router);
+        xe_ffn_half_decode_at(s, layer, moe_mode, overlap_router, pos);
+        xe_steering_cpu_at(s, layer, pos, s->hidden, XE_STEERING_RESIDUAL);
+        if (s->layer_observer)
+            s->layer_observer(s->layer_observer_user, layer, pos, s->hidden, XE_EMBD);
     }
     if (output_logits) xe_output_decode(s, softcap_mode);
 #ifdef XE_BENCH_TG_PROFILE
@@ -5696,8 +5845,104 @@ xe_session *xe_session_shadow_new(xe_session *source) {
     memcpy(s->hidden, source->hidden, XE_EMBD * sizeof(*s->hidden));
     memcpy(s->logits, source->logits, XE_VOCAB * sizeof(*s->logits));
     s->n_tokens = source->n_tokens;
+    if (!xe_session_steering_schedule(s, source->steering_steps, source->steering_count)) { xe_session_free(s); return NULL; }
+    s->n_tokens = source->n_tokens;
     return s;
 }
+
+int xe_engine_steering_store(xe_engine *e, const char *directory) {
+    struct stat st;
+    if (!e || !directory || stat(directory, &st) || !S_ISDIR(st.st_mode)) return 0;
+    char *copy = strdup(directory); if (!copy) return 0;
+    free(e->steering_directory); e->steering_directory = copy;
+    xe_engine_model_fingerprint(e); return 1;
+}
+const char *xe_engine_steering_directory(const xe_engine *e) { return e ? e->steering_directory : NULL; }
+int xe_engine_layer_count(const xe_engine *e) { return e ? XE_LAYERS : 0; }
+int xe_engine_hidden_width(const xe_engine *e) { return e ? XE_EMBD : 0; }
+
+static void xe_steering_clear(xe_session *s) {
+    for (size_t i = 0; i < s->steering_count; i++) {
+        int shared = 0;
+        for (size_t j = 0; j < i; j++) if (s->steering_device[j] == s->steering_device[i]) shared = 1;
+        if (!shared) xe_free(s->engine, s->steering_device[i], XE_MEM_SHARED);
+        xe_steering_release(s->steering_steps[i].vector);
+    }
+    free(s->steering_steps); free(s->steering_device);
+    s->steering_steps = NULL; s->steering_device = NULL; s->steering_count = 0;
+}
+
+int xe_session_steering_schedule(xe_session *s, const xe_steering_step *steps, size_t count) {
+    if (!s || count > 4096 || (count && !steps) || s->prefill_pending || s->engine->token_active)
+        return 0;
+    xe_require_owner(s->engine);
+    for (size_t i = 0; i < count; i++) {
+        const xe_steering_step *a = &steps[i];
+        if (a->position < 0 || a->position > s->engine->context ||
+            (i && a->position < steps[i-1].position) || !isfinite(a->strength) ||
+            (!a->vector && a->strength != 0) ||
+            (a->vector && (s->visual_context || s->capture_rows ||
+             xe_steering_layers(a->vector) != XE_LAYERS || xe_steering_width(a->vector) != XE_EMBD ||
+             memcmp(xe_steering_model(a->vector), xe_engine_model_fingerprint(s->engine), 32)))) return 0;
+    }
+    size_t common = 0;
+    while (common < count && common < s->steering_count) {
+        const xe_steering_step *a = &steps[common], *b = &s->steering_steps[common];
+        if (a->position != b->position || a->strength != b->strength ||
+            (!!a->vector != !!b->vector) || (a->vector && strcmp(xe_steering_id(a->vector),xe_steering_id(b->vector)))) break;
+        common++;
+    }
+    if (common == count && common == s->steering_count) return 1;
+    int changed = s->engine->context;
+    if (common < count) changed = steps[common].position;
+    if (common < s->steering_count && s->steering_steps[common].position < changed)
+        changed = s->steering_steps[common].position;
+    xe_steering_step *copy = count ? calloc(count, sizeof *copy) : NULL;
+    float **device = count ? calloc(count, sizeof *device) : NULL;
+    if (count && (!copy || !device)) {free(copy); free(device); return 0;}
+    for (size_t i = 0; i < count; i++) {
+        copy[i] = steps[i]; xe_steering_retain(copy[i].vector);
+        if (!copy[i].vector || copy[i].strength == 0) continue;
+        for (size_t j = 0; j < i; j++)
+            if (copy[j].vector && copy[j].strength != 0 &&
+                !strcmp(xe_steering_id(copy[j].vector), xe_steering_id(copy[i].vector))) {device[i] = device[j]; break;}
+        if (device[i]) continue;
+        device[i] = xe_alloc(s->engine, (size_t)XE_LAYERS * XE_EMBD * sizeof(float), XE_MEM_SHARED);
+        memset(device[i], 0, (size_t)XE_LAYERS * XE_EMBD * sizeof(float));
+        for (int l = 0; l < XE_LAYERS; l++) {
+            const float *row = xe_steering_row(copy[i].vector, l);
+            if (row) memcpy(device[i] + (size_t)l * XE_EMBD, row, XE_EMBD * sizeof(float));
+        }
+    }
+    xe_steering_clear(s);
+    s->steering_steps = copy; s->steering_device = device; s->steering_count = count;
+    if (changed < s->n_tokens) { s->n_tokens = 0; s->anchor_valid = 0; }
+    return 1;
+}
+
+int xe_session_steering_set(xe_session *s, xe_steering *v, float strength) {
+    if (!s) return 0;
+    if (!v && !s->steering_count) return 1;
+    size_t n = s->steering_count;
+    xe_steering_step *steps = malloc((n + 1) * sizeof *steps);
+    if (!steps) return 0;
+    if (n) memcpy(steps, s->steering_steps, n * sizeof *steps);
+    steps[n] = (xe_steering_step){s->n_tokens, v, v ? strength : 0};
+    int ok = xe_session_steering_schedule(s, steps, n + 1); free(steps); return ok;
+}
+size_t xe_session_steering_count(const xe_session *s) { return s ? s->steering_count : 0; }
+const xe_steering_step *xe_session_steering_steps(const xe_session *s) { return s ? s->steering_steps : NULL; }
+int xe_session_capture_enable_at(xe_session *s, xe_steering_site site) {
+    if (!s || s->n_tokens || s->steering_count || s->visual_context ||
+        s->prefill_pending || s->engine->token_active ||
+        (site!=XE_STEERING_RESIDUAL && site!=XE_STEERING_FFN)) return 0;
+    xe_require_owner(s->engine);
+    if (!s->capture_rows) s->capture_rows = xe_alloc(s->engine, (size_t)XE_LAYERS * XE_EMBD * sizeof(float), XE_MEM_SHARED);
+    s->capture_site=site;
+    return 1;
+}
+int xe_session_capture_enable(xe_session *s) {return xe_session_capture_enable_at(s,XE_STEERING_RESIDUAL);}
+const float *xe_session_capture_rows(const xe_session *s) { return s ? s->capture_rows : NULL; }
 
 void xe_session_free(xe_session *s) {
     if (!s) return;
@@ -5718,6 +5963,8 @@ void xe_session_free(xe_session *s) {
                   ? source->n_tokens : s->n_tokens;
         xe_session_swa_mark(source, s->cow_split, end);
     }
+    xe_steering_clear(s);
+    xe_free(e, s->capture_rows, XE_MEM_SHARED);
     xe_free(e, s->anchor_logits, XE_MEM_HOST);
     xe_free(e, s->anchor_swa_v, XE_MEM_HOST);
     xe_free(e, s->anchor_swa_k, XE_MEM_HOST);
@@ -5955,6 +6202,7 @@ int xe_session_has_visual(const xe_session *s) {
 }
 
 int xe_session_sync_input_report(xe_session *s,const xe_input *in,xe_sync_report *report) {
+    if (s && in && in->visual_count && s->steering_count) return 0;
     if(!s||s->cow||s->prefill_pending||!xe_input_layout_valid(in,s->engine->context))return 0;
     xe_require_owner(s->engine);
     int previous=s->n_tokens;
@@ -6656,11 +6904,34 @@ static void xe_snapshot_encode_directory(const xe_snapshot_layout *layout,
     }
 }
 
-static void xe_snapshot_encode_header(xe_engine *e,
+static void xe_steering_numeric(xe_session *s, uint64_t position, uint8_t out[32]) {
+    const uint8_t *base = s->engine->snapshot_fingerprint[XE_SNAPSHOT_FP_NUMERIC];
+    int effective = 0;
+    for (size_t i = 0; i < s->steering_count; i++)
+        if ((uint64_t)s->steering_steps[i].position < position &&
+            s->steering_steps[i].vector && s->steering_steps[i].strength != 0) effective = 1;
+    if (!effective) {memcpy(out, base, 32); return;}
+    format_sha256 hash; format_sha256_init(&hash);
+    format_sha256_update(&hash, "xe-steered-numeric-v1", 21);
+    format_sha256_update(&hash, base, 32);
+    for (size_t i = 0; i < s->steering_count; i++) {
+        const xe_steering_step *step = &s->steering_steps[i];
+        if ((uint64_t)step->position >= position) break;
+        uint8_t bytes[8]; uint32_t bits; memcpy(&bits, &step->strength, 4);
+        format_put_u32le(bytes, (uint32_t)step->position); format_put_u32le(bytes+4, bits);
+        format_sha256_update(&hash, bytes, 8);
+        const char *id = xe_steering_id(step->vector);
+        format_sha256_update(&hash, id ? id : "off", id ? 64 : 3);
+    }
+    format_sha256_final(&hash, out);
+}
+
+static void xe_snapshot_encode_header(xe_session *s,
                                       const xe_snapshot_layout *layout,
                                       const uint8_t boundary[32],
                                       const uint8_t *directory,
                                       uint8_t header[XE_SNAPSHOT_HEADER_SIZE]) {
+    xe_engine *e = s->engine;
     memset(header, 0, XE_SNAPSHOT_HEADER_SIZE);
     memcpy(header, xe_snapshot_magic, sizeof xe_snapshot_magic);
     format_put_u16le(header + 8, XE_SNAPSHOT_FORMAT_VERSION);
@@ -6680,6 +6951,7 @@ static void xe_snapshot_encode_header(xe_engine *e,
                                   (size_t)layout->directory_length));
     for (int i = 0; i < XE_SNAPSHOT_FP_COUNT; i++)
         memcpy(header + 96 + 32 * i, e->snapshot_fingerprint[i], 32);
+    xe_steering_numeric(s, layout->position, header + 96 + 32 * XE_SNAPSHOT_FP_NUMERIC);
     memcpy(header + 288, boundary, 32);
     format_put_u32le(header + 320, XE_SNAPSHOT_NUMERIC_ABI);
     /* Diagnostic strings are NUL-terminated and truncated to fit. They are
@@ -6744,7 +7016,7 @@ xe_snapshot_status xe_session_snapshot_stream(xe_session *s, FILE *out) {
 
     xe_snapshot_boundary_hash(s->tokens, s->n_tokens, boundary);
     xe_snapshot_encode_directory(&layout, directory);
-    xe_snapshot_encode_header(s->engine, &layout, boundary, directory, header);
+    xe_snapshot_encode_header(s, &layout, boundary, directory, header);
     if (s->visual_context) {
         xe_input input=s->visual_context->owned.input;
         input.tokens=s->tokens;input.count=s->n_tokens;
@@ -6793,11 +7065,14 @@ static int xe_snapshot_all_zero(const uint8_t *p, size_t n) {
 }
 
 static xe_snapshot_status xe_snapshot_parse_header(
-        xe_engine *e, FILE *in, const xe_tokens *expected, const xe_input *mixed,
+        xe_session *session, FILE *in, const xe_tokens *expected, const xe_input *mixed,
         xe_snapshot_layout *layout,
         uint8_t saved_header[XE_SNAPSHOT_HEADER_SIZE],
         uint8_t saved_directory[XE_SNAPSHOT_MAX_SECTIONS *
                                 XE_SNAPSHOT_ENTRY_SIZE]) {
+    xe_engine *e = session->engine;
+    uint8_t steering_numeric[32];
+    xe_steering_numeric(session, (uint64_t)expected->len, steering_numeric);
     uint64_t actual_size;
     if (!format_file_size(in, &actual_size) || !format_seek(in, 0) ||
         !format_read(in, saved_header, XE_SNAPSHOT_HEADER_SIZE))
@@ -6926,10 +7201,11 @@ static xe_snapshot_status xe_snapshot_parse_header(
         if(format_get_u32le(saved_header+352)!=XE_SNAPSHOT_NUMERIC_ABI ||
            memcmp(numeric,visual_numeric,32))return XE_SNAPSHOT_NUMERIC_MISMATCH;
     } else if (version == 1) {
-        if (!xe_snapshot_legacy_numeric_matches(e, numeric))
+        if (memcmp(steering_numeric,e->snapshot_fingerprint[XE_SNAPSHOT_FP_NUMERIC],32) ||
+            !xe_snapshot_legacy_numeric_matches(e, numeric))
             return XE_SNAPSHOT_NUMERIC_MISMATCH;
     } else if (format_get_u32le(saved_header + 320) != XE_SNAPSHOT_NUMERIC_ABI ||
-               memcmp(numeric, e->snapshot_fingerprint[XE_SNAPSHOT_FP_NUMERIC], 32)) {
+               memcmp(numeric, steering_numeric, 32)) {
         return XE_SNAPSHOT_NUMERIC_MISMATCH;
     }
     uint8_t boundary[32];
@@ -7065,7 +7341,7 @@ xe_snapshot_status xe_session_snapshot_check_prefix(xe_session *s, FILE *in,
     uint8_t directory[XE_SNAPSHOT_MAX_SECTIONS * XE_SNAPSHOT_ENTRY_SIZE];
     xe_snapshot_layout layout;
     xe_snapshot_status status = xe_snapshot_parse_header(
-        s->engine, in, &expected, mixed, &layout, header, directory);
+        s, in, &expected, mixed, &layout, header, directory);
     if (status != XE_SNAPSHOT_OK) return status;
     uint8_t *buffer = malloc(XE_SNAPSHOT_BUFFER_SIZE);
     if (!buffer) return XE_SNAPSHOT_NOMEM;
@@ -7087,7 +7363,7 @@ static xe_snapshot_status xe_session_snapshot_load_impl(xe_session *s, FILE *in,
     uint8_t directory[XE_SNAPSHOT_MAX_SECTIONS * XE_SNAPSHOT_ENTRY_SIZE];
     xe_snapshot_layout layout;
     xe_snapshot_status status = xe_snapshot_parse_header(
-        s->engine, in, expected, mixed, &layout, header, directory);
+        s, in, expected, mixed, &layout, header, directory);
     if (status != XE_SNAPSHOT_OK) return status;
     uint8_t *buffer = malloc(XE_SNAPSHOT_BUFFER_SIZE);
     if (!buffer) return XE_SNAPSHOT_NOMEM;
@@ -7168,661 +7444,10 @@ const char *xe_snapshot_status_name(xe_snapshot_status status) {
            ? names[status] : "unknown";
 }
 
-static const float ref_kq_scale = 1.0f;
-static const float ref_moe_weight_sum_min = 6.103515625e-5f;
-static const float ref_gelu_coef_a = 0.044715f;
-static const float ref_gelu_sqrt_2_over_pi = 0.79788456080286535587989211986876f;
 
-static float ref_fp16_to_fp32(uint16_t bits) {
-    uint32_t sign = (uint32_t)(bits >> 15) & 1u;
-    uint32_t exponent = (uint32_t)(bits >> 10) & 0x1Fu;
-    uint32_t mantissa = (uint32_t)bits & 0x3FFu;
-    float magnitude;
-
-    if (exponent == 0)
-        magnitude = ldexpf((float)mantissa, -24);
-    else if (exponent == 31)
-        magnitude = mantissa ? NAN : INFINITY;
-    else
-        magnitude = ldexpf((float)(mantissa + 1024), (int)exponent - 25);
-
-    return sign ? -magnitude : magnitude;
-}
-
-static void ref_dequant_block(const xe_q4 *w, uint64_t row, int blocks,
-                              int block, float *out) {
-    uint8_t nibbles[16];
-    xe_q4_copy_block(w, row, blocks, block, nibbles);
-    float scale = ref_fp16_to_fp32(xe_q4_scale(w, row, blocks, block));
-
-    for (int j = 0; j < 16; j++) {
-        int low = nibbles[j] & 0x0F;
-        int high = (nibbles[j] >> 4) & 0x0F;
-        out[j] = (float)(low - 8) * scale;
-        out[j + 16] = (float)(high - 8) * scale;
-    }
-}
-
-static void ref_dequant_row(const xe_q4 *w, uint64_t row, int n_in, float *out) {
-    int n_blocks = n_in / 32;
-
-    for (int b = 0; b < n_blocks; b++)
-        ref_dequant_block(w, row, n_blocks, b, out + 32 * b);
-}
-
-static float ref_dot_q4_row(const xe_q4 *w, uint64_t row, int n_in, const float *x) {
-    int n_blocks = n_in / 32;
-    float sum = 0.0f;
-
-    for (int b = 0; b < n_blocks; b++) {
-        float weights[32];
-        ref_dequant_block(w, row, n_blocks, b, weights);
-        for (int j = 0; j < 32; j++)
-            sum += weights[j] * x[32 * b + j];
-    }
-    return sum;
-}
-
-static void ref_matvec_q4(const xe_q4 *w, uint64_t first_row, int n_in, int n_out, const float *x, float *y) {
-    for (int r = 0; r < n_out; r++)
-        y[r] = ref_dot_q4_row(w, first_row + (uint64_t)r, n_in, x);
-}
-
-#define REF_Q8_MAX_IN 8192
-
-static float ref_fp16_round(float x) {
-    return (float)(_Float16)x;
-}
-
-static void ref_quantize_q8(const float *x, int n_in, int8_t *qs, float *ds) {
-    int n_blocks = n_in / 32;
-
-    for (int b = 0; b < n_blocks; b++) {
-        float amax = 0.0f;
-
-        for (int j = 0; j < 32; j++) {
-            float v = fabsf(x[32 * b + j]);
-            if (v > amax) amax = v;
-        }
-
-        float d = amax / 127.0f;
-        float id = d ? 1.0f / d : 0.0f;
-
-        ds[b] = ref_fp16_round(d);
-
-        for (int j = 0; j < 32; j++)
-            qs[32 * b + j] = (int8_t)roundf(x[32 * b + j] * id);
-    }
-}
-
-static int ref_dot_q4_q8_integer(const xe_q4 *w, uint64_t row, int blocks,
-                                 int block, const int8_t *q) {
-    uint8_t nibbles[16];
-    xe_q4_copy_block(w, row, blocks, block, nibbles);
-    int sumi0 = 0;
-    int sumi1 = 0;
-
-    for (int j = 0; j < 16; j++) {
-        int v0 = (nibbles[j] & 0x0F) - 8;
-        int v1 = (nibbles[j] >> 4) - 8;
-        sumi0 += v0 * q[j];
-        sumi1 += v1 * q[j + 16];
-    }
-    return sumi0 + sumi1;
-}
-
-static float ref_dot_q4_q8_row(const xe_q4 *w, uint64_t row, int n_in, const int8_t *qs, const float *ds) {
-    int n_blocks = n_in / 32;
-    float sumf = 0.0f;
-
-    for (int b = 0; b < n_blocks; b++) {
-        int integer = ref_dot_q4_q8_integer(w, row, n_blocks, b, qs + 32 * b);
-        sumf += (float)integer * ref_fp16_to_fp32(xe_q4_scale(w, row, n_blocks, b)) * ds[b];
-    }
-    return sumf;
-}
-
-static float ref_dot_q4_q8_row_v1(const xe_q4 *w, uint64_t row, int n_in,
-                                   const int8_t *qs, const float *ds) {
-    int n_blocks = n_in / 32;
-    float sums[8] = { 0.0f };
-    int b = 0;
-
-    for (; b + 7 < n_blocks; b += 8) {
-        for (int j = 0; j < 8; j++) {
-            int integer = ref_dot_q4_q8_integer(w, row, n_blocks, b + j,
-                                                qs + 32 * (b + j));
-            float scale = ref_fp16_to_fp32(xe_q4_scale(w, row, n_blocks, b + j)) *
-                          ds[b + j];
-            sums[j] += (float)integer * scale;
-        }
-    }
-
-    float lo0 = sums[0] + sums[4];
-    float lo1 = sums[1] + sums[5];
-    float lo2 = sums[2] + sums[6];
-    float lo3 = sums[3] + sums[7];
-    float result = (lo0 + lo1) + (lo2 + lo3);
-    for (; b < n_blocks; b++) {
-        int integer = ref_dot_q4_q8_integer(w, row, n_blocks, b, qs + 32 * b);
-        result += (float)integer * ref_fp16_to_fp32(xe_q4_scale(w, row, n_blocks, b)) * ds[b];
-    }
-    return result;
-}
-
-static void ref_matvec_q4_q8_packed(const xe_q4 *w, uint64_t first_row, int n_in,
-                                    int n_out, const int8_t *qs, const float *ds,
-                                    int v1_order, float *y) {
-    for (int r = 0; r < n_out; r++) {
-        uint64_t row = first_row + (uint64_t)r;
-        y[r] = v1_order ? ref_dot_q4_q8_row_v1(w, row, n_in, qs, ds) :
-                          ref_dot_q4_q8_row(w, row, n_in, qs, ds);
-    }
-}
-
-static void ref_matvec_q4_q8(const xe_q4 *w, uint64_t first_row, int n_in, int n_out,
-                             const float *x, int v1_order, float *y) {
-    int8_t qs[REF_Q8_MAX_IN];
-    float ds[REF_Q8_MAX_IN / 32];
-
-    if (n_in > REF_Q8_MAX_IN) xe_fatal("q8 matvec: n_in %d exceeds %d", n_in, REF_Q8_MAX_IN);
-
-    ref_quantize_q8(x, n_in, qs, ds);
-    ref_matvec_q4_q8_packed(w, first_row, n_in, n_out, qs, ds, v1_order, y);
-}
-
-static float ref_dot_f32(const float *a, const float *b, int n) {
-    float sum = 0.0f;
-
-    for (int i = 0; i < n; i++)
-        sum += a[i] * b[i];
-    return sum;
-}
-
-static void ref_matvec_f32(const float *w, int n_in, int n_out, const float *x, float *y) {
-    for (int r = 0; r < n_out; r++)
-        y[r] = ref_dot_f32(w + (size_t)r * (size_t)n_in, x, n_in);
-}
-
-static void ref_rmsnorm(const float *x, const float *weight, int n, float *y) {
-    float sum = 0.0f;
-
-    for (int i = 0; i < n; i++)
-        sum += x[i] * x[i];
-
-    float scale = 1.0f / sqrtf(sum / (float)n + XE_RMS_EPS);
-
-    for (int i = 0; i < n; i++)
-        y[i] = x[i] * scale * weight[i];
-}
-
-static void ref_rmsnorm_weightless(const float *x, int n, float *y) {
-    float sum = 0.0f;
-
-    for (int i = 0; i < n; i++)
-        sum += x[i] * x[i];
-
-    float scale = 1.0f / sqrtf(sum / (float)n + XE_RMS_EPS);
-
-    for (int i = 0; i < n; i++)
-        y[i] = x[i] * scale;
-}
-
-static void ref_softmax(float *x, int n) {
-    float max = x[0];
-
-    for (int i = 1; i < n; i++)
-        if (x[i] > max) max = x[i];
-
-    float sum = 0.0f;
-    for (int i = 0; i < n; i++) {
-        x[i] = expf(x[i] - max);
-        sum += x[i];
-    }
-
-    for (int i = 0; i < n; i++)
-        x[i] /= sum;
-}
-
-static void ref_top_k(const float *values, int n, int k, int *out_idx, float *out_val) {
-    for (int i = 0; i < k; i++) {
-        out_idx[i] = -1;
-        out_val[i] = -INFINITY;
-    }
-
-    for (int i = 0; i < n; i++) {
-        if (values[i] <= out_val[k - 1]) continue;
-
-        int slot = k - 1;
-        while (slot > 0 && out_val[slot - 1] < values[i]) {
-            out_val[slot] = out_val[slot - 1];
-            out_idx[slot] = out_idx[slot - 1];
-            slot--;
-        }
-        out_val[slot] = values[i];
-        out_idx[slot] = i;
-    }
-}
-
-static float ref_gelu(float x) {
-    float inner = ref_gelu_sqrt_2_over_pi * (x + ref_gelu_coef_a * x * x * x);
-    return 0.5f * x * (1.0f + tanhf(inner));
-}
-
-static void ref_geglu(const float *gate, const float *up, int n, float *y) {
-    for (int i = 0; i < n; i++)
-        y[i] = ref_gelu(gate[i]) * up[i];
-}
-
-static float ref_gelu_fp16(float x) {
-    if (x <= -10.0f) return 0.0f;
-    if (x >= 10.0f) return x;
-    return (float)(_Float16)ref_gelu((float)(_Float16)x);
-}
-
-static void ref_geglu_fp16(const float *gate, const float *up, int n, float *y) {
-    for (int i = 0; i < n; i++)
-        y[i] = ref_gelu_fp16(gate[i]) * up[i];
-}
-
-static void ref_rope_neox(float *heads, int n_heads, int head_dim, int pos, float base, const float *freq_factors) {
-    int half = head_dim / 2;
-
-    for (int h = 0; h < n_heads; h++) {
-        float *head = heads + (size_t)h * (size_t)head_dim;
-
-        for (int i = 0; i < half; i++) {
-            float freq = powf(base, -2.0f * (float)i / (float)head_dim);
-            if (freq_factors) freq = freq / freq_factors[i];
-
-            float theta = (float)pos * freq;
-            float cos_theta = cosf(theta);
-            float sin_theta = sinf(theta);
-            float lo = head[i];
-            float hi = head[i + half];
-
-            head[i] = lo * cos_theta - hi * sin_theta;
-            head[i + half] = lo * sin_theta + hi * cos_theta;
-        }
-    }
-}
-
-static void ref_attention(const float *q, const float *k_cache, const float *v_cache, int pos,
-                          int n_kv_heads, int head_dim, int sliding_window, float *scores, float *out) {
-    int group = XE_Q_HEADS / n_kv_heads;
-    int n_keys = pos + 1;
-
-    for (int h = 0; h < XE_Q_HEADS; h++) {
-        const float *q_head = q + (size_t)h * (size_t)head_dim;
-        int kv_head = h / group;
-
-        for (int p = 0; p < n_keys; p++) {
-            if (sliding_window > 0 && pos - p >= sliding_window) {
-                scores[p] = -INFINITY;
-                continue;
-            }
-            const float *k_head = k_cache + ((size_t)p * (size_t)n_kv_heads + (size_t)kv_head) * (size_t)head_dim;
-            scores[p] = ref_dot_f32(q_head, k_head, head_dim) * ref_kq_scale;
-        }
-
-        ref_softmax(scores, n_keys);
-
-        float *out_head = out + (size_t)h * (size_t)head_dim;
-        for (int d = 0; d < head_dim; d++)
-            out_head[d] = 0.0f;
-
-        for (int p = 0; p < n_keys; p++) {
-            const float *v_head = v_cache + ((size_t)p * (size_t)n_kv_heads + (size_t)kv_head) * (size_t)head_dim;
-            for (int d = 0; d < head_dim; d++)
-                out_head[d] += scores[p] * v_head[d];
-        }
-    }
-}
-
-typedef struct {
-    float *hidden;
-    float *normed;
-    float *q;
-    float *k;
-    float *v;
-    float *attn_heads;
-    float *attn_proj;
-    float *attn_out;
-    float *scores;
-    float *dense_in;
-    float *dense_gate;
-    float *dense_up;
-    float *dense_act;
-    float *dense_out;
-    float *router_in;
-    float *router_probs;
-    float *moe_in;
-    float *expert_gate_up;
-    float *expert_act;
-    float *expert_out;
-    float *moe_out;
-    float *combined;
-    float *logits;
-    float *k_cache[XE_LAYERS];
-    float *v_cache[XE_LAYERS];
-    int q8;
-    const char *layers_dir;
-    int dump;
-} ref_state;
-
-static int ref_kv_dim(int layer) {
-    if (XE_IS_GLOBAL(layer)) return XE_GLOBAL_KV_HEADS * XE_GLOBAL_HEAD_DIM;
-    return XE_SWA_KV_HEADS * XE_SWA_HEAD_DIM;
-}
-
-static void ref_state_init(ref_state *s, int n_tokens) {
-    int max_q_dim = XE_Q_HEADS * XE_GLOBAL_HEAD_DIM;
-    int max_kv_dim = XE_SWA_KV_HEADS * XE_SWA_HEAD_DIM;
-
-    s->hidden = xe_alloc(NULL, XE_EMBD * sizeof(float), XE_MEM_HOST);
-    s->normed = xe_alloc(NULL, XE_EMBD * sizeof(float), XE_MEM_HOST);
-    s->q = xe_alloc(NULL, (size_t)max_q_dim * sizeof(float), XE_MEM_HOST);
-    s->k = xe_alloc(NULL, (size_t)max_kv_dim * sizeof(float), XE_MEM_HOST);
-    s->v = xe_alloc(NULL, (size_t)max_kv_dim * sizeof(float), XE_MEM_HOST);
-    s->attn_heads = xe_alloc(NULL, (size_t)max_q_dim * sizeof(float), XE_MEM_HOST);
-    s->attn_proj = xe_alloc(NULL, XE_EMBD * sizeof(float), XE_MEM_HOST);
-    s->attn_out = xe_alloc(NULL, XE_EMBD * sizeof(float), XE_MEM_HOST);
-    s->scores = xe_alloc(NULL, (size_t)n_tokens * sizeof(float), XE_MEM_HOST);
-    s->dense_in = xe_alloc(NULL, XE_EMBD * sizeof(float), XE_MEM_HOST);
-    s->dense_gate = xe_alloc(NULL, XE_DENSE_FFN * sizeof(float), XE_MEM_HOST);
-    s->dense_up = xe_alloc(NULL, XE_DENSE_FFN * sizeof(float), XE_MEM_HOST);
-    s->dense_act = xe_alloc(NULL, XE_DENSE_FFN * sizeof(float), XE_MEM_HOST);
-    s->dense_out = xe_alloc(NULL, XE_EMBD * sizeof(float), XE_MEM_HOST);
-    s->router_in = xe_alloc(NULL, XE_EMBD * sizeof(float), XE_MEM_HOST);
-    s->router_probs = xe_alloc(NULL, XE_EXPERTS * sizeof(float), XE_MEM_HOST);
-    s->moe_in = xe_alloc(NULL, XE_EMBD * sizeof(float), XE_MEM_HOST);
-    s->expert_gate_up = xe_alloc(NULL, 2 * XE_EXPERT_FFN * sizeof(float), XE_MEM_HOST);
-    s->expert_act = xe_alloc(NULL, XE_EXPERT_FFN * sizeof(float), XE_MEM_HOST);
-    s->expert_out = xe_alloc(NULL, XE_EMBD * sizeof(float), XE_MEM_HOST);
-    s->moe_out = xe_alloc(NULL, XE_EMBD * sizeof(float), XE_MEM_HOST);
-    s->combined = xe_alloc(NULL, XE_EMBD * sizeof(float), XE_MEM_HOST);
-    s->logits = xe_alloc(NULL, XE_VOCAB * sizeof(float), XE_MEM_HOST);
-
-    for (int il = 0; il < XE_LAYERS; il++) {
-        size_t bytes = (size_t)n_tokens * (size_t)ref_kv_dim(il) * sizeof(float);
-        s->k_cache[il] = xe_alloc(NULL, bytes, XE_MEM_HOST);
-        s->v_cache[il] = xe_alloc(NULL, bytes, XE_MEM_HOST);
-    }
-}
-
-static void ref_state_free(ref_state *s) {
-    xe_free(NULL, s->hidden, XE_MEM_HOST);
-    xe_free(NULL, s->normed, XE_MEM_HOST);
-    xe_free(NULL, s->q, XE_MEM_HOST);
-    xe_free(NULL, s->k, XE_MEM_HOST);
-    xe_free(NULL, s->v, XE_MEM_HOST);
-    xe_free(NULL, s->attn_heads, XE_MEM_HOST);
-    xe_free(NULL, s->attn_proj, XE_MEM_HOST);
-    xe_free(NULL, s->attn_out, XE_MEM_HOST);
-    xe_free(NULL, s->scores, XE_MEM_HOST);
-    xe_free(NULL, s->dense_in, XE_MEM_HOST);
-    xe_free(NULL, s->dense_gate, XE_MEM_HOST);
-    xe_free(NULL, s->dense_up, XE_MEM_HOST);
-    xe_free(NULL, s->dense_act, XE_MEM_HOST);
-    xe_free(NULL, s->dense_out, XE_MEM_HOST);
-    xe_free(NULL, s->router_in, XE_MEM_HOST);
-    xe_free(NULL, s->router_probs, XE_MEM_HOST);
-    xe_free(NULL, s->moe_in, XE_MEM_HOST);
-    xe_free(NULL, s->expert_gate_up, XE_MEM_HOST);
-    xe_free(NULL, s->expert_act, XE_MEM_HOST);
-    xe_free(NULL, s->expert_out, XE_MEM_HOST);
-    xe_free(NULL, s->moe_out, XE_MEM_HOST);
-    xe_free(NULL, s->combined, XE_MEM_HOST);
-    xe_free(NULL, s->logits, XE_MEM_HOST);
-
-    for (int il = 0; il < XE_LAYERS; il++) {
-        xe_free(NULL, s->k_cache[il], XE_MEM_HOST);
-        xe_free(NULL, s->v_cache[il], XE_MEM_HOST);
-    }
-}
-
-static void ref_matvec(const ref_state *s, const xe_q4 *w, uint64_t first_row, int n_in, int n_out,
-                       const float *x, float *y) {
-    if (s->q8)
-        ref_matvec_q4_q8(w, first_row, n_in, n_out, x, s->q8 == 2, y);
-    else
-        ref_matvec_q4(w, first_row, n_in, n_out, x, y);
-}
-
-static void ref_activate(const ref_state *s, const float *gate, const float *up, int n, float *y) {
-    if (s->q8)
-        ref_geglu_fp16(gate, up, n, y);
-    else
-        ref_geglu(gate, up, n, y);
-}
-
-static void ref_dump(const ref_state *s, const char *name, int il, const float *v) {
-    char path[4096];
-
-    if (il < 0)
-        snprintf(path, sizeof path, "%s/%s.bin", s->layers_dir, name);
-    else
-        snprintf(path, sizeof path, "%s/%s_%d.bin", s->layers_dir, name, il);
-
-    FILE *f = fopen(path, "wb");
-    if (!f) xe_fatal("%s: %s", path, strerror(errno));
-    if (fwrite(v, sizeof(float), XE_EMBD, f) != (size_t)XE_EMBD)
-        xe_fatal("%s: short write", path);
-    if (fclose(f) != 0) xe_fatal("%s: %s", path, strerror(errno));
-}
-
-static void ref_embed(const xe_engine *e, int32_t token, float *x) {
-    float scale = sqrtf((float)XE_EMBD);
-
-    ref_dequant_row(&e->tok_embd, (uint64_t)token, XE_EMBD, x);
-
-    for (int i = 0; i < XE_EMBD; i++)
-        x[i] = x[i] * scale;
-}
-
-static void ref_attention_half(const xe_engine *e, int il, int pos, ref_state *s) {
-    const xe_layer *l = &e->layers[il];
-    int is_global = XE_IS_GLOBAL(il);
-    int head_dim = is_global ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM;
-    int n_kv_heads = is_global ? XE_GLOBAL_KV_HEADS : XE_SWA_KV_HEADS;
-    int q_dim = XE_Q_HEADS * head_dim;
-    int kv_dim = n_kv_heads * head_dim;
-    float rope_base = is_global ? XE_GLOBAL_ROPE_BASE : XE_SWA_ROPE_BASE;
-    const float *freq_factors = is_global ? e->rope_freqs : NULL;
-    int sliding_window = is_global ? 0 : XE_SWA_WINDOW;
-
-    ref_rmsnorm(s->hidden, l->attn_norm, XE_EMBD, s->normed);
-
-    ref_matvec(s, &l->attn_q, 0, XE_EMBD, q_dim, s->normed, s->q);
-    ref_matvec(s, &l->attn_k, 0, XE_EMBD, kv_dim, s->normed, s->k);
-
-    if (is_global) {
-        for (int i = 0; i < kv_dim; i++)
-            s->v[i] = s->k[i];
-    } else {
-        ref_matvec(s, &l->attn_v, 0, XE_EMBD, kv_dim, s->normed, s->v);
-    }
-
-    for (int h = 0; h < XE_Q_HEADS; h++) {
-        float *head = s->q + (size_t)h * (size_t)head_dim;
-        ref_rmsnorm(head, l->q_norm, head_dim, head);
-    }
-    for (int h = 0; h < n_kv_heads; h++) {
-        float *head = s->k + (size_t)h * (size_t)head_dim;
-        ref_rmsnorm(head, l->k_norm, head_dim, head);
-    }
-    for (int h = 0; h < n_kv_heads; h++) {
-        float *head = s->v + (size_t)h * (size_t)head_dim;
-        ref_rmsnorm_weightless(head, head_dim, head);
-    }
-
-    ref_rope_neox(s->q, XE_Q_HEADS, head_dim, pos, rope_base, freq_factors);
-    ref_rope_neox(s->k, n_kv_heads, head_dim, pos, rope_base, freq_factors);
-
-    float *k_slot = s->k_cache[il] + (size_t)pos * (size_t)kv_dim;
-    float *v_slot = s->v_cache[il] + (size_t)pos * (size_t)kv_dim;
-    for (int i = 0; i < kv_dim; i++) {
-        k_slot[i] = s->k[i];
-        v_slot[i] = s->v[i];
-    }
-
-    if (s->q8) {
-        for (int i = 0; i < kv_dim; i++) {
-            k_slot[i] = ref_fp16_round(k_slot[i]);
-            v_slot[i] = ref_fp16_round(v_slot[i]);
-        }
-    }
-
-    ref_attention(s->q, s->k_cache[il], s->v_cache[il], pos, n_kv_heads, head_dim,
-                  sliding_window, s->scores, s->attn_heads);
-
-    ref_matvec(s, &l->attn_o, 0, q_dim, XE_EMBD, s->attn_heads, s->attn_proj);
-    ref_rmsnorm(s->attn_proj, l->post_attn_norm, XE_EMBD, s->attn_proj);
-
-    for (int i = 0; i < XE_EMBD; i++)
-        s->attn_out[i] = s->attn_proj[i] + s->hidden[i];
-}
-
-static void ref_dense_branch(const xe_layer *l, ref_state *s) {
-    ref_rmsnorm(s->attn_out, l->ffn_norm, XE_EMBD, s->dense_in);
-
-    ref_matvec(s, &l->ffn_gate, 0, XE_EMBD, XE_DENSE_FFN, s->dense_in, s->dense_gate);
-    ref_matvec(s, &l->ffn_up, 0, XE_EMBD, XE_DENSE_FFN, s->dense_in, s->dense_up);
-    ref_activate(s, s->dense_gate, s->dense_up, XE_DENSE_FFN, s->dense_act);
-    ref_matvec(s, &l->ffn_down, 0, XE_DENSE_FFN, XE_EMBD, s->dense_act, s->dense_out);
-
-    ref_rmsnorm(s->dense_out, l->post_ffw_norm1, XE_EMBD, s->dense_out);
-}
-
-static void ref_router(const xe_layer *l, ref_state *s, int *experts, float *weights) {
-    float input_scale = 1.0f / sqrtf((float)XE_EMBD);
-
-    ref_rmsnorm_weightless(s->attn_out, XE_EMBD, s->router_in);
-    for (int i = 0; i < XE_EMBD; i++)
-        s->router_in[i] = s->router_in[i] * input_scale * l->router_scale[i];
-
-    ref_matvec_f32(l->router_w, XE_EMBD, XE_EXPERTS, s->router_in, s->router_probs);
-    ref_softmax(s->router_probs, XE_EXPERTS);
-
-    ref_top_k(s->router_probs, XE_EXPERTS, XE_EXPERTS_USED, experts, weights);
-
-    float sum = 0.0f;
-    for (int i = 0; i < XE_EXPERTS_USED; i++)
-        sum += weights[i];
-    if (sum < ref_moe_weight_sum_min) sum = ref_moe_weight_sum_min;
-
-    for (int i = 0; i < XE_EXPERTS_USED; i++)
-        weights[i] = weights[i] / sum;
-}
-
-static void ref_moe_branch(const xe_layer *l, ref_state *s, const int *experts, const float *weights) {
-    ref_rmsnorm(s->attn_out, l->pre_ffw_norm2, XE_EMBD, s->moe_in);
-
-    for (int i = 0; i < XE_EMBD; i++)
-        s->moe_out[i] = 0.0f;
-
-    for (int i = 0; i < XE_EXPERTS_USED; i++) {
-        int expert = experts[i];
-        uint64_t gate_up_row = (uint64_t)expert * (2 * XE_EXPERT_FFN);
-        uint64_t down_row = (uint64_t)expert * XE_EMBD;
-        float down_scale = l->down_exps_scale[expert];
-
-        ref_matvec(s, &l->gate_up_exps, gate_up_row, XE_EMBD, 2 * XE_EXPERT_FFN, s->moe_in, s->expert_gate_up);
-        ref_activate(s, s->expert_gate_up, s->expert_gate_up + XE_EXPERT_FFN, XE_EXPERT_FFN, s->expert_act);
-        ref_matvec(s, &l->down_exps, down_row, XE_EXPERT_FFN, XE_EMBD, s->expert_act, s->expert_out);
-
-        for (int j = 0; j < XE_EMBD; j++)
-            s->moe_out[j] += weights[i] * (s->expert_out[j] * down_scale);
-    }
-
-    ref_rmsnorm(s->moe_out, l->post_ffw_norm2, XE_EMBD, s->moe_out);
-}
-
-static void ref_ffn_half(const xe_engine *e, int il, ref_state *s) {
-    const xe_layer *l = &e->layers[il];
-    int experts[XE_EXPERTS_USED];
-    float weights[XE_EXPERTS_USED];
-    float out_scale = l->layer_out_scale[0];
-
-    ref_dense_branch(l, s);
-    ref_router(l, s, experts, weights);
-    ref_moe_branch(l, s, experts, weights);
-
-    for (int i = 0; i < XE_EMBD; i++)
-        s->combined[i] = s->dense_out[i] + s->moe_out[i];
-
-    ref_rmsnorm(s->combined, l->post_ffw_norm, XE_EMBD, s->combined);
-
-    for (int i = 0; i < XE_EMBD; i++)
-        s->hidden[i] = (s->combined[i] + s->attn_out[i]) * out_scale;
-}
-
-static void ref_layer(const xe_engine *e, int il, int pos, ref_state *s) {
-    ref_attention_half(e, il, pos, s);
-    if (s->dump) ref_dump(s, "attn_out", il, s->attn_out);
-
-    ref_ffn_half(e, il, s);
-    if (s->dump) ref_dump(s, "l_out", il, s->hidden);
-}
-
-static void ref_output(const xe_engine *e, ref_state *s) {
-    ref_rmsnorm(s->hidden, e->out_norm, XE_EMBD, s->normed);
-    ref_matvec(s, &e->tok_embd, 0, XE_EMBD, XE_VOCAB, s->normed, s->logits);
-
-    for (int i = 0; i < XE_VOCAB; i++)
-        s->logits[i] = XE_LOGIT_SOFTCAP * tanhf(s->logits[i] / XE_LOGIT_SOFTCAP);
-}
-
-static void ref_forward(const xe_engine *e, const int32_t *tokens, int n_tokens, ref_state *s) {
-    for (int pos = 0; pos < n_tokens; pos++) {
-        s->dump = s->layers_dir && pos == n_tokens - 1;
-
-        ref_embed(e, tokens[pos], s->hidden);
-        if (s->dump) ref_dump(s, "inp_scaled", -1, s->hidden);
-
-        for (int il = 0; il < XE_LAYERS; il++)
-            ref_layer(e, il, pos, s);
-    }
-    ref_output(e, s);
-}
-
-void xe_oracle(xe_engine *e, const int32_t *tokens, int n_tokens, const char *dump_path,
-               const char *layers_dir, int q8_mode, FILE *out) {
-    if (e->vocab_only) xe_fatal("oracle: engine opened vocab-only, no weights available");
-    if (n_tokens <= 0 || n_tokens > e->context)
-        xe_fatal("oracle: token count %d out of range [1, %d]", n_tokens, e->context);
-    for (int i = 0; i < n_tokens; i++)
-        if (tokens[i] < 0 || tokens[i] >= XE_VOCAB)
-            xe_fatal("oracle: token id %d out of range [0, %d]", tokens[i], XE_VOCAB - 1);
-
-    if (layers_dir && mkdir(layers_dir, 0777) != 0 && errno != EEXIST)
-        xe_fatal("%s: %s", layers_dir, strerror(errno));
-
-    ref_state s;
-    ref_state_init(&s, n_tokens);
-    s.q8 = q8_mode;
-    s.layers_dir = layers_dir;
-    s.dump = 0;
-    ref_forward(e, tokens, n_tokens, &s);
-
-    for (int i = 0; i < XE_VOCAB; i++)
-        if (!isfinite(s.logits[i]))
-            xe_fatal("oracle: logit %d is not finite (%g)", i, (double)s.logits[i]);
-
-    int top_idx[8];
-    float top_val[8];
-    ref_top_k(s.logits, XE_VOCAB, 8, top_idx, top_val);
-
-    for (int i = 0; i < 8; i++)
-        fprintf(out, "%8d  %12.6f\n", top_idx[i], (double)top_val[i]);
-
-    if (dump_path) {
-        FILE *f = fopen(dump_path, "wb");
-        if (!f) xe_fatal("%s: %s", dump_path, strerror(errno));
-        if (fwrite(s.logits, sizeof(float), XE_VOCAB, f) != (size_t)XE_VOCAB)
-            xe_fatal("%s: short write", dump_path);
-        if (fclose(f) != 0) xe_fatal("%s: %s", dump_path, strerror(errno));
-    }
-
-    ref_state_free(&s);
+void xe_session_set_layer_observer(xe_session *s, xe_layer_observer observer,
+                                   void *user) {
+    xe_require_owner(s->engine);
+    s->layer_observer = observer;
+    s->layer_observer_user = user;
 }

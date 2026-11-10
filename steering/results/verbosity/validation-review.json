@@ -1,0 +1,54 @@
+{
+  "locked_at_utc": "2026-10-24T23:08:37.891625+00:00",
+  "configuration": {
+    "name": "ds4_ffn_s-0.5",
+    "artifact": "e802259e2f1b4d9507381a2063a232a1c1eed0206c257c45ef16dd894ddda581",
+    "strength": -0.5
+  },
+  "decision": "Lock -0.5 before reserved generation: coherent shortening with less formatting damage than -1. Experimental brevity demonstration, not a quality-preserving acceptance.",
+  "validation_paired_shorter": 10,
+  "validation_median_words": 333.5,
+  "quality_gate": "Required-fact preservation fails: compiler behavior constraint and dew-point condition omitted. Do not claim all acceptance gates passed.",
+  "manual_review": [
+    {
+      "index": 0,
+      "assessment": "Edge caching and reduced latency retained."
+    },
+    {
+      "index": 1,
+      "assessment": "Efficiency retained; preservation of observable behavior omitted (baseline includes it). Both finalists omit it."
+    },
+    {
+      "index": 2,
+      "assessment": "LIFO/FIFO retained."
+    },
+    {
+      "index": 3,
+      "assessment": "Gravity, tangential motion and continuous free fall retained; velocity wording imprecise."
+    },
+    {
+      "index": 4,
+      "assessment": "Vapor-to-liquid retained, dew-point condition omitted and colder glass is overgeneralized. Markdown spacing defects."
+    },
+    {
+      "index": 5,
+      "assessment": "Private signing/public verification and integrity retained. Generic signature-as-encrypted-hash explanation is inaccurate, also present in baseline; no claim of factual correctness."
+    },
+    {
+      "index": 6,
+      "assessment": "CPU task selection and scheduling policies retained; three-scheduler taxonomy is overgeneralized."
+    },
+    {
+      "index": 7,
+      "assessment": "Detection/correction and redundancy retained; unqualified correction guarantees oversimplified."
+    },
+    {
+      "index": 8,
+      "assessment": "Referential integrity retained. Nullable-key exception not explicit in existence rule, despite SET NULL example."
+    },
+    {
+      "index": 9,
+      "assessment": "Wavelength-dependent refraction retained. Filter analogy imprecise."
+    }
+  ]
+}

@@ -270,7 +270,10 @@ Invalid sampler values can terminate the engine rather than return a JSON error.
 
 Events have an `event` field instead of `ok`. Text and reasoning arrive as
 fragments; concatenate each channel independently. A fragment is not a reliable
-token count. Tool argument text may be buffered without producing text deltas.
+token count. Each frame contains valid UTF-8. Incomplete character bytes are
+buffered separately for text and reasoning until the next fragment; malformed
+bytes or an incomplete terminal character are emitted as U+FFFD. Clients can
+concatenate decoded strings without reconstructing token byte sequences. Tool argument text may be buffered without producing text deltas.
 
 | Event | Fields and meaning |
 |---|---|
@@ -519,3 +522,130 @@ and KV under the current identities; it never reuses computations from different
 weights. Original media integrity and preprocessing checks still apply. Older
 metadata-based visual records can supply media for replay, but their identities
 cannot establish compatible computed state.
+
+## Experimental activation steering
+
+Start with `--steering-dir DIR` to enable a local registry of artifacts imported
+with `xenolith steering-import`. This is independent of the vision protocol
+version. `describe.steering` reports `enabled`, the supported `site`, `modes`,
+`prospective: true`, and `preserves_reasoning_history: true`.
+The optional `sites` array lists `post_layer_residual_v1` and the experimental
+`post_ffn_output_v1` site. The singular `site` field remains the original/default
+site for older clients. The selected artifact manifest determines the actual
+site; the server does not reinterpret or convert direction payloads.
+
+The bound-session operation `steer` selects a registered artifact while idle:
+
+```json
+{"op":"steer","artifact":"<64-character-artifact-id>","strength":-0.25}
+```
+
+A successful reply has this shape:
+
+```json
+{"ok":true,"steering":{"artifact":"<64-character-artifact-id>","strength":-0.25,"position":128,"transitions":2}}
+```
+
+Omit `artifact` to inspect the current selection without changing it. Set
+`artifact` to JSON `null` to disable future interventions; its strength is zero.
+For an artifact ID the default strength is 1. Strength must be finite in float32.
+Unknown, missing, corrupted or model-incompatible IDs return `invalid_request`.
+Updates are durable before acknowledgement and cannot be applied during active
+generation. The server accepts IDs, not filesystem paths or vector uploads.
+
+`position` is the next model context position affected, counting tokens rather
+than visible characters. Cached KV and existing logits retain their historical
+values; a subsequent sample can use logits computed before the transition.
+Disabling steering does not undo the past. Repeated changes at one position
+are ordered as recorded, with the last one applying to new work there.
+
+The first transition freezes the current context projection. Later generated
+reasoning/control tokens remain in historical context even when the selected
+reasoning-history setting would ordinarily discard them. This preserves
+steering positions across replay and uses more context. Current reasoning
+budgets still govern future generation; changing them does not rewrite the
+frozen system prefix or its global thinking marker. Enable reasoning before the
+first transition, or rebuild after changing its settings, when that template
+marker is required. Rewind removes changes on the discarded
+branch; rebuild starts at position zero with the selected configuration.
+Historical artifacts must remain available after steering is disabled.
+
+For `ephemeral`, the optional field `steering` is an object with `artifact` and
+optional `strength`, or `null`. Each request starts with independent settings;
+omission means unsteered. For durable generations use `steer` before `generate`,
+rather than a `steering` field on `generate`. Steering applies to text-only
+sessions in this version; combining it with visual history/input is rejected.
+See [STEERING.md](../STEERING.md) for the artifact contract and numerical semantics.
+
+## Reasoning prefixes
+
+`describe.reasoning.prefix: {"max_bytes":4096}` advertises support. Clients must
+check this capability before sending `reasoning.prefix` in `generate` or
+`ephemeral`. The field is a UTF-8 string, preserved including whitespace, and
+applies only to this request. Omission or an empty string requests no new prefix.
+It is not an inherited generation setting. NUL, invalid UTF-8, model framing
+sequences (`<|`, `|>`, `<bos>`, `<eos>` or `<pad>`) and values over 4096 bytes are rejected.
+
+```json
+{"op":"generate","reasoning":{"effort":"high","prefix":"First identify the assumptions.\n"}}
+```
+
+A nonempty prefix requires thinking and a fresh user turn. It is rejected on
+continuation after a tool or an interrupted assistant segment. The engine opens
+`thought`, prefills the prefix, and samples only its continuation. Context
+overflow is rejected without truncation. Prefix tokens occupy input context;
+`max_tokens`, `budget_tokens`, `usage.output` and `usage.reasoning` count generated
+tokens. `usage.reasoning_prefix` reports prefix text tokens (excluding framing),
+already accounted for in input/cache context, not an additional usage total.
+
+The `start` event includes `reasoning_prefix` and `reasoning_prefix_tokens` when
+present. `reasoning_delta` contains only generated continuation. History contains
+the complete `reasoning` and a separate `reasoning_prefix` indicating its supplied
+initial segment. Clients importing assistant messages with `rebuild` can retain
+this provenance using the same field; it must match the beginning of `reasoning`.
+The prefix follows existing reasoning-history projection policies.
+
+Cancellation preserves the logical prefix even before prefill completes. Resume
+continues the existing segment without reinjection. A process crash before a
+result is committed rolls back to the user boundary and reuses the prefix recorded
+at generation start; a conflicting replacement is rejected. Rewind removes the
+prefix with its discarded branch. New prefix records contain critical fields,
+so older engines reject them rather than silently losing their meaning.
+
+
+## Response prefixes
+
+`describe.response.prefix: {"max_bytes":4096}` advertises support for prefilling
+the visible assistant answer when thinking is disabled. Clients must check this
+capability before using `response.prefix` in `generate` or `ephemeral`:
+
+```json
+{"op":"generate","reasoning":false,"response":{"prefix":"Here is my answer: "}}
+```
+
+The text is prefilled after the model's empty, closed thought channel; sampling
+continues directly in the answer. It follows the same UTF-8 validation, byte
+limit and whitespace preservation as reasoning prefixes. A nonempty response
+prefix requires thinking off and a fresh user turn. Supplying both prefix types
+is rejected. Omission or an empty prefix means no new insertion; prefixes are
+not inherited by subsequent requests or tool continuations.
+
+The `start` event supplies `response_prefix` and `response_prefix_tokens`.
+`text_delta` contains only the generated continuation, so clients display the
+start-event prefix once before those deltas. History stores the complete answer
+in `text`, with a separate `response_prefix` recording the supplied beginning.
+Imported assistant messages in `rebuild` and `ephemeral` can retain that field;
+it must match the start of `text`. Response-prefix imports preserve text
+whitespace when rendering history.
+
+`usage.response_prefix` counts supplied text tokens, excluding framing. Those
+tokens are input context, not generated `usage.output` or `usage.reasoning`, and
+do not consume the generated-token limit. Context overflow is rejected without
+truncation. Cancellation, continuation, rewind and crash recovery follow the
+same rules as reasoning prefixes. A pending generation cannot be retried with a
+different prefix or by switching its destination channel. Response-prefix
+records use critical fields so older engines reject incompatible history.
+
+Xenopi's `/brainwash` selects `reasoning.prefix` when thinking is enabled and
+`response.prefix` when it is off. The same saved text therefore follows the
+thinking setting on each new user turn.

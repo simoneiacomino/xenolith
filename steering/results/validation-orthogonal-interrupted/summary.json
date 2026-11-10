@@ -1,0 +1,133 @@
+{
+  "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+  "created_unix": 1792858708.160766,
+  "arguments": {
+    "xenolith": "./xenolith",
+    "model": "/home/devcloud/models/gemma-4-26B-A4B-it-qat/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+    "registry": "/home/devcloud/dev/xenolith-steering-artifacts",
+    "artifact": "cd811e6ac529794375b71130b87c34cdcf437461051e60dc1d2e1aee8b157087",
+    "prompts": "steering/examples/succinct-validation.jsonl",
+    "strengths": "-1,-0.5,0.5,1",
+    "tokens": 384,
+    "out": "/tmp/xenolith-steering-validation-orthogonal",
+    "ctx": 4096,
+    "limit": 5
+  },
+  "prompts_sha256": "b9c026f9c3355f196dc68c7722b3beaf0257af44af02100e2ec6d3054c1edb5c",
+  "summaries": {
+    "baseline": {
+      "samples": 5,
+      "median_words": 273,
+      "length_stops": 5,
+      "constraint_passes": 0,
+      "constraint_cases": 0,
+      "max_repeated_4gram_fraction": 0.03543307086614178,
+      "max_character_run": 4,
+      "median_first_text_seconds": 0.460589369002264,
+      "median_decode_tokens_per_second": 30.06341501604948
+    },
+    "system_prompt": {
+      "samples": 5,
+      "median_words": 67,
+      "length_stops": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0,
+      "max_repeated_4gram_fraction": 0.05882352941176472,
+      "max_character_run": 2,
+      "median_first_text_seconds": 0.6030982869851869,
+      "median_decode_tokens_per_second": 30.293566520924422
+    }
+  },
+  "interpretation": "Response length is not a correctness score. Review archived answers; no automatic factuality claim.",
+  "artifact_manifest": {
+    "active_layers": [
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27
+    ],
+    "dtype": "f32le",
+    "layers": 30,
+    "mode": "projection",
+    "model_sha256": "a7c5bc715f5ff8e99a3e8901ce7d2b42b402c669bf24f7c5250747633d0f5891",
+    "normalization": "unit",
+    "payload": "vectors.f32",
+    "payload_sha256": "1e3ce0e18e78511bc848e83ab5a77071636e8c417b5c4b99f3c7ec00f86f25a1",
+    "provenance": {
+      "dataset_sha256": "5fd7d55083a34d5902c741954169fff80ce65bb988568c3c5495207b5da86c53",
+      "engine_commit": "82ae168ce",
+      "evaluation": "unevaluated; no recommended strength",
+      "method": "paired_difference_of_means_orthogonalized_control_v1",
+      "model_revision": "local-sha256:a7c5bc715f5ff8e99a3e8901ce7d2b42b402c669bf24f7c5250747633d0f5891",
+      "model_source": "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF",
+      "negative_label": "detailed",
+      "numeric_settings": "production_cpu_decode_gpu_prefill; post_layer_residual_v1; prefill=512; compiler=15.2.0; source=8a4eac14794299d543b7ebb7984af7d9bbee5b95a6fd3be0b5365e436ed00da1; flags=2a745642dea153a3544b635f7d98d832ff8206bf8b8df1fe3d3111cac5c259f4",
+      "position": "last_rendered_prompt_token_including_assistant_opening",
+      "positive_label": "succinct",
+      "reasoning": "off",
+      "template_sha256": "845f1ee48e39fc942fe190da9df6a1c5db229e17a96ea08966ad1c9274e73d1b"
+    },
+    "site": "post_layer_residual_v1",
+    "token_policy": "all_text",
+    "version": 1,
+    "width": 2816
+  },
+  "binary_sha256": "ce21aa221f2f705b0bc78c72aa870cb9e910b8aa6782a4b48527ca272557c624",
+  "acceptance_targets": {
+    "median_words_reduction_fraction": 0.15,
+    "additional_length_stops": 0,
+    "additional_constraint_failures": 0,
+    "maximum_repeated_4gram_fraction": 0.2,
+    "maximum_identical_character_run": 32,
+    "note": "Experimental screening targets; factual/code correctness also requires answer review."
+  },
+  "describe": {
+    "ok": true,
+    "protocol": 1,
+    "model": "gemma-4-26B-A4B-it-qat",
+    "context_window": 4096,
+    "max_output": 4096,
+    "max_frame": 65536,
+    "steering": {
+      "enabled": true,
+      "site": "post_layer_residual_v1",
+      "modes": [
+        "additive",
+        "projection"
+      ],
+      "prospective": true,
+      "preserves_reasoning_history": true
+    },
+    "kvstore": false,
+    "reasoning": {
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "history": [
+        "discard",
+        "preserve_tool_calls"
+      ],
+      "budget_tokens": true
+    }
+  },
+  "startup_seconds": 9.25478375799139
+}

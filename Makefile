@@ -4,7 +4,7 @@ $(error CTX is now a runtime option; use --ctx N when starting xenolith)
 endif
 BUILD_COMMIT=$(shell git rev-parse --short=9 HEAD 2>/dev/null || printf unknown)
 BASE_CFLAGS=-O3 -march=native -std=c11 -Wall -Wextra -pthread
-NUMERIC_SOURCES=xenolith.c xenolith.cl cpu_policy.c cpu_policy.h cpu_topology.c cpu_topology.h vision.c vision.h vision_encoder.c vision_encoder.h vision_internal.h vision.cl vendor/stb/stb_image.h
+NUMERIC_SOURCES=steering.c steering.h xenolith.c xenolith.cl cpu_policy.c cpu_policy.h cpu_topology.c cpu_topology.h vision.c vision.h vision_encoder.c vision_encoder.h vision_internal.h vision.cl vendor/stb/stb_image.h
 NUMERIC_SOURCE_HASH=$(shell sha256sum $(NUMERIC_SOURCES) | sha256sum | cut -d' ' -f1)
 NUMERIC_CFLAGS_HASH=$(shell printf '%s' '$(BASE_CFLAGS)' | sha256sum | cut -d' ' -f1)
 CFLAGS=$(BASE_CFLAGS) -DXE_BUILD_COMMIT='"$(BUILD_COMMIT)"' \
@@ -23,8 +23,8 @@ GPU_OBJ=xenolith_gpu_spv.o
 VISION_OBJS=vision.o vision_encoder.o
 CPU_OBJS=cpu_policy.o cpu_topology.o
 
-xenolith: main.o cli_config.o xenolith.o format.o $(VISION_OBJS) json.o profile.o kvstore.o conversation.o runtime.o serve.o $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -o $@ main.o cli_config.o xenolith.o format.o $(VISION_OBJS) json.o profile.o kvstore.o conversation.o runtime.o serve.o $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+xenolith: main.o cli_config.o xenolith.o format.o $(VISION_OBJS) json.o profile.o kvstore.o conversation.o runtime.o serve.o $(GPU_OBJ) steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -o $@ main.o cli_config.o xenolith.o format.o $(VISION_OBJS) json.o profile.o kvstore.o conversation.o runtime.o serve.o $(GPU_OBJ) steering.o $(CPU_OBJS) $(LDLIBS)
 
 # Install only the command. Native configuration belongs to the invoking user.
 install: xenolith
@@ -40,8 +40,9 @@ check-devices: xenolith
 
 .PHONY: install check-install check-devices
 
-main.o: main.c xenolith.h format.h profile.h serve.h conversation.h kvstore.h cli_config.h
+main.o: main.c xenolith.h format.h profile.h serve.h conversation.h kvstore.h cli_config.h json.h
 cli_config.o: cli_config.c cli_config.h json.h
+steering.o: steering.c steering.h json.h format.h
 xenolith.o: $(NUMERIC_SOURCES) xenolith.h xenolith_internal.h format.h
 cpu_policy.o: cpu_policy.c cpu_policy.h
 cpu_topology.o: cpu_topology.c cpu_topology.h cpu_policy.h
@@ -55,8 +56,10 @@ serve.o: serve.c serve.h format.h runtime.h xenolith.h kvstore.h conversation.h 
 main.o profile.o kvstore.o conversation.o runtime.o serve.o: vision.h
 
 clean:
+	rm -f tools/quality/native/xenolith_driver tools/quality/native/xe_tokenizer tools/quality/native/llama_tokenizer
 	rm -f tests/test_cli_config tests/test_visual_cache tests/test_visual_replay tests/test_workers tests/test_cpu_policy tests/test_cpu_topology
-	rm -f *.o xenolith tests/test_cache_policy tests/test_cache_model tests/certify tests/test_kv tests/test_kv_model tests/test_decode tests/test_context_limits \
+	rm -f tests/test_steering_ffn_gpu tests/test_steering tests/test_steering_history tests/test_steering_gpu tests/test_steering_model bench/bench_steering
+	rm -f *.o xenolith tests/test_cache_policy tests/test_cache_model tests/test_tokenizer_model tests/test_kv tests/test_kv_model tests/test_decode tests/test_context_limits \
 		tests/test_model_decode tests/test_fixture_decode bench/bench_decode \
 		tests/test_prefill_projection tests/test_prefill_qkv tests/test_prefill_swa \
 		tests/test_prefill_dense tests/test_prefill_layer tests/test_prefill_session \
@@ -71,7 +74,7 @@ clean:
 		bench/bench_guard bench/compare_pp_tg_xe bench/compare_pp_tg_tokens \
 		bench/bench_b3b.spv bench/bench_b3b_adlp.spv \
 		bench/bench_prefill_gemm bench/bench_prefill_gemm_down \
-		bench/bench_prefill_gemm.spv $(GPU_SPV) $(TEST_TOOLS) $(VISION_REFERENCE_TOOLS) tests/test_vision_input tests/test_vision_gpu tests/test_vision_session tests/test_text_batch_model tools/vision_prepare tests/test_sha256 tests/test_weights_identity
+		bench/bench_prefill_gemm.spv $(GPU_SPV) $(VISION_REFERENCE_TOOLS) tests/test_vision_input tests/test_vision_gpu tests/test_vision_session tests/test_text_batch_model tools/vision_prepare tests/test_sha256 tests/test_weights_identity
 
 $(GPU_SPV): xenolith.cl vision.cl
 	# Xe-LP is the SPIR-V feature baseline; native code is compiled at startup.
@@ -82,20 +85,15 @@ $(GPU_OBJ): $(GPU_SPV) Makefile
 	ld -r -b binary -z noexecstack -o $@ $<
 	objcopy --rename-section .data=.rodata,alloc,load,readonly,data,contents $@
 
-LLAMA_DIR=../llama.cpp
-LLAMA_BUILD=$(LLAMA_DIR)/build-cpu
-LLAMA_LIBDIR=$(LLAMA_BUILD)/bin
-LLAMA_CFLAGS=-I$(LLAMA_DIR)/include -I$(LLAMA_DIR)/ggml/include
-LLAMA_LDFLAGS=-L$(LLAMA_LIBDIR) -Wl,-rpath,$(abspath $(LLAMA_LIBDIR))
 LLAMA_LDLIBS=-lllama -lggml -lggml-base
 
 TEST_CFLAGS=-O2 -std=c11 -Wall -Wextra -pthread
 
-HOST_UNIT_TESTS=tests/test_cpu_policy tests/test_cpu_topology tests/test_inference tests/test_format tests/test_sha256 tests/test_json tests/test_conversation tests/test_gpu_alloc tests/test_prefill_host tests/test_context_limits tests/test_visual_cache tests/test_visual_replay tests/test_vision_input
+HOST_UNIT_TESTS=tests/test_steering tests/test_steering_history tests/test_cpu_policy tests/test_cpu_topology tests/test_inference tests/test_format tests/test_sha256 tests/test_json tests/test_conversation tests/test_gpu_alloc tests/test_prefill_host tests/test_context_limits tests/test_visual_cache tests/test_visual_replay tests/test_vision_input
 # These execute the engine's worker ISA check or VNNI arithmetic.
 VNNI_TESTS=tests/test_workers tests/test_decode
-GPU_TESTS=tests/test_kv tests/test_snapshot tests/test_kvstore tests/test_prefill_session tests/test_vision_gpu
-PERSISTENCE_TESTS=tests/test_cache_model tests/test_snapshot_model tests/test_conversation_model tests/test_session_sync
+GPU_TESTS=tests/test_steering_gpu tests/test_steering_ffn_gpu tests/test_kv tests/test_snapshot tests/test_kvstore tests/test_prefill_session tests/test_vision_gpu
+PERSISTENCE_TESTS=tests/test_steering_model tests/test_cache_model tests/test_snapshot_model tests/test_conversation_model tests/test_session_sync
 PREFILL_TESTS=tests/test_prefill_projection tests/test_prefill_qkv tests/test_prefill_swa \
 	tests/test_prefill_dense tests/test_prefill_layer tests/test_prefill_session
 ENGINE_TESTS=tests/test_snapshot tests/test_snapshot_model tests/test_kvstore \
@@ -114,7 +112,6 @@ tests/test_runtime tests/test_runtime_model tests/test_serve: xenolith.h convers
 tests/test_serve: serve.h
 tests/test_profile: json.h
 
-VOCAB_DIR=$(LLAMA_DIR)/models
 MODEL?=
 # Explicit inputs for the optional model/fixture regression runners below.
 TEST_CONTEXT?=
@@ -123,19 +120,17 @@ VISION_EMBEDDING?=
 MMPROJ?=
 MMPROJ_VARIANT?=
 MMPROJ_INVALID?=
-GOLDEN_PROMPTS=short long mixed ws nl nlonly json
-ORACLE_PROMPTS=short long
 
-tests/certify: tests/certify.c xenolith.o format.o $(VISION_OBJS) profile.o json.o xenolith.h profile.h $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(TEST_CFLAGS) -I. -o $@ tests/certify.c xenolith.o format.o $(VISION_OBJS) profile.o json.o $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_tokenizer_model: tests/test_tokenizer_model.c xenolith.o format.o $(VISION_OBJS) profile.o json.o xenolith.h profile.h $(GPU_OBJ) steering.o $(CPU_OBJS)
+	$(CC) $(TEST_CFLAGS) -I. -o $@ tests/test_tokenizer_model.c xenolith.o format.o $(VISION_OBJS) profile.o json.o $(GPU_OBJ) steering.o $(CPU_OBJS) $(LDLIBS)
 
 tests/test_gpu_alloc: tests/test_gpu_alloc.c xenolith.c xenolith.h xenolith_internal.h format.h
 	$(CC) $(CFLAGS) -ffunction-sections -fdata-sections -I. -o $@ $< \
-		-Wl,--gc-sections -lm
+		-Wl,--gc-sections steering.o json.o format.o -lm
 
 tests/test_prefill_host: tests/test_prefill_host.c xenolith.c xenolith.h xenolith_internal.h format.h vision.c
 	$(CC) $(CFLAGS) -ffunction-sections -fdata-sections -I. -o $@ $< vision.c \
-		-Wl,--gc-sections -lm
+		-Wl,--gc-sections steering.o json.o format.o -lm
 
 tests/test_cli_context: tests/test_cli_context.c xenolith.h xenolith
 	$(CC) $(TEST_CFLAGS) -I. -o $@ $<
@@ -143,8 +138,8 @@ tests/test_cli_context: tests/test_cli_context.c xenolith.h xenolith
 tests/test_cli_workers: tests/test_cli_workers.c xenolith
 	$(CC) $(TEST_CFLAGS) -I. -o $@ $<
 
-tests/test_context_limits: tests/test_context_limits.c cli_config.o main.c xenolith.c xenolith.h xenolith_internal.h runtime.c runtime.h serve.c serve.h profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ $< cli_config.o profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_context_limits: tests/test_context_limits.c cli_config.o main.c xenolith.c xenolith.h xenolith_internal.h runtime.c runtime.h serve.c serve.h profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ $< cli_config.o profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) steering.o $(CPU_OBJS) $(LDLIBS)
 
 check-context: tests/test_cli_context tests/test_cli_workers
 	./tests/test_cli_context
@@ -160,104 +155,104 @@ tests/test_sha256: tests/test_sha256.c format.c format.h
 tests/test_json: tests/test_json.c json.o json.h
 	$(CC) $(TEST_CFLAGS) -I. -o $@ tests/test_json.c json.o -pthread -lm
 
-tests/test_profile: tests/test_profile.c profile.o profile.h json.o format.o $(VISION_OBJS) xenolith.o xenolith.h $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_profile.c profile.o json.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_profile: tests/test_profile.c profile.o profile.h json.o format.o $(VISION_OBJS) xenolith.o xenolith.h $(GPU_OBJ) steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_profile.c profile.o json.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_inference: tests/test_inference.c runtime.c runtime.h serve.c serve.h profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_inference.c profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_inference: tests/test_inference.c runtime.c runtime.h serve.c serve.h profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_inference.c profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_runtime: tests/test_runtime.c runtime.o runtime.h profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_runtime.c runtime.o profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_runtime: tests/test_runtime.c runtime.o runtime.h profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_runtime.c runtime.o profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_runtime_model: tests/test_runtime_model.c runtime.o runtime.h profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_runtime_model.c runtime.o profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_runtime_model: tests/test_runtime_model.c runtime.o runtime.h profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_runtime_model.c runtime.o profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_serve: tests/test_serve.c serve.o serve.h runtime.o runtime.h profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_serve.c serve.o runtime.o profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_serve: tests/test_serve.c serve.o serve.h runtime.o runtime.h profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_serve.c serve.o runtime.o profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) xenolith.o $(GPU_OBJ) steering.o $(CPU_OBJS) $(LDLIBS)
 
 tests/test_serve_model: tests/test_serve_model.c json.o json.h xenolith
 	$(CC) $(TEST_CFLAGS) -I. -o $@ tests/test_serve_model.c json.o -pthread -lm
 
-tests/test_snapshot: tests/test_snapshot.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_snapshot.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_snapshot: tests/test_snapshot.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_snapshot.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_snapshot_model: tests/test_snapshot_model.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_snapshot_model.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_snapshot_model: tests/test_snapshot_model.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_snapshot_model.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_cache_model: tests/test_cache_model.c xenolith.c xenolith.h kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ $< kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_cache_model: tests/test_cache_model.c xenolith.c xenolith.h kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ $< kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_cache_policy: tests/test_cache_policy.c tests/snapshot_compat_fixture.c xenolith.c xenolith.h kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ $< kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_cache_policy: tests/test_cache_policy.c tests/snapshot_compat_fixture.c xenolith.c xenolith.h kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ $< kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_visual_cache: tests/test_visual_cache.c tests/snapshot_compat_fixture.c $(NUMERIC_SOURCES) xenolith_internal.h kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ $< kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_visual_cache: tests/test_visual_cache.c tests/snapshot_compat_fixture.c $(NUMERIC_SOURCES) xenolith_internal.h kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ $< kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_kvstore: tests/test_kvstore.c xenolith.c xenolith.h kvstore.o kvstore.c kvstore.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_kvstore.c kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_kvstore: tests/test_kvstore.c xenolith.c xenolith.h kvstore.o kvstore.c kvstore.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_kvstore.c kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_conversation: tests/test_conversation.c conversation.o conversation.h kvstore.o kvstore.h xenolith.o xenolith.h format.o $(VISION_OBJS) format.h $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_conversation.c conversation.o kvstore.o xenolith.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_conversation: tests/test_conversation.c conversation.o conversation.h kvstore.o kvstore.h xenolith.o xenolith.h format.o $(VISION_OBJS) format.h $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_conversation.c conversation.o kvstore.o xenolith.o format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_conversation_model: tests/test_conversation_model.c xenolith.c xenolith.h conversation.o conversation.h kvstore.o kvstore.h format.o $(VISION_OBJS) format.h $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_conversation_model.c conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_conversation_model: tests/test_conversation_model.c xenolith.c xenolith.h conversation.o conversation.h kvstore.o kvstore.h format.o $(VISION_OBJS) format.h $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_conversation_model.c conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_kv: tests/test_kv.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_kv.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_kv: tests/test_kv.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_kv.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_decode: tests/test_decode.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_decode.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_decode: tests/test_decode.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_decode.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_model_decode: tests/test_model_decode.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_model_decode.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_model_decode: tests/test_model_decode.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_model_decode.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_kv_model: tests/test_kv_model.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_kv_model.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_kv_model: tests/test_kv_model.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_kv_model.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_prefill_projection: tests/test_prefill_projection.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_prefill_projection.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_prefill_projection: tests/test_prefill_projection.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_prefill_projection.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_prefill_qkv: tests/test_prefill_qkv.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_prefill_qkv.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_prefill_qkv: tests/test_prefill_qkv.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_prefill_qkv.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_prefill_swa: tests/test_prefill_swa.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_prefill_swa.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_prefill_swa: tests/test_prefill_swa.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_prefill_swa.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_prefill_dense: tests/test_prefill_dense.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_prefill_dense.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_prefill_dense: tests/test_prefill_dense.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_prefill_dense.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_prefill_layer: tests/test_prefill_layer.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_prefill_layer.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_prefill_layer: tests/test_prefill_layer.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_prefill_layer.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_prefill_session: tests/test_prefill_session.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_prefill_session.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_prefill_session: tests/test_prefill_session.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_prefill_session.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_prefill_session_drop: tests/test_prefill_session.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -DXE_REPACK_DROP_SOURCE -I. -o $@ tests/test_prefill_session.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_prefill_session_drop: tests/test_prefill_session.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -DXE_REPACK_DROP_SOURCE -I. -o $@ tests/test_prefill_session.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_session_sync: tests/test_session_sync.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_session_sync.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_session_sync: tests/test_session_sync.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_session_sync.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-bench/bench_decode: bench/bench_decode.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ bench/bench_decode.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+bench/bench_decode: bench/bench_decode.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ bench/bench_decode.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-bench/bench_attention: bench/bench_attention.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ bench/bench_attention.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+bench/bench_attention: bench/bench_attention.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ bench/bench_attention.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-bench/bench_tg: bench/bench_tg.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ bench/bench_tg.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+bench/bench_tg: bench/bench_tg.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ bench/bench_tg.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
 bench/bench_guard: bench/bench_guard.c
 	$(CC) $(TEST_CFLAGS) -o $@ $<
 
-bench/compare_pp_tg_xe: bench/compare_pp_tg.c xenolith.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ bench/compare_pp_tg.c xenolith.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+bench/compare_pp_tg_xe: bench/compare_pp_tg.c xenolith.o format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ bench/compare_pp_tg.c xenolith.o format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
 bench/compare_pp_tg_tokens: bench/compare_pp_tg_tokens.c
 	$(CC) $(BASE_CFLAGS) -o $@ $<
 
-bench/bench_b3b: bench/bench_b3b.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ bench/bench_b3b.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+bench/bench_b3b: bench/bench_b3b.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ bench/bench_b3b.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
 # CPU maps are runtime settings; the former fixed E-core build was host-specific.
 bench/bench_b3b_8e:
@@ -273,7 +268,7 @@ bench-b3b: bench/bench_b3b bench/bench_b3b.spv
 bench-b14: bench/bench_b3b bench/bench_b3b.spv
 
 bench/bench_prefill_gemm: bench/bench_prefill_gemm.c
-	$(CC) $(TEST_CFLAGS) -o $@ $< $(LDLIBS)
+	$(CC) $(TEST_CFLAGS) -o $@ $< steering.o json.o $(LDLIBS)
 
 bench/bench_prefill_gemm_down: bench/bench_prefill_gemm.c
 	$(CC) $(TEST_CFLAGS) -DBENCH_MOE_N=2816 -DBENCH_MOE_BLOCKS=22 \
@@ -287,8 +282,8 @@ bench/bench_prefill_gemm.spv: bench/bench_prefill_gemm.cl
 bench-prefill-gemm: bench/bench_prefill_gemm bench/bench_prefill_gemm_down \
 	bench/bench_prefill_gemm.spv
 
-tests/test_fixture_decode: tests/test_fixture_decode.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ tests/test_fixture_decode.c format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_fixture_decode: tests/test_fixture_decode.c xenolith.c xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ tests/test_fixture_decode.c format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
 check-kv: tests/test_kv
 	./tests/test_kv
@@ -307,21 +302,21 @@ check-inference: tests/test_inference
 check-cache-large: tests/test_cache_policy
 	./tests/test_cache_policy --large
 
-check-snapshot-compat-host: $(GPU_OBJ) $(CPU_OBJS)
+check-snapshot-compat-host: $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
 	python3 tests/check_snapshot_compat.py --current-only --cc '$(CC)' --base-cflags '$(BASE_CFLAGS)' --ocloc-device '$(OCLOC_DEVICE)'
 
 # Needs the historical commit in local Git history, or LEGACY_SOURCE pointing
 # to an unmodified export of it. No model or GPU device is needed.
-check-snapshot-compat: $(GPU_OBJ) $(CPU_OBJS)
+check-snapshot-compat: $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
 	python3 tests/check_snapshot_compat.py --cc '$(CC)' --base-cflags '$(BASE_CFLAGS)' --ocloc-device '$(OCLOC_DEVICE)' $(if $(LEGACY_SOURCE),--legacy-source '$(LEGACY_SOURCE)')
 
-check-snapshot-compat-model: require-model $(GPU_OBJ) $(CPU_OBJS)
+check-snapshot-compat-model: require-model $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
 	python3 tests/check_snapshot_compat.py --cc '$(CC)' --base-cflags '$(BASE_CFLAGS)' --ocloc-device '$(OCLOC_DEVICE)' $(if $(LEGACY_SOURCE),--legacy-source '$(LEGACY_SOURCE)') --model '$(MODEL)'
 
 check-vision-weights:
 	CC='$(CC)' python3 tests/check_vision_weights.py
 
-check-host-unit: check-vision-weights tests/test_cache_policy $(HOST_UNIT_TESTS) check-kv-load-bounds check-snapshot-compat-host
+check-host-unit: check-steering-host check-vision-weights tests/test_cache_policy $(HOST_UNIT_TESTS) check-kv-load-bounds check-snapshot-compat-host
 	./tests/test_cache_policy
 	@set -e; for test in $(HOST_UNIT_TESTS); do ./$$test; done
 
@@ -334,18 +329,20 @@ check-unit: check-host-unit check-vnni
 check-host: check-host-unit check-context check-config check-install check-devices
 
 check-gpu: $(GPU_TESTS)
+	./tests/test_steering_gpu
+	./tests/test_steering_ffn_gpu
 	./tests/test_kv
 	./tests/test_snapshot
 	./tests/test_kvstore
 	./tests/test_prefill_session route-reset
 	./tests/test_vision_gpu
 
-check: require-model tests/certify tests/test_model_decode
+check: require-model tests/test_tokenizer_model tests/test_model_decode
 	$(MAKE) check-unit
 	$(MAKE) check-context
 	$(MAKE) check-gpu
 	./tests/test_model_decode "$(MODEL)"
-	XENOLITH_MODEL="$(MODEL)" ./tests/certify
+	XENOLITH_MODEL="$(MODEL)" ./tests/test_tokenizer_model
 
 check-persistence: require-model $(PERSISTENCE_TESTS)
 	@set -e; for test in $(PERSISTENCE_TESTS); do ./$$test "$(MODEL)"; done
@@ -371,44 +368,6 @@ check-runtime: require-model xenolith tests/test_json tests/test_profile tests/t
 	./tests/test_profile "$(MODEL)"
 	./tests/test_runtime "$(MODEL)"
 	./tests/test_runtime_model "$(MODEL)"
-
-golden: require-model test-tools
-	mkdir -p tests/golden tests/fixtures
-	@set -e; stage=$$(mktemp -d tests/.golden.XXXXXX); \
-	trap 'rm -f "$$stage"/*; rmdir "$$stage"' EXIT; \
-	trap 'exit 1' HUP INT TERM; \
-	for p in $(GOLDEN_PROMPTS); do \
-		tools/tokenize_prompt "$(MODEL)" tests/prompts/$$p.txt > "$$stage/$$p.ids"; \
-	done; \
-	for p in $(ORACLE_PROMPTS); do \
-		ids=$$(tools/tokenize_prompt "$(MODEL)" tests/prompts/$$p.txt); \
-		tools/dump_logits "$(MODEL)" "$$ids" "$$stage/$$p.logits"; \
-	done; \
-	cp "$(VOCAB_DIR)/ggml-vocab-gemma-4.gguf.inp" "$$stage/ggml-vocab-gemma-4.gguf.inp"; \
-	cp "$(VOCAB_DIR)/ggml-vocab-gemma-4.gguf.out" "$$stage/ggml-vocab-gemma-4.gguf.out"; \
-	for p in $(GOLDEN_PROMPTS); do mv "$$stage/$$p.ids" tests/golden/$$p.ids; done; \
-	for p in $(ORACLE_PROMPTS); do mv "$$stage/$$p.logits" tests/golden/$$p.logits; done; \
-	mv "$$stage/ggml-vocab-gemma-4.gguf.inp" tests/fixtures/ggml-vocab-gemma-4.gguf.inp; \
-	mv "$$stage/ggml-vocab-gemma-4.gguf.out" tests/fixtures/ggml-vocab-gemma-4.gguf.out
-
-TEST_TOOLS=tools/dump_logits tools/tokenize_prompt tools/dump_layers tools/compare_logits
-
-test-tools: $(TEST_TOOLS)
-
-tools/dump_logits: tools/dump_logits.c
-	$(CC) $(TEST_CFLAGS) $(LLAMA_CFLAGS) -o $@ $< $(LLAMA_LDFLAGS) $(LLAMA_LDLIBS) $(LDLIBS)
-
-tools/dump_layers: tools/dump_layers.c
-	$(CC) $(TEST_CFLAGS) $(LLAMA_CFLAGS) -o $@ $< $(LLAMA_LDFLAGS) $(LLAMA_LDLIBS) $(LDLIBS)
-
-tools/tokenize_prompt: tools/tokenize_prompt.c
-	$(CC) $(TEST_CFLAGS) $(LLAMA_CFLAGS) -o $@ $< $(LLAMA_LDFLAGS) $(LLAMA_LDLIBS) $(LDLIBS)
-
-tools/compare_logits: tools/compare_logits.c
-	$(CC) $(TEST_CFLAGS) -o $@ $< -lm
-
-test-tools-clean:
-	rm -f $(TEST_TOOLS)
 
 # Optional CPU oracles, never linked into Xenolith. Build the two pinned llama.cpp
 # checkouts separately first: encoder uses vision_reference_patch.py; decoder must
@@ -488,7 +447,7 @@ require-model:
 	@test -f "$(MODEL)" || { printf '%s\n' 'Set MODEL to the path of the Gemma 4 GGUF file.' >&2; exit 2; }
 
 .PHONY: check-cache-large require-model clean check check-inference check-host check-host-unit check-vnni check-unit check-gpu check-context check-persistence check-prefill check-all check-snapshot-compat-host check-snapshot-compat \
-	check-snapshot-compat-model check-kv check-kv-edges check-kv-load-bounds check-runtime check-serve golden test-tools test-tools-clean \
+	check-snapshot-compat-model check-kv check-kv-edges check-kv-load-bounds check-runtime check-serve \
 	bench-b3b bench-b14 bench-prefill-gemm check-vision check-vision-weights
 
 .PHONY: check-vision-session-model check-text-batch-model check-weights-identity \
@@ -506,29 +465,29 @@ tests/test_vision_input: tests/test_vision_input.c vision.o format.o
 tools/vision_prepare: tools/vision_prepare.c vision.o format.o
 	$(CC) $(TEST_CFLAGS) -o $@ $^ -lm
 
-tests/test_vision_gpu: tests/test_vision_gpu.c xenolith.c xenolith.h vision_encoder.c vision_internal.h $(VISION_OBJS) format.o $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ $< $(VISION_OBJS) format.o $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_vision_gpu: tests/test_vision_gpu.c xenolith.c xenolith.h vision_encoder.c vision_internal.h $(VISION_OBJS) format.o $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ $< $(VISION_OBJS) format.o $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
 check-vision: tests/test_vision_input tests/test_vision_gpu
 	./tests/test_vision_input
 	./tests/test_vision_gpu
 
-tests/test_vision_session: tests/test_vision_session.c xenolith.c xenolith.h vision_encoder.c vision_internal.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ $< format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_vision_session: tests/test_vision_session.c xenolith.c xenolith.h vision_encoder.c vision_internal.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ $< format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_text_batch_model: tests/test_text_batch_model.c xenolith.o xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ $< xenolith.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_text_batch_model: tests/test_text_batch_model.c xenolith.o xenolith.h format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ $< xenolith.o format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
-tests/test_weights_identity: tests/test_weights_identity.c xenolith.c xenolith.h format.h $(NUMERIC_SOURCES) $(VISION_OBJS) format.o $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ $< $(VISION_OBJS) format.o $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_weights_identity: tests/test_weights_identity.c xenolith.c xenolith.h format.h $(NUMERIC_SOURCES) $(VISION_OBJS) format.o $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ $< $(VISION_OBJS) format.o $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
 # Exercise visual media replay with deterministic encoding and real storage.
-tests/test_visual_replay: tests/test_visual_replay.c runtime.c runtime.h xenolith.h xenolith_internal.h $(NUMERIC_SOURCES) profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ $< profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_visual_replay: tests/test_visual_replay.c runtime.c runtime.h xenolith.h xenolith_internal.h $(NUMERIC_SOURCES) profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ $< profile.o json.o conversation.o kvstore.o format.o $(VISION_OBJS) $(GPU_OBJ) steering.o $(CPU_OBJS) $(LDLIBS)
 
 # Real CPU worker pool and scratch checks; no GPU/model is opened.
-tests/test_workers: tests/test_workers.c xenolith.c xenolith.h xenolith_internal.h format.h $(NUMERIC_SOURCES) format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(CFLAGS) -I. -o $@ $< format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_workers: tests/test_workers.c xenolith.c xenolith.h xenolith_internal.h format.h $(NUMERIC_SOURCES) format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ $< format.o $(VISION_OBJS) $(GPU_OBJ) json.o steering.o $(CPU_OBJS) $(LDLIBS)
 
 tests/test_cpu_policy: tests/test_cpu_policy.c cpu_policy.c cpu_policy.h
 	$(CC) $(TEST_CFLAGS) -I. -o $@ tests/test_cpu_policy.c cpu_policy.c
@@ -570,3 +529,116 @@ check-installer:
 	python3 -m unittest discover -s installer/tests -v
 
 .PHONY: check-engine-package check-installer
+
+# The driver links the same objects and flags as the current engine build.
+# Use xe-quality-backend to force a rebuild and create an immutable receipt.
+PYTHON ?= python3
+QUALITY_NATIVE=tools/quality/native
+QUALITY_OBJECTS=xenolith.o format.o $(VISION_OBJS) $(GPU_OBJ) steering.o json.o $(CPU_OBJS)
+
+$(QUALITY_NATIVE)/xenolith_driver: $(QUALITY_NATIVE)/xenolith_driver.c xenolith.h $(QUALITY_OBJECTS)
+	$(CC) $(CFLAGS) -I. -o $@ $< $(QUALITY_OBJECTS) $(LDLIBS)
+
+$(QUALITY_NATIVE)/xe_tokenizer: $(QUALITY_NATIVE)/xe_tokenizer.c xenolith.h $(QUALITY_OBJECTS)
+	$(CC) $(CFLAGS) -I. -o $@ $< $(QUALITY_OBJECTS) $(LDLIBS)
+
+quality-driver: $(QUALITY_NATIVE)/xenolith_driver
+quality-tokenizer: $(QUALITY_NATIVE)/xe_tokenizer
+
+# Independent tokenizer, against an explicitly supplied external llama.cpp build.
+LLAMA_TOKENIZER_DIR ?=
+LLAMA_TOKENIZER_BUILD ?=$(LLAMA_TOKENIZER_DIR)/build-cpu
+quality-llama-tokenizer:
+	@test -n "$(LLAMA_TOKENIZER_DIR)" -a -f "$(LLAMA_TOKENIZER_BUILD)/bin/libllama.so" || { printf '%s\n' 'Set LLAMA_TOKENIZER_DIR and LLAMA_TOKENIZER_BUILD to an explicit built llama.cpp checkout.' >&2; exit 2; }
+	$(CXX) -O2 -std=c++17 -I"$(LLAMA_TOKENIZER_DIR)/include" -I"$(LLAMA_TOKENIZER_DIR)/ggml/include" -o $(QUALITY_NATIVE)/llama_tokenizer $(QUALITY_NATIVE)/llama_tokenizer.cpp -L"$(LLAMA_TOKENIZER_BUILD)/bin" -Wl,-rpath,"$(abspath $(LLAMA_TOKENIZER_BUILD)/bin)" $(LLAMA_LDLIBS)
+
+quality-build-info:
+	@printf '%s\n' 'CC=$(CC)' 'CFLAGS=$(CFLAGS)' 'LDLIBS=$(LDLIBS)' 'NUMERIC_SOURCE_HASH=$(NUMERIC_SOURCE_HASH)' 'NUMERIC_CFLAGS_HASH=$(NUMERIC_CFLAGS_HASH)'
+
+check-quality-unit:
+	$(PYTHON) -m unittest discover -s tests/quality -p 'test_*.py' -v
+
+QUALITY_FIXTURES ?=tools/quality/fixtures/gemma4
+QUALITY_BASELINE ?=
+verify-quality-fixtures:
+	$(PYTHON) -m xe_quality.fixtures verify --fixtures "$(QUALITY_FIXTURES)"
+
+check-quality-fixtures: require-model
+	@test -f "$(BACKEND_CONFIG)" -a -n "$(QUALITY_OUTPUT)" || { printf '%s\n' 'Set BACKEND_CONFIG and a new QUALITY_OUTPUT; see tools/quality/fixtures/README.md.' >&2; exit 2; }
+	$(PYTHON) -m xe_quality.fixtures compare --fixtures "$(QUALITY_FIXTURES)" --model "$(MODEL)" --backend-config "$(BACKEND_CONFIG)" --output "$(QUALITY_OUTPUT)" $(if $(QUALITY_BASELINE),--baseline "$(QUALITY_BASELINE)")
+
+# An explicit policy is required for acceptance. Without one the gate exits 3.
+REFERENCE ?=
+BACKEND_CONFIG ?=
+QUALITY_OUTPUT ?=
+POLICY ?=
+check-quality: require-model
+	@test -d "$(REFERENCE)" -a -f "$(BACKEND_CONFIG)" -a -n "$(QUALITY_OUTPUT)" || { printf '%s\n' 'Set REFERENCE, BACKEND_CONFIG and a new QUALITY_OUTPUT; see docs/testing.md.' >&2; exit 2; }
+	$(PYTHON) -m xe_quality compare --archive "$(REFERENCE)" --model "$(MODEL)" --driver "$(QUALITY_NATIVE)/xenolith_driver" --backend-config "$(BACKEND_CONFIG)" --output "$(QUALITY_OUTPUT)" --timeout 1800 $(if $(POLICY),--policy "$(POLICY)")
+
+CORPUS ?=
+REFERENCE_CONFIG ?=
+QUALIFICATION ?=
+GOOGLE_SOURCE ?=
+reference: require-model
+	$(PYTHON) -m xe_quality build-reference --model "$(MODEL)" --google-source "$(GOOGLE_SOURCE)" --corpus "$(CORPUS)" --config "$(REFERENCE_CONFIG)" --qualification "$(QUALIFICATION)" --output "$(QUALITY_OUTPUT)"
+
+tests/test_decode tests/test_kv tests/test_model_decode tests/test_prefill_layer: tests/support/scalar_ops.h
+
+.PHONY: quality-driver quality-tokenizer quality-llama-tokenizer quality-build-info check-quality-unit check-quality reference
+.PHONY: verify-quality-fixtures check-quality-fixtures
+$(ENGINE_TESTS) tests/test_cache_model tests/test_cache_policy tests/test_context_limits \
+    tests/test_gpu_alloc tests/test_prefill_host tests/test_vision_gpu tests/test_vision_session \
+    tests/test_visual_cache tests/test_visual_replay tests/test_weights_identity \
+    tests/test_tokenizer_model tests/test_inference tests/test_runtime tests/test_runtime_model tests/test_serve \
+    tests/test_profile bench/bench_decode bench/bench_attention bench/bench_tg bench/bench_b3b \
+    bench/bench_b3b_8e bench/bench_guard bench/compare_pp_tg_xe: steering.o json.o
+
+# Portable artifact/numerical checks do not require the inference engine or GPU.
+tests/test_steering: tests/test_steering.c steering.c steering.h json.c format.c
+	$(CC) $(TEST_CFLAGS) -I. -o $@ tests/test_steering.c steering.c json.c format.c -lm
+
+check-steering-host: tests/test_steering
+	./tests/test_steering
+	python3 tests/check_steering_builder.py
+	python3 tests/check_language_steering.py
+	python3 tests/check_steering_evaluator.py
+
+tests/test_steering_history: tests/test_steering_history.c conversation.o kvstore.o xenolith.o format.o steering.o json.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
+	$(CC) $(TEST_CFLAGS) -I. -o $@ $< conversation.o kvstore.o xenolith.o format.o steering.o json.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+
+tests/test_steering_gpu: tests/test_steering_gpu.c tests/steering_fixture.h $(NUMERIC_SOURCES) format.o steering.o json.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ $< format.o steering.o json.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+
+check-steering: check-steering-host tests/test_steering_history tests/test_steering_gpu tests/test_steering_ffn_gpu
+	./tests/test_steering_history
+	./tests/test_steering_gpu
+	./tests/test_steering_ffn_gpu
+
+tests/test_steering_model: tests/test_steering_model.c tests/steering_fixture.h $(NUMERIC_SOURCES) format.o steering.o json.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ $< format.o steering.o json.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+
+check-steering-model: require-model tests/test_steering_model
+	./tests/test_steering_model "$(MODEL)"
+
+main.o profile.o kvstore.o conversation.o runtime.o serve.o: steering.h
+.PHONY: check-steering-host check-steering check-steering-model
+
+bench/bench_steering: bench/bench_steering.c serve.h xenolith.o format.o steering.o json.o profile.o kvstore.o conversation.o runtime.o serve.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ $< xenolith.o format.o steering.o json.o profile.o kvstore.o conversation.o runtime.o serve.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+
+# Capture provenance embeds the numerical source hash in main.o as well.
+main.o: $(NUMERIC_SOURCES)
+main.o: profile.c json.c
+main.o: CFLAGS += -DXE_CAPTURE_SOURCE_HASH='"$(shell sha256sum main.c profile.c json.c | sha256sum | cut -d\  -f1)"'
+
+tests/test_steering_ffn_gpu: tests/test_steering_ffn_gpu.c tests/steering_fixture.h $(NUMERIC_SOURCES) format.o steering.o json.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
+	$(CC) $(CFLAGS) -I. -o $@ $< format.o steering.o json.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+
+# Native model/session checks for text reasoning prefixes.
+check-reasoning-prefix: require-model xenolith tests/test_profile tests/test_runtime
+	./tests/test_profile "$(MODEL)"
+	./tests/test_runtime "$(MODEL)"
+	python3 tests/check_reasoning_prefix.py --xenolith ./xenolith --model "$(MODEL)"
+	python3 tests/check_response_prefix.py --xenolith ./xenolith --model "$(MODEL)"
+.PHONY: check-reasoning-prefix

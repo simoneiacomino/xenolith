@@ -43,7 +43,8 @@ typedef enum {
     CONVERSATION_EVENT_SNAPSHOT_REF = 9,
     CONVERSATION_EVENT_CACHE_EPOCH = 10,
     CONVERSATION_EVENT_COMMIT = 11,
-    CONVERSATION_EVENT_REWIND = 12
+    CONVERSATION_EVENT_REWIND = 12,
+    CONVERSATION_EVENT_STEERING = 13
 } conversation_event_type;
 
 #define CONVERSATION_REWIND_ALL UINT64_MAX
@@ -121,6 +122,9 @@ typedef struct {
 typedef struct {
     uint64_t generation_id;
     conversation_settings settings;
+    const char *reasoning_prefix;
+    uint32_t preserve_raw_reasoning;
+    const char *response_prefix;
 } conversation_generation;
 
 typedef struct {
@@ -152,6 +156,11 @@ typedef struct {
     uint32_t raw_token_count;
     const uint8_t *reasoning;
     uint64_t reasoning_length;
+    const uint8_t *reasoning_prefix;
+    uint64_t reasoning_prefix_length;
+    const uint8_t *response_prefix;
+    uint64_t response_prefix_length;
+    uint32_t preserve_raw_reasoning;
     uint32_t reasoning_close;
     conversation_settings settings;
     uint64_t generation_id;
@@ -168,6 +177,8 @@ typedef struct {
     uint64_t snapshot_boundary;
     uint64_t epoch;
     uint64_t rewind_target;
+    uint64_t steering_position;
+    float steering_strength;
 } conversation_event;
 
 typedef struct {
@@ -218,6 +229,15 @@ conversation_status conversation_append_message_variants(
     const int32_t *alternate_tokens, uint32_t alternate_token_count,
     const void *reasoning, uint64_t reasoning_length,
     uint32_t reasoning_close);
+conversation_status conversation_append_message_variants_prefix(
+    conversation *c, uint32_t role,
+    const conversation_block *blocks, uint32_t block_count,
+    const void *render, uint64_t render_length,
+    const int32_t *tokens, uint32_t token_count,
+    const void *alternate_render, uint64_t alternate_render_length,
+    const int32_t *alternate_tokens, uint32_t alternate_token_count,
+    const void *reasoning, uint64_t reasoning_length,
+    uint32_t reasoning_close, const char *reasoning_prefix, const char *response_prefix);
 conversation_status conversation_append_generation_started(
     conversation *c, const conversation_generation *generation);
 conversation_status conversation_append_generation_result(
@@ -248,6 +268,10 @@ conversation_status conversation_append_tool_result(
 conversation_status conversation_append_snapshot_ref(
     conversation *c, const kvstore_id *snapshot, uint64_t token_boundary);
 conversation_status conversation_append_cache_epoch(conversation *c);
+size_t conversation_steering_count(const conversation *c);
+const conversation_event *conversation_steering_at(const conversation *c, size_t index);
+conversation_status conversation_append_steering(conversation *c, uint64_t position,
+                                                 const uint8_t artifact[32], float strength);
 conversation_status conversation_append_rewind(conversation *c,
                                                uint64_t target_event);
 conversation_status conversation_commit(conversation *c);

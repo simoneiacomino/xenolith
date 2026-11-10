@@ -1,0 +1,106 @@
+{
+  "arguments": {
+    "model": "/home/devcloud/models/gemma-4-26B-A4B-it-qat/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+    "xenolith": "./xenolith",
+    "registry": "/home/devcloud/dev/xenolith-steering-artifacts",
+    "configs": "steering/examples/language/selected.json",
+    "prompts": "steering/examples/constraints-eval.jsonl",
+    "out": "/tmp/xenolith-language-constraints",
+    "limit": null,
+    "tokens": 384
+  },
+  "configs": [
+    {
+      "name": "baseline"
+    },
+    {
+      "name": "system_italian",
+      "system": "You are a helpful assistant. Answer the question briefly in two or three sentences. Answer in Italian."
+    },
+    {
+      "name": "instructions_l16_r0.3",
+      "artifact": "f866d1f97d1ccd77262810c57db431a90d59a2329c4dc515c6a27604daaeb8dc",
+      "strength": 0.5861355370624906,
+      "relative_displacement_estimate": 0.3,
+      "layer": 16,
+      "capture_recipe": "instructions",
+      "selection_reason": "10/10 validation answers predominantly Italian; cleaner wording than completion candidate; frozen before held-out evaluation"
+    }
+  ],
+  "system": "You are a helpful assistant. Answer the question briefly in two or three sentences.",
+  "prompts_sha256": "576e9f83983d10c487f38ed088912e5b4e790e6e4cb022f468b22597c6510978",
+  "binary_sha256": "b643ca695e1cc494b7ad2a7d7b1cc19574eac38636f1c91ce9a87604565ffe9c",
+  "evaluator_sha256": "0af96c4d391949ab79974569fc1e2de5d78e2da30dffc56252cfe253a5ad2711",
+  "created_unix": 1792864645.4686615,
+  "summaries": {
+    "baseline": {
+      "samples": 6,
+      "italian": 0,
+      "english": 0,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 4,
+      "replacements": 0,
+      "constraint_passes": 6,
+      "constraint_cases": 6
+    },
+    "system_italian": {
+      "samples": 6,
+      "italian": 0,
+      "english": 0,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 4,
+      "replacements": 0,
+      "constraint_passes": 5,
+      "constraint_cases": 6
+    },
+    "instructions_l16_r0.3": {
+      "samples": 6,
+      "italian": 0,
+      "english": 0,
+      "errors": 0,
+      "length_stops": 0,
+      "max_repetition": 0.0,
+      "max_character_run": 4,
+      "replacements": 0,
+      "constraint_passes": 6,
+      "constraint_cases": 6
+    }
+  },
+  "language_measure": "stopword heuristic; requires manual review",
+  "describe": {
+    "ok": true,
+    "protocol": 1,
+    "model": "gemma-4-26B-A4B-it-qat",
+    "context_window": 4096,
+    "max_output": 4096,
+    "max_frame": 65536,
+    "steering": {
+      "enabled": true,
+      "site": "post_layer_residual_v1",
+      "modes": [
+        "additive",
+        "projection"
+      ],
+      "prospective": true,
+      "preserves_reasoning_history": true
+    },
+    "kvstore": false,
+    "reasoning": {
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "history": [
+        "discard",
+        "preserve_tool_calls"
+      ],
+      "budget_tokens": true
+    }
+  }
+}

@@ -85,6 +85,8 @@ typedef struct {
     uint32_t kind;
     const char *text;
     const char *reasoning;
+    const char *response_prefix;
+    const char *reasoning_prefix;
     uint64_t call_id;
     uint32_t tool_status;
     const char *tool_name;
@@ -107,6 +109,11 @@ typedef struct {
     uint32_t reasoning_history;
     int reasoning_budget_set;
     int32_t reasoning_budget;
+    const char *response_prefix;
+    const char *reasoning_prefix; /* Per request, never inherited. */
+    int steering_set;
+    const char *steering_id; /* NULL explicitly disables steering for ephemeral input. */
+    float steering_strength;
 } runtime_gen_params;
 
 typedef struct {
@@ -115,6 +122,8 @@ typedef struct {
     uint64_t output;
     uint64_t total;
     uint64_t reasoning;
+    uint64_t reasoning_prefix;
+    uint64_t response_prefix;
     uint64_t replayed;
     uint64_t shadow_prefilled;
     uint64_t shadow_background;
@@ -186,6 +195,10 @@ typedef struct {
     runtime_inference_measure progress;
     runtime_inference inference; /* done/error: frozen before finalization */
     uint32_t stop;
+    const char *response_prefix;
+    const char *reasoning_prefix;
+    uint64_t reasoning_prefix_length;
+    uint64_t response_prefix_length;
     uint32_t reasoning_close;
     runtime_usage usage;
     runtime_marker marker;
@@ -215,6 +228,10 @@ typedef struct {
     uint64_t text_length;
     const char *reasoning;
     uint64_t reasoning_length;
+    const char *response_prefix;
+    const char *reasoning_prefix;
+    uint64_t reasoning_prefix_length;
+    uint64_t response_prefix_length;
     const char *extra_json;
     uint64_t extra_length;
     uint64_t call_id;
@@ -236,6 +253,17 @@ runtime_status runtime_open(runtime **out, xe_engine *engine, const char *state_
 void runtime_close(runtime *w);
 
 runtime_status runtime_describe(runtime *w, runtime_info *out);
+
+typedef struct {
+    char artifact[65]; /* Empty means disabled. */
+    float strength;
+    uint64_t position;
+    uint64_t transitions;
+} runtime_steering_info;
+int runtime_steering_enabled(const runtime *w);
+runtime_status runtime_session_steering(runtime *w, const char *artifact, float strength,
+                                        runtime_steering_info *out);
+runtime_status runtime_session_steering_get(runtime *w, runtime_steering_info *out);
 
 runtime_status runtime_session_create(runtime *w, const char *system,
                                 const profile_tool *tools, size_t tool_count,

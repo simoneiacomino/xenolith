@@ -1,0 +1,161 @@
+{
+  "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+  "created_unix": 1792880840.4308627,
+  "arguments": {
+    "xenolith": "./xenolith",
+    "model": "/home/devcloud/models/gemma-4-26B-A4B-it-qat/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+    "registry": "/home/devcloud/dev/xenolith-steering-artifacts",
+    "artifact": null,
+    "configs": "/tmp/xenolith-verbosity-middle-candidates/configs.json",
+    "skip_controls": true,
+    "prompts": "steering/examples/verbosity/coarse.jsonl",
+    "strengths": "-0.5,-0.25,0.25,0.5",
+    "tokens": 768,
+    "out": "/tmp/xenolith-verbosity-middle",
+    "ctx": 4096,
+    "limit": 2
+  },
+  "prompts_sha256": "b31b0702b8d1aa262fd1db8285d5b53f4f46a0bc5657ea59ea2287cd7a93d3a9",
+  "summaries": {
+    "verbosity_l14_r0.3": {
+      "samples": 2,
+      "median_words": 234.5,
+      "length_stops": 0,
+      "generation_errors": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0,
+      "max_repeated_4gram_fraction": 0.010204081632653073,
+      "max_character_run": 4,
+      "max_replacement_characters": 0,
+      "median_first_text_seconds": 0.3203530199971283,
+      "median_decode_tokens_per_second": 30.052952182733023
+    },
+    "verbosity_l14_r0.6": {
+      "samples": 2,
+      "median_words": 41.0,
+      "length_stops": 0,
+      "generation_errors": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0,
+      "max_repeated_4gram_fraction": 0.0,
+      "max_character_run": 2,
+      "max_replacement_characters": 0,
+      "median_first_text_seconds": 0.31956964297569357,
+      "median_decode_tokens_per_second": 31.433750075921527
+    },
+    "verbosity_l14_r-0.3": {
+      "samples": 2,
+      "median_words": 505.5,
+      "length_stops": 2,
+      "generation_errors": 0,
+      "constraint_passes": 0,
+      "constraint_cases": 0,
+      "max_repeated_4gram_fraction": 0.002012072434607659,
+      "max_character_run": 4,
+      "max_replacement_characters": 0,
+      "median_first_text_seconds": 0.3684654044918716,
+      "median_decode_tokens_per_second": 27.86306945505136
+    }
+  },
+  "interpretation": "Response length is not a correctness score. Review archived answers; no automatic factuality claim.",
+  "configurations": [
+    {
+      "name": "verbosity_l14_r0.3",
+      "artifact": "efd6df1f05899d665821262a495506661abde08990b983cc25cfd6f49ba01552",
+      "strength": 0.5021187679993016,
+      "layer": 14,
+      "relative_displacement_estimate": 0.3
+    },
+    {
+      "name": "verbosity_l14_r0.6",
+      "artifact": "efd6df1f05899d665821262a495506661abde08990b983cc25cfd6f49ba01552",
+      "strength": 1.004237535998603,
+      "layer": 14,
+      "relative_displacement_estimate": 0.6
+    },
+    {
+      "name": "verbosity_l14_r-0.3",
+      "artifact": "efd6df1f05899d665821262a495506661abde08990b983cc25cfd6f49ba01552",
+      "strength": -0.5021187679993016,
+      "layer": 14,
+      "relative_displacement_estimate": -0.3
+    }
+  ],
+  "artifact_manifests": {
+    "efd6df1f05899d665821262a495506661abde08990b983cc25cfd6f49ba01552": {
+      "active_layers": [
+        14
+      ],
+      "dtype": "f32le",
+      "layers": 30,
+      "mode": "additive",
+      "model_sha256": "a7c5bc715f5ff8e99a3e8901ce7d2b42b402c669bf24f7c5250747633d0f5891",
+      "normalization": "none",
+      "payload": "vectors.f32",
+      "payload_sha256": "937f3ac085107f99c6d650ed4436558576f19a0268393b621d203d57783e34f9",
+      "provenance": {
+        "dataset_sha256": "9532191d20ff514302d40d54bd06b6b781fb6c2ea33aaef8d443a44c71fd73b6",
+        "engine_commit": "82ae168ce",
+        "evaluation": "unevaluated; no recommended strength",
+        "method": "paired_difference_of_means_v1",
+        "model_revision": "7b92b5b28818151e8669af2e45e88d6086f490dd",
+        "model_source": "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF",
+        "negative_label": "detailed",
+        "numeric_settings": "production_cpu_decode_gpu_prefill; post_layer_residual_v1; prefill=512; compiler=15.2.0; source=1e949aa1f7245c49218ea64b0d88966327432880c57261bf33b0733a4d1c668f; flags=2a745642dea153a3544b635f7d98d832ff8206bf8b8df1fe3d3111cac5c259f4; extractor=4fbd784b0564ed8f61242d9f4f48dabff112026db5ad7fcebe049b05cf0b1c05",
+        "position": "last_rendered_prompt_token_including_assistant_opening",
+        "positive_label": "succinct",
+        "reasoning": "off",
+        "template_sha256": "845f1ee48e39fc942fe190da9df6a1c5db229e17a96ea08966ad1c9274e73d1b"
+      },
+      "site": "post_layer_residual_v1",
+      "token_policy": "all_text",
+      "version": 1,
+      "width": 2816
+    }
+  },
+  "binary_sha256": "b643ca695e1cc494b7ad2a7d7b1cc19574eac38636f1c91ce9a87604565ffe9c",
+  "evaluator_sha256": "ad5f53283d8f83e0a95f888d5b8a7f72a9fd6fb20ed0267daee4afeca65e85b0",
+  "acceptance_targets": {
+    "median_words_reduction_fraction": 0.15,
+    "additional_length_stops": 0,
+    "additional_constraint_failures": 0,
+    "maximum_repeated_4gram_fraction": 0.2,
+    "maximum_identical_character_run": 32,
+    "additional_generation_errors": 0,
+    "maximum_replacement_characters": 0,
+    "note": "Experimental screening targets; factual/code correctness also requires answer review."
+  },
+  "describe": {
+    "ok": true,
+    "protocol": 1,
+    "model": "gemma-4-26B-A4B-it-qat",
+    "context_window": 4096,
+    "max_output": 4096,
+    "max_frame": 65536,
+    "steering": {
+      "enabled": true,
+      "site": "post_layer_residual_v1",
+      "modes": [
+        "additive",
+        "projection"
+      ],
+      "prospective": true,
+      "preserves_reasoning_history": true
+    },
+    "kvstore": false,
+    "reasoning": {
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "history": [
+        "discard",
+        "preserve_tool_calls"
+      ],
+      "budget_tokens": true
+    }
+  },
+  "startup_seconds": 9.235191611020127
+}

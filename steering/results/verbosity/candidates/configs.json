@@ -1,0 +1,58 @@
+[
+  {
+    "name": "verbosity_l6_r0.1",
+    "artifact": "a7e5be4d8b8e68cef5439918debebff791a23e550b71e368e3e17b49a89cef96",
+    "strength": 0.27571088284631196,
+    "layer": 6,
+    "relative_displacement_estimate": 0.1
+  },
+  {
+    "name": "verbosity_l6_r0.3",
+    "artifact": "a7e5be4d8b8e68cef5439918debebff791a23e550b71e368e3e17b49a89cef96",
+    "strength": 0.8271326485389358,
+    "layer": 6,
+    "relative_displacement_estimate": 0.3
+  },
+  {
+    "name": "verbosity_l6_r0.6",
+    "artifact": "a7e5be4d8b8e68cef5439918debebff791a23e550b71e368e3e17b49a89cef96",
+    "strength": 1.6542652970778715,
+    "layer": 6,
+    "relative_displacement_estimate": 0.6
+  },
+  {
+    "name": "verbosity_l6_r-0.3",
+    "artifact": "a7e5be4d8b8e68cef5439918debebff791a23e550b71e368e3e17b49a89cef96",
+    "strength": -0.8271326485389358,
+    "layer": 6,
+    "relative_displacement_estimate": -0.3
+  },
+  {
+    "name": "verbosity_l26_r0.1",
+    "artifact": "d92d63976a035a7b8b0e7bc3b60dad2dfdd17d4702935bd9c25f16adcd8f58c3",
+    "strength": 0.2098969232674296,
+    "layer": 26,
+    "relative_displacement_estimate": 0.1
+  },
+  {
+    "name": "verbosity_l26_r0.3",
+    "artifact": "d92d63976a035a7b8b0e7bc3b60dad2dfdd17d4702935bd9c25f16adcd8f58c3",
+    "strength": 0.6296907698022887,
+    "layer": 26,
+    "relative_displacement_estimate": 0.3
+  },
+  {
+    "name": "verbosity_l26_r0.6",
+    "artifact": "d92d63976a035a7b8b0e7bc3b60dad2dfdd17d4702935bd9c25f16adcd8f58c3",
+    "strength": 1.2593815396045773,
+    "layer": 26,
+    "relative_displacement_estimate": 0.6
+  },
+  {
+    "name": "verbosity_l26_r-0.3",
+    "artifact": "d92d63976a035a7b8b0e7bc3b60dad2dfdd17d4702935bd9c25f16adcd8f58c3",
+    "strength": -0.6296907698022887,
+    "layer": 26,
+    "relative_displacement_estimate": -0.3
+  }
+]

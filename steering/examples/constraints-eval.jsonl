@@ -1,0 +1,6 @@
+{"prompt":"Return only a JSON object with two fields: a equal to the integer 2, and b equal to the integer 3. Do not use Markdown.","kind":"json","expected":{"a":2,"b":3}}
+{"prompt":"Return only valid JSON: an object with status equal to the string ok and count equal to the integer 3. No explanation or Markdown.","kind":"json","expected":{"status":"ok","count":3}}
+{"prompt":"Return only valid JSON: an object whose items field is the array [1,2,3] and whose empty field is false. No Markdown.","kind":"json","expected":{"items":[1,2,3],"empty":false}}
+{"prompt":"Write only Python code defining add(a, b) which returns their sum. Do not include Markdown or explanation.","kind":"python","function":"add"}
+{"prompt":"Write only Python code defining is_even(n) which returns whether n is divisible by two. Do not include Markdown or explanation.","kind":"python","function":"is_even"}
+{"prompt":"Write only Python code defining clamp(n, low, high) which returns n bounded to the inclusive interval. Do not include Markdown or explanation.","kind":"python","function":"clamp"}

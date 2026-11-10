@@ -139,6 +139,32 @@ make install
 
 See the [source build guide](docs/build.md) for dependencies, install prefixes and staging.
 
+## Thought and response prefixes
+
+Clients can supply the opening text of Gemma's thought channel through
+`reasoning.prefix` in the wire protocol. Xenolith prefills the text before
+sampling its continuation, retaining its provenance across sessions and replay.
+See [the protocol](docs/protocol.md#reasoning-prefixes) for capability detection,
+limits and accounting. With thinking disabled, `response.prefix` supplies the
+opening text of the visible answer instead. The companion Xenopi command
+`/brainwash` selects the appropriate channel from the current thinking setting.
+
+## Experimental activation steering
+
+Generate steering vectors locally from the same Gemma QAT GGUF used for
+inference, then load one with `run` or `chat --steering FILE`. `wire` and `serve`
+can expose registered artifacts and per-session changes through
+`--steering-dir DIR`. Existing cache effects are retained across changes.
+See [the steering guide](STEERING.md) for extraction, modes, provenance,
+durable-session behavior, and evaluation status.
+The bundled succinctness experiment did not yield a validated production setting.
+See the [English/Italian pilot](steering/LANGUAGE_EVALUATION.md) for a separate
+language-steering experiment and its interactive launcher.
+
+The [ds4-style verbosity follow-up](steering/VERBOSITY_EVALUATION.md) uses
+locally extracted FFN directions and demonstrates shorter validation answers,
+with documented information loss and formatting limitations.
+
 ## Documentation
 
 See the [documentation index](docs/README.md) for CLI usage, C integration,

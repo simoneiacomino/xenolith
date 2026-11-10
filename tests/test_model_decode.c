@@ -1,21 +1,7 @@
+/* Real-model packing, shared allocations and isolated FFN operator contracts.
+ * Full-model numerical fidelity is checked by tools/quality. */
 #include "../xenolith.c"
-
-static double model_rel_rms(const float *a, const float *b, int n) {
-    double error = 0.0;
-    double reference = 0.0;
-    for (int i = 0; i < n; i++) {
-        double d = (double)a[i] - b[i];
-        error += d * d;
-        reference += (double)b[i] * b[i];
-    }
-    return sqrt(error / (reference + 1e-30));
-}
-
-static double model_now(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
-}
+#include "support/scalar_ops.h"
 
 static int model_shared_allocation(const xe_engine *e, const void *p) {
     ze_memory_allocation_properties_t properties = {
@@ -46,259 +32,158 @@ static int model_gpu_memory(const xe_engine *e) {
     return ok;
 }
 
-static int model_same_expert_order(const int *a, const int *b) {
-    for (int i = 0; i < XE_EXPERTS_USED; i++) if (a[i] != b[i]) return 0;
-    return 1;
+
+static double model_rel(const float *got, const float *want, int n) {
+    double delta = 0.0, energy = 0.0;
+    for (int i = 0; i < n; i++) {
+        double d = (double)got[i] - want[i];
+        delta += d*d;
+        energy += (double)want[i]*want[i];
+    }
+    return sqrt(delta / (energy + 1e-30));
 }
 
-typedef struct {
-    int qs;
-    int scales;
-} model_q8_delta;
-
-static model_q8_delta model_compare_q8(const xe_q8 *got, const float *x, int n) {
+static int model_q8_equal(const xe_q8 *got, const float *x, int n) {
     int8_t qs[REF_Q8_MAX_IN];
     float ds[REF_Q8_MAX_IN / 32];
     ref_quantize_q8(x, n, qs, ds);
-    model_q8_delta d = { 0, 0 };
-    for (int i = 0; i < n; i++) d.qs += got->qs[i] != qs[i];
-    for (int b = 0; b < n / 32; b++) d.scales += (float)got->d[b] != ds[b];
-    return d;
-}
-
-static int model_contains(const int *experts, int expert) {
-    for (int i = 0; i < XE_EXPERTS_USED; i++) if (experts[i] == expert) return 1;
-    return 0;
-}
-
-static int model_same_expert_set(const int *a, const int *b) {
-    for (int i = 0; i < XE_EXPERTS_USED; i++) if (!model_contains(b, a[i])) return 0;
-    return 1;
-}
-
-static int model_router_attribution(const ref_state *ref, const xe_session *s,
-                                    const int *experts, int layer) {
-    int removed = -1;
-    int added = -1;
-    for (int i = XE_EXPERTS_USED - 1; i >= 0; i--) {
-        if (removed < 0 && !model_contains(s->experts, experts[i])) removed = experts[i];
-        if (added < 0 && !model_contains(experts, s->experts[i])) added = s->experts[i];
+    int ok = 1;
+    for (int i = 0; i < n; i++) ok &= got->qs[i] == qs[i];
+    for (int b = 0; b < n / 32; b++) {
+        int sigma = 0;
+        for (int j = 0; j < 32; j++) sigma += qs[32*b+j];
+        ok &= (float)got->d[b] == ds[b] && got->sigma[b] == sigma;
     }
-    if (removed < 0 && added < 0) {
-        double router_rel = model_rel_rms(s->router_logits, ref->router_probs, XE_EXPERTS);
-        printf("model: L%02d router same set reordered rel %.3e ATTRIBUTED\n", layer, router_rel);
-        return 1;
-    }
-    if (removed < 0 || added < 0) return 0;
-    float ref_gap = ref->router_probs[removed] - ref->router_probs[added];
-    float got_gap = s->router_logits[removed] - s->router_logits[added];
-    float perturbation = fabsf(ref_gap - got_gap);
-    double router_rel = model_rel_rms(s->router_logits, ref->router_probs, XE_EXPERTS);
-    int ok = ref_gap <= perturbation + 1e-9f;
-    printf("model: L%02d router removed %d added %d gap %.3e perturb %.3e rel %.3e %s\n",
-           layer, removed, added, (double)ref_gap, (double)perturbation, router_rel,
-           ok ? "ATTRIBUTED" : "FAIL");
     return ok;
 }
 
-static double model_forced_experts(xe_session *s, int layer, const int *experts,
-                                   const float *reference) {
-    const xe_layer *l = &s->engine->layers[layer];
-    float hidden[XE_EMBD];
-    int normal_experts[XE_EXPERTS_USED];
-    float normal_weights[XE_EXPERTS_USED];
-    memcpy(hidden, s->hidden, sizeof hidden);
-    memcpy(normal_experts, s->experts, sizeof normal_experts);
-    memcpy(normal_weights, s->expert_weights, sizeof normal_weights);
-
-    float common_scale = xe_rms_scale_engine(s->engine, s->attn_out, XE_EMBD);
-    xe_ffn_input_arg input = { l, common_scale };
-    xe_dispatch(s->engine, s, xe_ffn_input_phase, &input, 1);
-    xe_router(s, l, layer);
-    float sum = 0.0f;
-    for (int i = 0; i < XE_EXPERTS_USED; i++) sum += s->router_logits[experts[i]];
-    if (sum < ref_moe_weight_sum_min) sum = ref_moe_weight_sum_min;
-    for (int i = 0; i < XE_EXPERTS_USED; i++) {
-        s->experts[i] = experts[i];
-        s->expert_weights[i] = s->router_logits[experts[i]] / sum;
-    }
-    xe_moe_run(s, l, XE_MOE_GENERIC_BATCHED);
-    xe_rmsnorm_engine(s->engine, s->moe_out, l->post_ffw_norm2, XE_EMBD, s->moe_out);
-    for (int i = 0; i < XE_EMBD; i++) s->combined[i] = s->dense_out[i] + s->moe_out[i];
-    xe_rmsnorm_engine(s->engine, s->combined, l->post_ffw_norm, XE_EMBD, s->combined);
-    float out_scale = l->layer_out_scale[0];
+static int model_layer_operators(xe_engine *e, xe_session *s, int layer) {
+    const xe_layer *l = &e->layers[layer];
+    /* Every layer sees the same independent input: there is no reference
+     * hidden-state chain, KV model, embedding forward or output head here. */
     for (int i = 0; i < XE_EMBD; i++)
-        s->hidden[i] = (s->combined[i] + s->attn_out[i]) * out_scale;
-    double rel = model_rel_rms(s->hidden, reference, XE_EMBD);
+        s->attn_out[i] = (float)((i * 17 % 257) - 128) / 128.0f;
+    float dense[XE_EMBD], moe[XE_EMBD], router[XE_EMBD];
+    ref_rmsnorm(s->attn_out, l->ffn_norm, XE_EMBD, dense);
+    ref_rmsnorm(s->attn_out, l->pre_ffw_norm2, XE_EMBD, moe);
+    ref_rmsnorm_weightless(s->attn_out, XE_EMBD, router);
+    for (int i = 0; i < XE_EMBD; i++)
+        router[i] = router[i] / sqrtf((float)XE_EMBD) * l->router_scale[i];
+    xe_ffn_half_decode(s, layer, XE_MOE_GENERIC_BATCHED, 1);
+    int ok = model_q8_equal(&s->q8_dense_in, dense, XE_EMBD)
+             && model_q8_equal(&s->q8_moe_in, moe, XE_EMBD);
+    float probabilities[XE_EXPERTS];
+    ref_matvec_f32(l->router_w, XE_EMBD, XE_EXPERTS, router, probabilities);
+    ref_softmax(probabilities, XE_EXPERTS);
+    int experts[XE_EXPERTS_USED + 1];
+    float weights[XE_EXPERTS_USED + 1];
+    ref_top_k(probabilities, XE_EXPERTS, XE_EXPERTS_USED + 1, experts, weights);
+    float max_delta = 0.0f;
+    for (int i = 0; i < XE_EXPERTS; i++) {
+        float d = fabsf(probabilities[i] - s->router_logits[i]);
+        if (d > max_delta) max_delta = d;
+        ok &= isfinite(s->router_logits[i]);
+    }
+    /* A changed selected set is valid only inside the directly measured
+     * probability perturbation; preserve attribution without a whole model. */
+    for (int slot = 0; slot < XE_EXPERTS_USED; slot++) {
+        int selected = s->experts[slot], found = 0;
+        if (selected < 0 || selected >= XE_EXPERTS) { ok = 0; continue; }
+        for (int j = 0; j < XE_EXPERTS_USED; j++) found |= selected == experts[j];
+        if (!found) ok &= weights[XE_EXPERTS_USED-1] - probabilities[selected]
+                          <= 2.0f * max_delta + 1e-9f;
+        ok &= s->expert_trace[layer][slot] == selected;
+        ok &= s->expert_weight_trace[layer][slot] == s->expert_weights[slot];
+        if (slot) ok &= s->expert_weights[slot-1] >= s->expert_weights[slot];
+        for (int j = 0; j < slot; j++) ok &= selected != s->experts[j];
+    }
+    float sum = 0.0f;
+    for (int slot = 0; slot < XE_EXPERTS_USED; slot++)
+        sum += s->router_logits[s->experts[slot]];
+    if (sum < ref_moe_weight_sum_min) sum = ref_moe_weight_sum_min;
+    for (int slot = 0; slot < XE_EXPERTS_USED; slot++)
+        ok &= fabsf(s->expert_weights[slot]
+                    - s->router_logits[s->experts[slot]] / sum) < 2e-7f;
 
-    memcpy(s->hidden, hidden, sizeof hidden);
-    memcpy(s->experts, normal_experts, sizeof normal_experts);
-    memcpy(s->expert_weights, normal_weights, sizeof normal_weights);
-    return rel;
-}
-
-static int model_dense_boundary(const xe_layer *l, const ref_state *v1, ref_state *scalar,
-                                int layer) {
-    memcpy(scalar->attn_out, v1->attn_out, XE_EMBD * sizeof(*scalar->attn_out));
-    ref_dense_branch(l, scalar);
-
-    int8_t scalar_qs[REF_Q8_MAX_IN];
-    int8_t v1_qs[REF_Q8_MAX_IN];
-    float scalar_ds[REF_Q8_MAX_IN / 32];
-    float v1_ds[REF_Q8_MAX_IN / 32];
-    ref_quantize_q8(scalar->dense_act, XE_DENSE_FFN, scalar_qs, scalar_ds);
-    ref_quantize_q8(v1->dense_act, XE_DENSE_FFN, v1_qs, v1_ds);
-
-    int q_differences = 0;
-    int scale_differences = 0;
-    for (int i = 0; i < XE_DENSE_FFN; i++)
-        q_differences += scalar_qs[i] != v1_qs[i];
-    for (int b = 0; b < XE_DENSE_FFN / 32; b++)
-        scale_differences += scalar_ds[b] != v1_ds[b];
-
-    float *scalar_pack_v1 = xe_alloc(NULL, XE_EMBD * sizeof(*scalar_pack_v1), XE_MEM_HOST);
-    float *v1_pack_v1 = xe_alloc(NULL, XE_EMBD * sizeof(*v1_pack_v1), XE_MEM_HOST);
-    ref_matvec_q4_q8_packed(&l->ffn_down, 0, XE_DENSE_FFN, XE_EMBD,
-                            scalar_qs, scalar_ds, 1, scalar_pack_v1);
-    ref_matvec_q4_q8_packed(&l->ffn_down, 0, XE_DENSE_FFN, XE_EMBD,
-                            v1_qs, v1_ds, 1, v1_pack_v1);
-    ref_rmsnorm(scalar_pack_v1, l->post_ffw_norm1, XE_EMBD, scalar_pack_v1);
-    ref_rmsnorm(v1_pack_v1, l->post_ffw_norm1, XE_EMBD, v1_pack_v1);
-
-    double accumulation = model_rel_rms(scalar_pack_v1, scalar->dense_out, XE_EMBD);
-    double boundary = model_rel_rms(v1_pack_v1, scalar_pack_v1, XE_EMBD);
-    double total = model_rel_rms(v1->dense_out, scalar->dense_out, XE_EMBD);
-    double reconstruction = model_rel_rms(v1_pack_v1, v1->dense_out, XE_EMBD);
-    int attributed = total <= 1e-4 || q_differences > 0 || scale_differences > 0;
-    int ok = accumulation < 2e-6 && reconstruction < 1e-7 && attributed;
-    if (total > 1e-5 || q_differences || scale_differences)
-        printf("model: L%02d Q8-boundary qs %d scales %d accumulation %.2e boundary %.2e total %.2e %s\n",
-               layer, q_differences, scale_differences, accumulation, boundary, total,
-               ok ? "ATTRIBUTED" : "FAIL");
-
-    xe_free(NULL, v1_pack_v1, XE_MEM_HOST);
-    xe_free(NULL, scalar_pack_v1, XE_MEM_HOST);
+    int8_t input_qs[XE_EMBD];
+    float input_ds[XE_EMBD/32];
+    ref_quantize_q8(dense, XE_EMBD, input_qs, input_ds);
+    float activation[XE_DENSE_FFN];
+    for (int row = 0; row < XE_DENSE_FFN; row++) {
+        float gate = ref_dot_q4_q8_row_v1(&l->ffn_gate, row, XE_EMBD, input_qs, input_ds);
+        float up = ref_dot_q4_q8_row_v1(&l->ffn_up, row, XE_EMBD, input_qs, input_ds);
+        activation[row] = ref_gelu_fp16(gate) * up;
+    }
+    ok &= model_q8_equal(&s->q8_dense_act, activation, XE_DENSE_FFN);
+    int8_t activation_qs[XE_DENSE_FFN];
+    float activation_ds[XE_DENSE_FFN/32];
+    float dense_output[XE_EMBD], moe_output[XE_EMBD] = {0};
+    ref_quantize_q8(activation, XE_DENSE_FFN, activation_qs, activation_ds);
+    for (int row = 0; row < XE_EMBD; row++)
+        dense_output[row] = ref_dot_q4_q8_row_v1(&l->ffn_down, row,
+                             XE_DENSE_FFN, activation_qs, activation_ds);
+    ref_rmsnorm(dense_output, l->post_ffw_norm1, XE_EMBD, dense_output);
+    double dense_error = model_rel(s->dense_out, dense_output, XE_EMBD);
+    ok &= dense_error < 1e-4;
+    /* Independently reconstruct every selected expert activation. */
+    ref_quantize_q8(moe, XE_EMBD, input_qs, input_ds);
+    for (int slot = 0; slot < XE_EXPERTS_USED; slot++) {
+        uint64_t first = (uint64_t)s->experts[slot] * 2 * XE_EXPERT_FFN;
+        for (int row = 0; row < XE_EXPERT_FFN; row++) {
+            float gate = ref_dot_q4_q8_row_v1(&l->gate_up_exps, first + row,
+                                              XE_EMBD, input_qs, input_ds);
+            float up = ref_dot_q4_q8_row_v1(&l->gate_up_exps, first + XE_EXPERT_FFN + row,
+                                            XE_EMBD, input_qs, input_ds);
+            activation[row] = ref_gelu_fp16(gate) * up;
+        }
+        ok &= model_q8_equal(&s->q8_expert[slot], activation, XE_EXPERT_FFN);
+        ref_quantize_q8(activation, XE_EXPERT_FFN, activation_qs, activation_ds);
+        int expert = s->experts[slot];
+        for (int row = 0; row < XE_EMBD; row++) {
+            float value = ref_dot_q4_q8_row_v1(&l->down_exps,
+                (uint64_t)expert * XE_EMBD + row, XE_EXPERT_FFN,
+                activation_qs, activation_ds);
+            moe_output[row] += s->expert_weights[slot]
+                               * (value * l->down_exps_scale[expert]);
+        }
+    }
+    ref_rmsnorm(moe_output, l->post_ffw_norm2, XE_EMBD, moe_output);
+    double moe_error = model_rel(s->moe_out, moe_output, XE_EMBD);
+    ok &= moe_error < 1e-4;
+    float combined[XE_EMBD];
+    for (int i = 0; i < XE_EMBD; i++) combined[i] = dense_output[i] + moe_output[i];
+    ref_rmsnorm(combined, l->post_ffw_norm, XE_EMBD, combined);
+    for (int i = 0; i < XE_EMBD; i++)
+        combined[i] = (combined[i] + s->attn_out[i]) * l->layer_out_scale[0];
+    double hidden_error = model_rel(s->hidden, combined, XE_EMBD);
+    ok &= hidden_error < 1e-4;
+    for (int i = 0; i < XE_EMBD; i++)
+        ok &= isfinite(s->dense_out[i]) && isfinite(s->moe_out[i]) && isfinite(s->hidden[i]);
+    printf("model: L%02d scalar packing/router/activation dense %.2e moe %.2e residual %.2e %s\n",
+           layer, dense_error, moe_error, hidden_error, ok ? "PASS" : "FAIL");
     return ok;
 }
 
 int main(int argc, char **argv) {
-    if (argc < 2 || !argv[1][0]) {
-        fprintf(stderr, "usage: %s <model.gguf> [token [scalar_rms [max_layers [isolated [ref_q8]]]]]\n", argv[0]);
+    if (argc != 2 || !argv[1][0]) {
+        fprintf(stderr, "usage: %s <model.gguf>\n", argv[0]);
         return 2;
     }
-    const char *model = argv[1];
-    int32_t token = argc > 2 ? (int32_t)strtol(argv[2], NULL, 10) : 2;
-    xe_engine *e = xe_engine_open(model);
-    if (argc > 3) e->scalar_rms = (int)strtol(argv[3], NULL, 10);
-    int max_layers = argc > 4 ? (int)strtol(argv[4], NULL, 10) : XE_LAYERS;
-    int isolated = argc > 5 ? (int)strtol(argv[5], NULL, 10) : 1;
-    int ref_q8 = argc > 6 ? (int)strtol(argv[6], NULL, 10) : 2;
-    int gpu_memory_ok = model_gpu_memory(e);
+    xe_engine_options options = { .context = XE_CONTEXT_MIN };
+    xe_engine *e = xe_engine_open_with_options(argv[1], &options);
     xe_session *s = xe_session_new(e);
-    ref_state ref;
-    memset(&ref, 0, sizeof ref);
-    ref.q8 = ref_q8;
-    ref_state_init(&ref, 1);
-    ref_state scalar;
-    memset(&scalar, 0, sizeof scalar);
-    scalar.q8 = 1;
-    ref_state_init(&scalar, 1);
-    ref_embed(e, token, ref.hidden);
-    xe_embed_decode(e, token, s->hidden);
-    printf("model: embed %.3e\n", model_rel_rms(s->hidden, ref.hidden, XE_EMBD));
-
-    xe_rope_prepare(s, 0);
+    int ok = model_gpu_memory(e);
+    float embedding[XE_EMBD];
+    ref_dequant_row(&e->tok_embd, 2, XE_EMBD, embedding);
+    xe_embed_decode(e, 2, s->hidden);
+    for (int i = 0; i < XE_EMBD; i++) {
+        float expected = embedding[i] * sqrtf((float)XE_EMBD);
+        ok &= fabsf(s->hidden[i] - expected) <= 2e-6f * fmaxf(1.0f, fabsf(expected));
+    }
     xe_workers_begin(e);
-    double optimized_seconds = 0.0;
-    int ok = gpu_memory_ok;
-    int cumulative_attributed = 0;
-    double previous_hidden = 0.0;
-    for (int layer = 0; layer < max_layers; layer++) {
-        if (isolated) memcpy(s->hidden, ref.hidden, XE_EMBD * sizeof(*s->hidden));
-        ref_attention_half(e, layer, 0, &ref);
-        double opt_start = model_now();
-        xe_attention_half_decode(s, layer, 0);
-        optimized_seconds += model_now() - opt_start;
-        double q = model_rel_rms(s->q, ref.q, XE_Q_HEADS * (XE_IS_GLOBAL(layer) ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM));
-        double k = model_rel_rms(s->k, ref.k, ref_kv_dim(layer));
-        double heads = model_rel_rms(s->attn_heads, ref.attn_heads,
-                                     XE_Q_HEADS * (XE_IS_GLOBAL(layer) ? XE_GLOBAL_HEAD_DIM : XE_SWA_HEAD_DIM));
-        double attention = model_rel_rms(s->attn_out, ref.attn_out, XE_EMBD);
-
-        int experts[XE_EXPERTS_USED];
-        float weights[XE_EXPERTS_USED];
-        ref_dense_branch(&e->layers[layer], &ref);
-        if (ref_q8 == 2 && !model_dense_boundary(&e->layers[layer], &ref, &scalar, layer)) ok = 0;
-        ref_router(&e->layers[layer], &ref, experts, weights);
-        ref_moe_branch(&e->layers[layer], &ref, experts, weights);
-        for (int i = 0; i < XE_EMBD; i++) ref.combined[i] = ref.dense_out[i] + ref.moe_out[i];
-        ref_rmsnorm(ref.combined, e->layers[layer].post_ffw_norm, XE_EMBD, ref.combined);
-        float out_scale = e->layers[layer].layer_out_scale[0];
-        for (int i = 0; i < XE_EMBD; i++)
-            ref.hidden[i] = (ref.combined[i] + ref.attn_out[i]) * out_scale;
-
-        opt_start = model_now();
-        xe_ffn_half_decode(s, layer, XE_MOE_GENERIC_BATCHED, 1);
-        optimized_seconds += model_now() - opt_start;
-        int same_order = model_same_expert_order(s->experts, experts);
-        int same_set = model_same_expert_set(s->experts, experts);
-        const char *route = same_order ? "same" : (same_set ? "reorder" : "FLIP");
-        double dense = model_rel_rms(s->dense_out, ref.dense_out, XE_EMBD);
-        double moe = same_set ? model_rel_rms(s->moe_out, ref.moe_out, XE_EMBD) : NAN;
-        double hidden = model_rel_rms(s->hidden, ref.hidden, XE_EMBD);
-        model_q8_delta dense_in = model_compare_q8(&s->q8_dense_in, ref.dense_in, XE_EMBD);
-        model_q8_delta dense_act = model_compare_q8(&s->q8_dense_act, ref.dense_act, XE_DENSE_FFN);
-        model_q8_delta expert_act = { 0, 0 };
-        if (same_set)
-            expert_act = model_compare_q8(&s->q8_expert[XE_EXPERTS_USED - 1],
-                                          ref.expert_act, XE_EXPERT_FFN);
-        printf("model: L%02d q %.2e k %.2e heads %.2e attn %.2e route %s dense %.2e moe %.2e out %.2e\n",
-               layer, q, k, heads, attention, route, dense, moe, hidden);
-        if (isolated) {
-            if (q > 2e-5 || k > 2e-5 || heads > 2e-5 || attention > 1e-4 || dense > 1e-4 ||
-                (same_set && (moe > 1e-4 || hidden > 1e-4)) || dense_in.qs || dense_in.scales ||
-                dense_act.qs || dense_act.scales || expert_act.qs || expert_act.scales) ok = 0;
-        } else {
-            int already_attributed = cumulative_attributed;
-            if (!cumulative_attributed && (dense > 1e-4 || hidden > 1e-4)) {
-                int boundary = dense_in.qs || dense_in.scales || dense_act.qs || dense_act.scales;
-                printf("model: L%02d cumulative boundary dense-in %d/%d dense-act %d/%d %s\n",
-                       layer, dense_in.qs, dense_in.scales, dense_act.qs, dense_act.scales,
-                       boundary ? "ATTRIBUTED" : "FAIL");
-                cumulative_attributed = boundary;
-                if (!boundary) ok = 0;
-            }
-            if (!same_order) {
-                int route_ok = model_router_attribution(&ref, s, experts, layer);
-                double forced = model_forced_experts(s, layer, experts, ref.hidden);
-                double bound = fmax(1e-4, attention * 4.0 + 1e-4);
-                printf("model: L%02d forced-route out %.3e bound %.3e %s\n",
-                       layer, forced, bound, forced <= bound ? "ATTRIBUTED" : "FAIL");
-                if (!cumulative_attributed || !route_ok || forced > bound) ok = 0;
-            }
-            double smooth_bound = fmax(1e-4, previous_hidden * (same_order ? 4.0 : 8.0) + 1e-4);
-            if (already_attributed && hidden > smooth_bound) ok = 0;
-            previous_hidden = hidden;
-        }
-    }
-    if (max_layers == XE_LAYERS) {
-        double opt_start = model_now();
-        xe_output_decode(s, XE_SOFTCAP_SECOND_LOOP);
-        optimized_seconds += model_now() - opt_start;
-    }
+    for (int layer = 0; layer < XE_LAYERS; layer++)
+        ok &= model_layer_operators(e, s, layer);
     xe_workers_end(e);
-    if (max_layers == XE_LAYERS) {
-        ref_output(e, &ref);
-        double logits = model_rel_rms(s->logits, ref.logits, XE_VOCAB);
-        printf("model: logits %.3e optimized %.3f ms %s\n", logits, optimized_seconds * 1000.0,
-               ok ? "PASS" : "FAIL");
-    } else {
-        printf("model: %d layers optimized %.3f ms %s\n", max_layers,
-               optimized_seconds * 1000.0, ok ? "PASS" : "FAIL");
-    }
-
-    ref_state_free(&scalar);
-    ref_state_free(&ref);
     xe_session_free(s);
     xe_engine_close(e);
     return ok ? 0 : 1;

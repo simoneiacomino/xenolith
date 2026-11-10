@@ -62,6 +62,8 @@ typedef struct {
     int has_session;
     conversation_id session;
     json_value *request;
+    unsigned char utf8_pending[2][4];
+    size_t utf8_length[2];
 } serve_conn;
 
 typedef struct {
@@ -81,6 +83,7 @@ typedef struct {
     size_t max_frame;        /* context_window * SERVE_FRAME_BYTES_PER_TOKEN */
     int64_t active_at;
     json_writer out;
+    json_writer utf8_scratch;
 } serve;
 
 static int serve_signal_fd[2] = { -1, -1 };
@@ -633,6 +636,18 @@ static int serve_messages_parse(serve *s,const json_value *request,
         } else if (!strcmp(role, "assistant")) {
             m->kind = RUNTIME_MESSAGE_ASSISTANT;
             m->reasoning = serve_str(v, "reasoning");
+            const json_value *response_prefix_field = json_member(v,"response_prefix");
+            if (response_prefix_field && (response_prefix_field->type != JSON_STRING ||
+                memchr(response_prefix_field->text,0,response_prefix_field->text_length))) return 0;
+            m->response_prefix = serve_str(v,"response_prefix");
+            if (m->response_prefix && (!profile_reasoning_prefix_valid(m->response_prefix) ||
+                !m->text || strncmp(m->text,m->response_prefix,strlen(m->response_prefix)))) return 0;
+            const json_value *prefix_field = json_member(v,"reasoning_prefix");
+            if (prefix_field && (prefix_field->type != JSON_STRING ||
+                memchr(prefix_field->text,0,prefix_field->text_length))) return 0;
+            m->reasoning_prefix = serve_str(v,"reasoning_prefix");
+            if (m->reasoning_prefix && (!profile_reasoning_prefix_valid(m->reasoning_prefix) ||
+                !m->reasoning || strncmp(m->reasoning,m->reasoning_prefix,strlen(m->reasoning_prefix)))) return 0;
             const json_value *calls = json_member(v, "calls");
             if (calls && calls->type == JSON_ARRAY && calls->child) {
                 m->calls = &out->calls[call_at];
@@ -693,6 +708,31 @@ static int serve_params_parse(const json_value *request,
         params->max_tokens = (int32_t)v->number;
     uint64_t seed;
     if (serve_u64(request, "seed", &seed)) params->rng_seed = seed;
+    v = json_member(request, "steering");
+    if (v) {
+        params->steering_set = 1;
+        params->steering_strength = 1;
+        if (v->type == JSON_NULL) params->steering_strength = 0;
+        else {
+            if (v->type != JSON_OBJECT) return 0;
+            params->steering_id = serve_str(v,"artifact");
+            if (!xe_steering_valid_id(params->steering_id)) return 0;
+            const json_value *strength = json_member(v,"strength");
+            if (strength) {
+                if(strength->type!=JSON_NUMBER || !isfinite((float)strength->number))return 0;
+                params->steering_strength=(float)strength->number;
+            }
+        }
+    }
+    v = json_member(request, "response");
+    if (v) {
+        if (v->type != JSON_OBJECT) return 0;
+        const json_value *prefix = json_member(v, "prefix");
+        if (!prefix || prefix->type != JSON_STRING ||
+            memchr(prefix->text,0,prefix->text_length) ||
+            !profile_reasoning_prefix_valid(prefix->text)) return 0;
+        params->response_prefix = prefix->text;
+    }
     v = json_member(request, "reasoning");
     if (!v) return 1;
     params->reasoning_set = 1;
@@ -714,6 +754,12 @@ static int serve_params_parse(const json_value *request,
         params->reasoning_effort = CONVERSATION_REASONING_MAX;
     else
         return 0;
+    const json_value *prefix = json_member(v,"prefix");
+    if (prefix) {
+        if (prefix->type != JSON_STRING || memchr(prefix->text,0,prefix->text_length) ||
+            !profile_reasoning_prefix_valid(prefix->text)) return 0;
+        params->reasoning_prefix = prefix->text;
+    }
     const json_value *budget = json_member(v, "budget_tokens");
     if (budget) {
         if (budget->type != JSON_NUMBER || budget->number < 0 ||
@@ -788,13 +834,51 @@ static void serve_inference(json_writer *out,
     json_raw(out, "}");
 }
 
+/* Token pieces can end inside a character. Keep text/reasoning independent and
+ * emit complete UTF-8 in each JSON frame; malformed output is replaced by JSON's
+ * Unicode replacement character, including an unfinished terminal sequence. */
+static int serve_utf8_delta(serve *s, serve_conn *c, int channel,
+                             const uint8_t *text, size_t length, int final) {
+    json_writer *joined=&s->utf8_scratch, *out=&s->out;
+    json_writer_reset(joined); json_writer_reset(out);
+    if(!json_rawn(joined,c->utf8_pending[channel],c->utf8_length[channel]) ||
+       (length && !json_rawn(joined,text,length))) {out->failed=1;return 1;}
+    size_t tail=final?0:json_utf8_incomplete_tail(joined->data,joined->length);
+    size_t ready=joined->length-tail;
+    if(tail)memcpy(c->utf8_pending[channel],joined->data+ready,tail);
+    c->utf8_length[channel]=tail;
+    if(!ready)return 0;
+    json_raw(out,channel?"{\"event\":\"reasoning_delta\",\"text\":"
+                        :"{\"event\":\"text_delta\",\"text\":");
+    json_string(out,joined->data,ready);json_raw(out,"}");
+    return 1;
+}
+
 static void serve_emit_event(serve *s, serve_conn *c,
                              const runtime_event *event) {
     json_writer *out = &s->out;
+    if(event->kind==RUNTIME_EVENT_START)memset(c->utf8_length,0,sizeof c->utf8_length);
+    if(event->kind==RUNTIME_EVENT_DONE || event->kind==RUNTIME_EVENT_ERROR)
+        for(int channel=0;channel<2;channel++)if(c->utf8_length[channel]) {
+            if(serve_utf8_delta(s,c,channel,NULL,0,1))serve_emit(s,c);
+        }
     json_writer_reset(out);
     switch (event->kind) {
     case RUNTIME_EVENT_START:
-        json_raw(out, "{\"event\":\"start\"}");
+        json_raw(out, "{\"event\":\"start\"");
+        if (event->response_prefix_length) {
+            json_raw(out,",\"response_prefix\":");
+            json_string(out,event->response_prefix,event->response_prefix_length);
+            json_raw(out,",\"response_prefix_tokens\":");
+            json_u64(out,event->usage.response_prefix);
+        }
+        if (event->reasoning_prefix_length) {
+            json_raw(out,",\"reasoning_prefix\":");
+            json_string(out,event->reasoning_prefix,event->reasoning_prefix_length);
+            json_raw(out,",\"reasoning_prefix_tokens\":");
+            json_u64(out,event->usage.reasoning_prefix);
+        }
+        json_raw(out,"}");
         break;
     case RUNTIME_EVENT_INFERENCE_PROGRESS:
         json_raw(out, "{\"event\":\"inference_progress\",\"phase\":\"");
@@ -814,14 +898,10 @@ static void serve_emit_event(serve *s, serve_conn *c,
         json_raw(out, "}");
         break;
     case RUNTIME_EVENT_TEXT_DELTA:
-        json_raw(out, "{\"event\":\"text_delta\",\"text\":");
-        json_string(out, (const char *)event->text, event->text_length);
-        json_raw(out, "}");
+        if(!serve_utf8_delta(s,c,0,event->text,event->text_length,0))return;
         break;
     case RUNTIME_EVENT_REASONING_DELTA:
-        json_raw(out, "{\"event\":\"reasoning_delta\",\"text\":");
-        json_string(out, (const char *)event->text, event->text_length);
-        json_raw(out, "}");
+        if(!serve_utf8_delta(s,c,1,event->text,event->text_length,0))return;
         break;
     case RUNTIME_EVENT_TOOLCALL_START:
         json_raw(out, "{\"event\":\"toolcall_start\",\"id\":");
@@ -850,6 +930,10 @@ static void serve_emit_event(serve *s, serve_conn *c,
         json_u64(out, event->usage.output);
         json_raw(out, ",\"reasoning\":");
         json_u64(out, event->usage.reasoning);
+        json_raw(out,",\"reasoning_prefix\":");
+        json_u64(out,event->usage.reasoning_prefix);
+        json_raw(out,",\"response_prefix\":");
+        json_u64(out,event->usage.response_prefix);
         json_raw(out, ",\"replayed\":");
         json_u64(out, event->usage.replayed);
         json_raw(out, ",\"shadow_prefilled\":");
@@ -947,15 +1031,45 @@ static int serve_dispatch(serve *s, serve_conn *c,
         json_raw(out, ",\"max_frame\":");
         json_u64(out, (uint64_t)s->max_frame);
         if(s->protocol==2)json_raw(out,",\"vision\":{\"formats\":[\"png\",\"jpeg\"],\"budgets\":[70,140,280,560,1120],\"default_budget\":280,\"max_bytes\":50331648,\"max_context_media_bytes\":268435456,\"media_refs\":true}");
+        json_raw(out, ",\"steering\":{\"enabled\":");
+        json_raw(out,runtime_steering_enabled(s->w)?"true":"false");
+        json_raw(out,",\"site\":\"post_layer_residual_v1\",\"modes\":[\"additive\",\"projection\"],\"prospective\":true,\"preserves_reasoning_history\":true,\"sites\":[\"post_layer_residual_v1\",\"post_ffn_output_v1\"]}");
         json_raw(out, ",\"kvstore\":");
         json_raw(out, info.kvstore ? "true" : "false");
+        json_raw(out, ",\"response\":{\"prefix\":{\"max_bytes\":4096}}");
         json_raw(out, ",\"reasoning\":{\"efforts\":[\"low\","
                       "\"medium\",\"high\",\"max\"],\"history\":["
                       "\"discard\",\"preserve_tool_calls\"],"
-                      "\"budget_tokens\":true}");
+                      "\"budget_tokens\":true,\"prefix\":{\"max_bytes\":4096}}");
         json_raw(out, "}");
         serve_emit(s, c);
         return 0;
+    }
+    if (!strcmp(op, "steer")) {
+        runtime_steering_info info;
+        const json_value *artifact=json_member(request,"artifact");
+        if (!artifact && json_member(request,"strength")) {
+            serve_error(s,c,RUNTIME_INVALID_ARGUMENT,"missing steering artifact");return 0;
+        }
+        if (!artifact) status=runtime_session_steering_get(s->w,&info);
+        else {
+            const char *id=artifact->type==JSON_STRING?artifact->text:NULL;
+            const json_value *strength=json_member(request,"strength");
+            if ((artifact->type!=JSON_NULL && !xe_steering_valid_id(id)) ||
+                (strength && (strength->type!=JSON_NUMBER || !isfinite((float)strength->number))) ||
+                (!id && strength && strength->number!=0)) {
+                serve_error(s,c,RUNTIME_INVALID_ARGUMENT,"invalid steering configuration"); return 0;
+            }
+            float scale=id?(strength?(float)strength->number:1):0;
+            status=runtime_session_steering(s->w,id,scale,&info);
+        }
+        if(status!=RUNTIME_OK){serve_runtime_error(s,c,status);return 0;}
+        serve_ok_begin(s); json_raw(out,",\"steering\":{\"artifact\":");
+        if(info.artifact[0])json_string(out,info.artifact,64);else json_raw(out,"null");
+        json_raw(out,",\"strength\":");json_double(out,info.strength);
+        json_raw(out,",\"position\":");json_u64(out,info.position);
+        json_raw(out,",\"transitions\":");json_u64(out,info.transitions);
+        json_raw(out,"}}");serve_emit(s,c);return 0;
     }
     if (!strcmp(op, "create")) {
         serve_tools tools;
@@ -1321,6 +1435,14 @@ static int serve_dispatch(serve *s, serve_conn *c,
             json_string(out, entry.text ? entry.text : "",
                         entry.text_length);
             if(entry.image)serve_image_description(out,&entry);
+            if (entry.response_prefix_length) {
+                json_raw(out,",\"response_prefix\":");
+                json_string(out,entry.response_prefix,entry.response_prefix_length);
+            }
+            if (entry.reasoning_prefix_length) {
+                json_raw(out,",\"reasoning_prefix\":");
+                json_string(out,entry.reasoning_prefix,entry.reasoning_prefix_length);
+            }
             if (entry.reasoning) {
                 json_raw(out, ",\"reasoning\":");
                 json_string(out, entry.reasoning,
@@ -1439,7 +1561,7 @@ static int serve_route(serve *s, serve_conn *c, const json_value *request) {
 }
 
 static int serve_needs_session(const char *op) {
-    return !strcmp(op, "append") || !strcmp(op, "generate") ||
+    return !strcmp(op, "steer") || !strcmp(op, "append") || !strcmp(op, "generate") ||
            !strcmp(op, "rewind") || !strcmp(op, "rewind_cost") ||
            !strcmp(op, "rebuild") || !strcmp(op, "checkpoint") ||
            !strcmp(op, "history") || !strcmp(op, "pending") || !strcmp(op,"media");
@@ -1915,6 +2037,7 @@ int serve_stdio_with_budget(xe_engine *engine, const char *state_dir,
         }
     }
     json_writer_free(&s.out);
+    json_writer_free(&s.utf8_scratch);
     runtime_close(s.w);
     return 0;
 }
@@ -1984,6 +2107,7 @@ int serve_run_with_budget(xe_engine *engine, const char *state_dir, const char *
         fprintf(stderr, "xenolith: serve: cannot listen on %s\n",
                 socket_path ? socket_path : "");
         json_writer_free(&s.out);
+        json_writer_free(&s.utf8_scratch);
         runtime_close(s.w);
         serve_signal_reset();
         return 1;
@@ -1992,6 +2116,7 @@ int serve_run_with_budget(xe_engine *engine, const char *state_dir, const char *
     serve_loop(&s);
     serve_shutdown(&s);
     json_writer_free(&s.out);
+    json_writer_free(&s.utf8_scratch);
     runtime_close(s.w);
     serve_signal_reset();
     return 0;

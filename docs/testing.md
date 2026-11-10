@@ -13,6 +13,98 @@ but performs no model inference.
 
 Run the commands below from the repository root.
 
+## Numerical fidelity
+
+The maintained text fidelity path is [tools/quality](../tools/quality/README.md):
+exact represented GGUF weights, a streamed **Google FP64** reference, frozen
+corpus, immutable full-vocabulary archives, and a driver built from the current
+Xenolith checkout. The [shared fixture suite](../tools/quality/fixtures/README.md)
+commits exact inputs, shared Google logits and a named llama.cpp Vulkan
+baseline for each of Panther Lake and Raptor Lake directly in the repository. It
+trusts the pinned Google producer and applies a zero-margin relative acceptance
+criterion to the equally weighted mean across families in the finite public
+corpus. Individual family/position regressions remain visible as nonblocking
+diagnostics. HF/Torch is an optional independent
+qualification control for the separate qualified-archive workflow. An engine
+change can reuse a compatible reference without
+JAX, Flax or Torch. The engine itself needs none of these Python dependencies.
+
+After installing the compare profile, `make verify-quality-fixtures` checks the
+committed data without a model. `make check-quality-fixtures MODEL=...
+BACKEND_CONFIG=... QUALITY_OUTPUT=... QUALITY_BASELINE=panther-vulkan` compares
+a current-build backend with the selected Vulkan baseline. Use `raptor-vulkan`
+for the Raptor Lake profile; other GPU hosts need their own verified baseline.
+Selection is explicit: the tool does not infer or
+certify a hardware match from the hostname. Supply `PYTHON=/path/to/compare-venv/bin/python` for both
+targets. PASS is scoped to the fixed suite, not unseen-text statistical
+equivalence or free-response quality. See the fixture guide for repetitions,
+numerical resolution and explicit reproduction commands.
+
+For a separately qualified reference archive, use these commands with an
+explicit acceptance policy:
+
+```sh
+# Use Python 3.12 on Linux x86_64 for the tested hashed installation profiles.
+python3.12 tools/quality/setup_environment.py --profile compare --output /tmp/xe-quality
+make check-quality-unit PYTHON=/tmp/xe-quality/bin/python
+
+# Build from this checkout; record source, diff, compiler, flags, binary and libraries.
+/tmp/xe-quality/bin/xe-quality-backend --source . --model /data/model.gguf \
+  --output /data/new-run/backend.json
+/tmp/xe-quality/bin/xe-quality verify-archive --archive /data/reference
+/tmp/xe-quality/bin/xe-quality diagnose --archive /data/reference \
+  --model /data/model.gguf --driver ./tools/quality/native/xenolith_driver \
+  --backend-config /data/new-run/backend.json --output /data/new-run/diagnostic \
+  --timeout 1800
+```
+
+The last command is explicitly diagnostic: completed measurements have
+`INCONCLUSIVE` quality status and exit 0. Use `compare` for automation: PASS=0,
+FAIL=1, technical ERROR=2, INCONCLUSIVE=3. A gate without an explicit caller policy,
+with insufficient data or outside the reference's qualified domain cannot pass.
+No default quality acceptance threshold is supplied. The package README describes
+policy syntax and why the old RMS 0.6 limit is not a new KL requirement.
+
+`make check-quality MODEL=... REFERENCE=... BACKEND_CONFIG=... QUALITY_OUTPUT=...
+POLICY=... PYTHON=/tmp/xe-quality/bin/python` invokes that gate. Use a new output
+directory for every comparison. `make reference` is an explicit generation step;
+see the package README for its required corpus, configuration, upstream source
+and qualification inputs. Tests never download dependencies, source or weights.
+
+Archive qualification applies only to its recorded inputs, positions, state
+protocols and runtime. Fixed-input numerical comparisons do not establish
+free-response task quality or qualify vision inference.
+
+### Migration of previous text checks
+
+The full C `xe_oracle` API and `oracle` command, `tests/certify.c`, `make golden`,
+and the old `dump_logits`, `dump_layers`, `compare_logits`, `tokenize_prompt`
+executables have been removed. The [migration map](quality-migration.md) records
+replacements and the limits of each check. Contributors must migrate C callers
+of `xe_oracle` to the session API plus this harness; no compatibility wrapper
+retains a second full-model forward.
+
+`tests/test_tokenizer_model` preserves vocabulary fixture parity, the seven
+frozen prompt token sequences, byte roundtrip and chat/template checks. It opens
+only the vocabulary and accepts a model argument or `XENOLITH_MODEL`. Frozen
+`tests/golden/*.ids` and vocabulary fixtures remain unchanged. Old `.logits`
+files remain historical data and are no longer fidelity acceptance inputs.
+Tokenization fixture generation is deliberately separate from reference generation:
+`make quality-tokenizer` builds Xenolith's raw tokenizer; the optional
+`make quality-llama-tokenizer LLAMA_TOKENIZER_DIR=... LLAMA_TOKENIZER_BUILD=...`
+builds an independent tokenizer against an explicit external llama.cpp build.
+The corpus tokenization command requires complete exact agreement before BOS is
+added. Existing expected fixtures are never rewritten by a test target.
+
+For real-engine per-layer diagnosis, the optional
+`xe_session_set_layer_observer` callback receives each layer's final hidden state
+with its absolute token position. The quality driver's optional final argument
+is a pre-created layer output directory; each `CASE.layers` file contains repeated
+little-endian `int32(layer, position, width)` followed by `float32[width]`.
+The driver normally writes only full-vocabulary logits. Layer observation can
+synchronize GPU execution and must be disabled for performance measurements.
+Google reference states remain available in the producer's explicit trace output.
+
 ## General checks
 
 - `make check-installer`: shell installation, packaging, build recipe and download
@@ -38,6 +130,8 @@ Run the commands below from the repository root.
   For focused CPU policy, topology, worker and CLI worker-option checks, use
   `make check-workers`.
 - `make check-gpu`: numerical GPU regressions, requiring a supported GPU but no model.
+- `make check MODEL=/path/to/model.gguf`: unit, CLI, GPU, tokenizer and loaded-layer checks.
+- `make check-quality-unit`: tests for the installed Python validation package.
 - `make check-all MODEL=/path/to/model.gguf`: the standard suite, including model,
   persistence, prefill, runtime and server checks; requires a supported GPU and model.
 
@@ -68,6 +162,11 @@ The [CI workflow](../.github/workflows/ci.yml) runs on pull requests, pushes to
   and `check-snapshot-compat` on Ubuntu 24.04.
 - `installer` runs `check-installer`, including client integration and
   distribution fixtures.
+- `validation-tools` tests the Python package in the NumPy-only comparison
+  environment and with the CPU JAX/Flax reference runtime, including an installed
+  package outside the checkout. It also verifies the committed Google/llama
+  fixtures. These checks use synthetic inputs and stored arrays;
+  model and GPU numerical acceptance runs separately through the commands above.
 
 To reproduce the engine checks, install the workflow's build dependencies and
 fetch full Git history for the historical snapshot producers. Use a clean build
@@ -120,6 +219,23 @@ cover the GPU matrix plus short tails of 1–8 rows. It also requires ASan to
 detect out-of-bounds reads in three temporary mutations: removed ordinary
 tile bound, removed COW tile bound, and removed COW fallback row bound.
 Production sources are never mutated by the check.
+
+On Linux hosts with monitoring libraries injected through `/etc/ld.so.preload`,
+ASan may fail before tests start with `ASan runtime does not come first in initial
+library list`. Run the tests in a private mount namespace using bubblewrap:
+
+```sh
+tools/without_system_preload.sh make check-kv-load-bounds
+tools/without_system_preload.sh make check-host
+```
+
+The wrapper hides the system preload file only inside the test process tree;
+it does not edit the host file or stop the monitoring agent. ASan remains enabled
+and the three deliberately invalid load variants must still be detected. The
+checkout and `/tmp` are writable; system paths are read-only. The wrapper requires
+Linux and a working `bwrap` installation. Explicit `LD_PRELOAD` environment
+settings are retained, including fixtures installed by individual tests.
+
 
 This checks the extracted load footprint; it does not emulate GPU scheduling,
 barriers, subgroup operations or compiler transformations. Unsupported refactors
@@ -270,3 +386,13 @@ dumps with `python3 tools/vision_compare.py REFERENCE_DIR CANDIDATE_DIR --output
 its default checks all 30 selected stages with fixed RMS/cosine limits.
 The decoder oracle accepts `MODEL IDS EMBEDDING START ROWS CONTEXT OUTPUT_PREFIX`;
 use the same prompt/span and projected rows as the candidate.
+
+## Reasoning prefixes
+
+`make check-reasoning-prefix MODEL=/path/to/model.gguf` checks profile rendering,
+plain UTF-8 validation, generated-token accounting, continuation without duplicate
+framing, cold replay, reopen, rewind, cancellation before prefill, crash recovery,
+rebuild provenance and ephemeral isolation for both thought and response prefixes.
+It also verifies mode switching and rejection of conflicting crash retries.
+It requires the supported Linux/Intel
+runtime and model. Xenopi command and adapter checks run in its own `npm test`.

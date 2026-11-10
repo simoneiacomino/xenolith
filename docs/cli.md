@@ -163,7 +163,6 @@ client-specific model, context and projector variables are not engine CLI option
 | `tokenize` | Encode text or decode token IDs | None |
 | `run` | Generate from one prompt | Context, CPU, sampling |
 | `chat` | Interactive conversation | Context, CPU, sampling |
-| `oracle` | Run the CPU reference forward pass | Context, CPU |
 | `bench` | Measure synthetic prefill and decode | Context, CPU |
 | `vision-encode` | Encode an image and write numerical dumps | CPU |
 | `wire` | Serve the wire protocol over stdin/stdout | Context, CPU |
@@ -319,19 +318,6 @@ prints `vision rows N width W` to stdout. By default it also writes intermediate
 encoder dumps. `--final-only` writes only the projected float32 embeddings to
 `DIR/embedding.f32`. Encoding timings go to stderr.
 
-## `oracle`
-
-```text
-xenolith oracle model.gguf -t "id,id,..." [-o logits.bin] [--layers DIR] [--q8]
-```
-
-Requires 1–8192 token IDs in 0–262143, also bounded by `--ctx`. Supply BOS yourself
-if needed. The CPU reference pass prints the eight highest final-token logits.
-`-o FILE` writes the full final logits as raw floats; `--layers DIR` writes
-intermediate arrays for the final token and creates the directory if needed
-(its parent must exist). `--q8` enables the reference path's Q8 activations and
-FP16 rounding; it is off by default.
-
 ## `bench`
 
 ```sh
@@ -407,9 +393,17 @@ For text-only services, `--cache-budget 0` skips model hashing. A zero budget
 disables KV and projected-embedding disk cache reads and writes, while preserving
 durable history, retained image media and existing cache files. Projected
 embeddings have a separate 2 GiB budget when disk caching is enabled.
-Standalone `chat`, `run`, `info`, `oracle` and `bench` skip model hashing when
+Standalone `chat`, `run`, `info` and `bench` skip model hashing when
 used without images.
 
 Commands that load weights or encode images share an exclusive `engine.lock`
 in the default state directory. A custom `--state` or `--socket` does not move
 that lock. Close the current engine before starting another such command.
+
+## Experimental activation steering
+
+`run` and `chat` accept `--steering FILE --steering-strength F`, alongside
+`--workers` and `--cpu-list`. Chat supports `/steer F` and `/steer off`.
+`wire` and `serve` accept `--steering-dir DIR` for a local artifact registry.
+See [the steering guide](../STEERING.md) for `steering-capture`,
+`steering-import`, supported modes/sites, and cache semantics.

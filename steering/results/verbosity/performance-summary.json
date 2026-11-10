@@ -1,0 +1,27 @@
+{
+  "repetitions": 3,
+  "order": "off,steering,steering,off",
+  "samples_per_configuration": 6,
+  "prefill_tokens": 512,
+  "decode_tokens": 128,
+  "warmup_per_configuration": 1,
+  "medians": {
+    "off": {
+      "prefill_seconds": 1.101247165,
+      "decode_seconds": 4.58387405
+    },
+    "steering": {
+      "prefill_seconds": 1.10191553,
+      "decode_seconds": 4.6238699
+    }
+  },
+  "latency_increase_fraction": {
+    "prefill_seconds": 0.0006069164318802667,
+    "decode_seconds": 0.00872533790495389
+  },
+  "throughput_cost_fraction": {
+    "prefill_seconds": 0.0006065483077456468,
+    "decode_seconds": 0.008649864910775129
+  },
+  "scope": "Enabled versus disabled FFN site on same candidate executable; not a new original-baseline versus candidate disabled comparison."
+}

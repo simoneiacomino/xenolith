@@ -16,7 +16,6 @@
 *.o
 __pycache__/
 *.spv
-/tests/.golden.*/
 /bench/bench_attention
 /bench/bench_b3b
 /bench/bench_b3b_8e
@@ -35,10 +34,6 @@ __pycache__/
 /tests/bench_prefill_gemm
 /tests/bench_prefill_gemm_down
 /tests/bench_tg
-/tests/certify
-/tests/compare_logits
-/tests/dump_layers
-/tests/dump_logits
 /tests/test_cli_context
 /tests/test_context_limits
 /tests/test_conversation
@@ -69,11 +64,6 @@ __pycache__/
 /tests/test_snapshot_model
 /tests/test_runtime
 /tests/test_runtime_model
-/tests/tokenize_prompt
-/tools/compare_logits
-/tools/dump_layers
-/tools/dump_logits
-/tools/tokenize_prompt
 /xenolith
 /xenolith-safe
 /xenolith-wire-bench
@@ -106,4 +96,22 @@ tests/test_vision_session
 
 /tools/vision_decode_reference
 
+# Locally generated steering artifacts and test executables.
+/steering/local/
+/tests/test_steering
+/tests/test_steering_history
+/tests/test_steering_gpu
+/tests/test_steering_model
+/tests/test_steering_ffn_gpu
+/bench/bench_steering
+
 /tests/test_cli_config
+
+/tests/test_tokenizer_model
+/tools/quality/native/xenolith_driver
+/tools/quality/native/xe_tokenizer
+/tools/quality/native/llama_tokenizer
+*.egg-info/
+/tools/quality/build/
+/.quality-*/
+/quality-runs/
