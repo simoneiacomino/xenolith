@@ -7,10 +7,13 @@ statistical noninferiority on unseen documents or free-generation task quality.
 from __future__ import annotations
 
 import argparse
+import copy
+import os
 from collections import defaultdict
 import json
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import time
@@ -18,7 +21,7 @@ import time
 import numpy as np
 
 from .artifacts import manifest_hash
-from .fixture_reference import checked_file, file_hash, load_corpus, read_json, write_json
+from .fixture_reference import checked_file, document_files, file_hash, load_corpus, read_json, write_json
 from .metrics import compare_logits
 
 
@@ -34,6 +37,7 @@ ACCEPTANCE = {
     "diagnostics": ["family_mean_kl", "family_max_kl", "family_max_tv", "position_kl", "position_tv"],
     "direction": "Google||backend", "temperature": 1,
 }
+GROUPED_FIXTURES = "xe-quality-fixtures-v3"
 
 
 def array(path, rows, dtype):
@@ -43,31 +47,121 @@ def array(path, rows, dtype):
     return z
 
 
+def baseline_name(name):
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
+        raise ValueError("unsafe baseline name")
+    return name
+
+
+def _profile(profile, vulkan=False):
+    expected = "llama.cpp Vulkan" if vulkan else "llama.cpp CPU"
+    if (profile.get("backend") != expected or not profile.get("source_commit")
+            or profile.get("verified_repetitions", 0) < 3
+            or profile.get("repeatability") != "bitwise"):
+        raise ValueError("pinned repeatable llama baseline required")
+    if vulkan:
+        validate_vulkan_dispatch(profile, profile.get("effective_dispatch", {}))
+
+
+def _case_ids(ids, inputs):
+    if not isinstance(ids, list) or not ids:
+        raise ValueError("nonempty case list required")
+    cases = set(ids)
+    if len(cases) != len(ids) or not cases <= inputs.keys():
+        raise ValueError("duplicate or unknown case")
+    return cases
+
+
+def _scope(corpus, inputs, ids):
+    cases = _case_ids(ids, inputs)
+    return ({**corpus, "cases": [case for case in corpus["cases"] if case["id"] in cases]},
+            {key: spec for key, spec in inputs.items() if key in cases})
+
+
+def _verify_arrays(root, inventory, inputs, cases, dtype):
+    if set(inventory) != cases:
+        raise ValueError("reference/baseline cases are missing or extra")
+    for key in sorted(cases):
+        array(checked_file(root, inventory[key]), len(inputs[key]["positions"]), dtype)
+
+
+def _verify_grouped(root, manifest, inputs):
+    grouped = set()
+    for name, group in manifest["groups"].items():
+        baseline_name(name)
+        cases = _case_ids(group["cases"], inputs)
+        if grouped & cases or group["reference"].get("kind") != "trusted-google-fp64":
+            raise ValueError("groups require disjoint cases and a trusted Google reference")
+        grouped.update(cases)
+    if grouped != inputs.keys():
+        raise ValueError("groups must account for every corpus case")
+
+    for name, entry in manifest["baselines"].items():
+        baseline_name(name)
+        cases = _case_ids(entry["cases"], inputs)
+        dispatched = set()
+        for profile in entry["profiles"]:
+            _profile(profile, vulkan=True)
+            keys = set(profile["effective_dispatch"])
+            if not keys or dispatched & keys:
+                raise ValueError("baseline profiles require disjoint dispatch inventories")
+            dispatched.update(keys)
+        if dispatched != cases:
+            raise ValueError("baseline dispatch must match declared cases")
+        _verify_arrays(root, entry["arrays"], inputs, cases, "<f4")
+
+
 def verify(root):
     root = Path(root).absolute()
     manifest = read_json(root / "manifest.json")
     digest = manifest.pop("content_sha256", None)
-    if manifest.get("schema") != "xe-quality-fixtures-v1" or digest != manifest_hash(manifest):
+    schema = manifest.get("schema")
+    if (schema not in ("xe-quality-fixtures-v1", "xe-quality-fixtures-v2", GROUPED_FIXTURES)
+            or digest != manifest_hash(manifest)):
         raise ValueError("fixture manifest identity mismatch")
     corpus_path = checked_file(root, manifest["corpus"])
     corpus, inputs = load_corpus(corpus_path)
-    if manifest.get("reference", {}).get("kind") != "trusted-google-fp64":
-        raise ValueError("explicit trusted Google reference required")
-    if manifest.get("acceptance") not in (ACCEPTANCE, LEGACY_ACCEPTANCE):
+    grouped = schema == GROUPED_FIXTURES
+    accepted = (ACCEPTANCE,) if grouped else (ACCEPTANCE, LEGACY_ACCEPTANCE)
+    if manifest.get("acceptance") not in accepted:
         raise ValueError("unsupported fixture acceptance contract")
-    keys = set(inputs)
-    for role, dtype in (("google", "<f8"), ("llama", "<f4")):
-        if set(manifest["arrays"][role]) != keys:
-            raise ValueError("reference/baseline cases are missing or extra")
-        for key, spec in inputs.items():
-            array(checked_file(root, manifest["arrays"][role][key]), len(spec["positions"]), dtype)
-    baseline = manifest.get("baseline", {})
-    if (baseline.get("backend") != "llama.cpp CPU" or not baseline.get("source_commit")
-            or baseline.get("verified_repetitions", 0) < 3
-            or baseline.get("repeatability") != "bitwise"):
-        raise ValueError("pinned repeatable llama baseline required")
+    if not grouped and manifest.get("reference", {}).get("kind") != "trusted-google-fp64":
+        raise ValueError("explicit trusted Google reference required")
+    _verify_arrays(root, manifest["arrays"]["google"], inputs, inputs.keys(), "<f8")
+    if schema == "xe-quality-fixtures-v1":
+        _profile(manifest.get("baseline", {}))
+        _verify_arrays(root, manifest["arrays"]["llama"], inputs, inputs.keys(), "<f4")
+    else:
+        if set(manifest["arrays"]) != {"google"} or not manifest.get("baselines"):
+            raise ValueError("named baseline inventory required")
+        if grouped:
+            _verify_grouped(root, manifest, inputs)
+        else:
+            for name, entry in manifest["baselines"].items():
+                baseline_name(name)
+                _profile(entry["profile"], vulkan=True)
+                if set(entry["profile"]["effective_dispatch"]) != set(inputs):
+                    raise ValueError("incomplete baseline dispatch inventory")
+                _verify_arrays(root, entry["arrays"], inputs, inputs.keys(), "<f4")
     manifest["content_sha256"] = digest
     return manifest, corpus, inputs
+
+
+def select_baseline(manifest, name=None):
+    schema = manifest["schema"]
+    if schema in ("xe-quality-fixtures-v2", GROUPED_FIXTURES):
+        if name is None:
+            raise ValueError("explicit --baseline ID required for named fixtures")
+        baseline_name(name)
+        if name not in manifest["baselines"]:
+            raise ValueError("unknown fixture baseline: " + name)
+        entry = manifest["baselines"][name]
+        if schema == GROUPED_FIXTURES:
+            return name, entry["profiles"], entry["arrays"]
+        return name, entry["profile"], entry["arrays"]
+    if name is not None:
+        raise ValueError("fixture does not have named baselines")
+    return None, manifest["baseline"], manifest["arrays"]["llama"]
 
 
 def backend_receipt(path, model, expected_weights):
@@ -82,6 +176,70 @@ def backend_receipt(path, model, expected_weights):
     return backend
 
 
+def require_xenolith_backend(backend):
+    if (backend.get("schema") != "xenolith-quality-backend-v1"
+            or backend.get("backend") != "Xenolith current build"):
+        raise ValueError("candidate requires a Xenolith receipt from xe-quality-backend")
+
+
+_RUNTIME_ENV = {"LD_LIBRARY_PATH", "LD_PRELOAD", "LD_AUDIT", "LD_DEBUG", "LD_DEBUG_OUTPUT",
+                "LD_ORIGIN_PATH", "LD_HWCAP_MASK", "LD_BIND_NOW", "LD_BIND_NOT",
+                "LD_ASSUME_KERNEL", "VULKAN_SDK", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+                "XDG_CONFIG_DIRS", "XDG_DATA_DIRS", "XDG_RUNTIME_DIR", "HOME"}
+
+
+def _runtime_env_key(key):
+    return key in _RUNTIME_ENV or key.startswith(("VK_", "GGML_VK_", "LD_"))
+
+
+def check_runtime_environment(backend):
+    if backend.get("backend") != "llama.cpp Vulkan":
+        return
+    expected = backend.get("public_profile", {}).get("environment")
+    if not isinstance(expected, dict):
+        raise ValueError("Vulkan builder runtime environment inventory required")
+    keys = _RUNTIME_ENV | {k for k in set(expected) | set(os.environ) if _runtime_env_key(k)}
+    changed = sorted(k for k in keys if expected.get(k) != os.environ.get(k))
+    if changed:
+        raise ValueError("Vulkan runtime environment differs from builder: " + ", ".join(changed))
+
+
+def portable_profile(backend):
+    """Export reproducible settings; full local build receipts stay with the capture."""
+    source = backend["public_profile"]
+    profile = {key: copy.deepcopy(source[key]) for key in (
+        "profile", "configuration", "toolchain", "platform", "cpu", "affinity",
+        "cmake_options", "wrapper_sha256", "source_archive_sha256") if key in source}
+    runtime = source.get("vulkan_runtime", {})
+    profile["vulkan_runtime"] = {
+        "identity": copy.deepcopy(runtime.get("identity", [])),
+        "mapped_files": [{"basename": Path(path).name, "sha256": backend["input_pins"][path]}
+                         for path in runtime.get("mapped_files", [])],
+    }
+    profile["environment"] = {key: value for key, value in source.get("environment", {}).items()
+        if (key in ("OMP_NUM_THREADS", "OMP_DYNAMIC", "OPENBLAS_NUM_THREADS")
+            or key.startswith("GGML_VK_")) and value is not None and "/" not in value}
+    # Reject private paths in selected fields rather than publishing opaque path hashes.
+    def check(value):
+        if isinstance(value, dict):
+            for item in value.values():
+                check(item)
+        elif isinstance(value, list):
+            for item in value:
+                check(item)
+        elif isinstance(value, str) and (value.startswith("/") or any(
+                prefix in value for prefix in ("/home/", "/tmp/", "/private/"))):
+            raise ValueError("private path in public baseline settings")
+    check(profile)
+    return profile
+
+
+def portable_dispatch(dispatch):
+    """Keep device and numerical settings; omit allocation and teardown log details."""
+    return {key: [line for line in lines if "compute buffer size" not in line]
+            for key, lines in dispatch.items()}
+
+
 def check_backend(backend):
     if not backend.get("backend") or not backend.get("input_pins"):
         raise ValueError("current-build backend receipt required")
@@ -93,17 +251,48 @@ def check_backend(backend):
 
 
 def dispatch_lines(path):
-    return [line.strip() for line in Path(path).read_text(errors="replace").splitlines()
-            if any(field in line for field in
-                   ("flash_attn", "Flash Attention", "flash attention",
+    lines = Path(path).read_text(errors="replace").splitlines()
+    return [line.strip() for line in lines
+            if line.lstrip().startswith("XE_QUALITY_DISPATCH ")
+            or any(field in line for field in
+                   ("XE_QUALITY_VULKAN ", "offloaded ", "flash_attn", "Flash Attention", "flash attention",
                     "compute buffer size", "n_ctx ", "n_ctx_per_seq ",
                     "n_batch ", "n_ubatch ", "type_k =", "type_v ="))]
+
+
+def validate_vulkan_dispatch(profile, dispatch):
+    config = profile.get("configuration", {})
+    devices = config.get("devices")
+    if (profile.get("profile") != "vulkan" or not isinstance(devices, list)
+            or len(devices) != 1 or not re.fullmatch(r"Vulkan[0-9]+", devices[0])
+            or config.get("n_gpu_layers") != 999
+            or config.get("flash_attn_type") != "OFF"
+            or config.get("offload_kqv") is not True or config.get("op_offload") is not True):
+        raise ValueError("explicit full-offload Vulkan FA OFF profile required")
+    identities = [line for line in profile.get("vulkan_runtime", {}).get("identity", [])
+                  if line.startswith("XE_QUALITY_VULKAN device=")]
+    identity_pattern = (r"XE_QUALITY_VULKAN device=" + re.escape(devices[0])
+        + r" description=.+ vendor_id=\d+ device_id=\d+ driver_version=\d+ api_version=\d+ physical_type=\d+")
+    if len(identities) != 1 or not re.fullmatch(identity_pattern, identities[0]):
+        raise ValueError("pinned Vulkan device identity required")
+    marker = "XE_QUALITY_VULKAN dispatch=full-layer-offload flash_attn=OFF offload_kqv=1 op_offload=1"
+    if not dispatch:
+        raise ValueError("Vulkan dispatch evidence missing")
+    for lines in dispatch.values():
+        actual = [line for line in lines if line.startswith("XE_QUALITY_VULKAN device=")]
+        counts = [tuple(map(int, match)) for line in lines
+                  for match in re.findall(r"offloaded (\d+)/(\d+) layers to GPU", line)]
+        if (actual != identities or lines.count(marker) != 1 or not counts
+                or any(a <= 0 or a != b for a, b in counts)
+                or any(re.search(r"(?:Flash Attention|flash attention).*enabled|flash_attn\s*=\s*1(?:\s|$)", line)
+                       for line in lines)):
+            raise ValueError("Vulkan actual offload/device/FA dispatch mismatch")
 
 
 def verify_capture(folder, corpus, inputs):
     folder = Path(folder)
     receipt = read_json(folder / "capture.json")
-    if (receipt.get("schema") != "xe-quality-fixture-capture-v1"
+    if (receipt.get("schema") not in ("xe-quality-fixture-capture-v1", "xe-quality-fixture-capture-v2")
             or receipt.get("corpus_sha256") != manifest_hash(corpus)
             or set(receipt["files"]) != set(inputs)):
         raise ValueError("capture/corpus join mismatch")
@@ -111,7 +300,7 @@ def verify_capture(folder, corpus, inputs):
     if (type(receipt.get("repetitions")) is not int or not isinstance(runs, list)
             or not 1 <= receipt["repetitions"] <= 10 or len(runs) != receipt["repetitions"]):
         raise ValueError("missing independent run inventory")
-    paths, repeatable, observed_dispatch = set(), True, []
+    paths, unstable_cases, observed_dispatch = set(), set(), []
     for run in runs:
         if set(run) != set(inputs):
             raise ValueError("incomplete run inventory")
@@ -121,31 +310,58 @@ def verify_capture(folder, corpus, inputs):
                 raise ValueError("a run artifact cannot count as another execution")
             paths.add(record["path"])
             array(checked_file(folder, record), len(inputs[key]["positions"]), "<f4")
-            repeatable &= record["sha256"] == receipt["files"][key]["sha256"]
+            if record["sha256"] != receipt["files"][key]["sha256"]:
+                unstable_cases.add(key)
             stderr = (folder / record["path"]).parent / "stderr.txt"
+            if receipt["schema"] == "xe-quality-fixture-capture-v2":
+                stderr = checked_file(folder, record["stderr"])
+                if stderr != (folder / record["path"]).parent / "stderr.txt":
+                    raise ValueError("stderr must belong to its independent execution")
             if stderr.is_symlink():
                 raise ValueError("symlink in retained dispatch logs")
             if stderr.is_file():
                 run_dispatch[key] = dispatch_lines(stderr)
         observed_dispatch.append(run_dispatch)
-    if runs[0] != receipt["files"] or (receipt.get("repeatable") and not repeatable):
+    if runs[0] != receipt["files"] or (receipt.get("repeatable") and unstable_cases):
         raise ValueError("capture repeatability claim contradicts its artifacts")
     # Derive effective dispatch from retained logs and check repeatability
     # without changing the original capture files.
     if any(observed_dispatch):
         if any(set(d) != set(inputs) for d in observed_dispatch):
             raise ValueError("incomplete retained dispatch logs")
-        receipt["repeatable"] = receipt["repeatable"] and all(
-            d == observed_dispatch[0] for d in observed_dispatch)
+        for dispatch in observed_dispatch[1:]:
+            unstable_cases.update(key for key in inputs if dispatch[key] != observed_dispatch[0][key])
         receipt["effective_dispatch"] = observed_dispatch[0]
+    if not receipt["repeatable"] and not unstable_cases:
+        unstable_cases.update(inputs)
+    receipt["unstable_cases"] = sorted(unstable_cases)
+    receipt["repeatable"] = not unstable_cases
+    if receipt.get("backend", {}).get("backend") == "llama.cpp Vulkan":
+        if receipt["schema"] != "xe-quality-fixture-capture-v2":
+            raise ValueError("Vulkan capture requires hashed stderr evidence")
+        for dispatch in observed_dispatch:
+            validate_vulkan_dispatch(receipt["backend"]["public_profile"], dispatch)
     return receipt
 
 
-def capture(corpus_path, model, backend_path, output, repetitions=3, timeout=1800):
+def capture(corpus_path, model, backend_path, output, repetitions=3, timeout=1800,
+            *, before_process=None, require_xenolith=False, case_ids=None):
     if type(repetitions) is not int or not 1 <= repetitions <= 10 or timeout <= 0:
         raise ValueError("invalid repetition count/timeout")
     corpus, inputs = load_corpus(corpus_path)
+    if case_ids is not None:
+        corpus, inputs = _scope(corpus, inputs, case_ids)
     backend = backend_receipt(backend_path, model, corpus["weights_sha256"])
+    if require_xenolith:
+        require_xenolith_backend(backend)
+    check_runtime_environment(backend)
+    execution_affinity = None
+    if backend.get("backend") == "llama.cpp Vulkan":
+        backend = copy.deepcopy(backend)
+        profile = backend["public_profile"]
+        profile["build_affinity"] = profile.get("affinity")
+        execution_affinity = sorted(os.sched_getaffinity(0))
+        profile["affinity"] = execution_affinity
     output = Path(output).absolute()
     output.mkdir(parents=True, exist_ok=False)
     write_json(output / "backend.json", backend)
@@ -169,6 +385,11 @@ def capture(corpus_path, model, backend_path, output, repetitions=3, timeout=180
                           ",".join(map(str, spec["chunks"]))]) + "\n")
             argv = [str(Path(backend["driver"]).resolve()), str(Path(model).resolve()),
                     str(tsv), str(dest), str(spec["context"]), spec["mode"]]
+            if before_process is not None:
+                before_process()
+            check_runtime_environment(backend)
+            if execution_affinity is not None and sorted(os.sched_getaffinity(0)) != execution_affinity:
+                raise ValueError("Vulkan execution affinity changed during capture")
             with (dest / "stdout.txt").open("wb") as stdout, (dest / "stderr.txt").open("wb") as stderr:
                 subprocess.run(argv, stdout=stdout, stderr=stderr, check=True, timeout=timeout)
             selected_dispatch = dispatch_lines(dest / "stderr.txt")
@@ -185,7 +406,9 @@ def capture(corpus_path, model, backend_path, output, repetitions=3, timeout=180
             target = dest / (key + ".npy")
             with target.open("xb") as stream:
                 np.save(stream, z, allow_pickle=False)
-            info = {"path": str(target.relative_to(output)), "sha256": file_hash(target)}
+            info = {"path": str(target.relative_to(output)), "sha256": file_hash(target),
+                    "stderr": {"path": str((dest / "stderr.txt").relative_to(output)),
+                               "sha256": file_hash(dest / "stderr.txt")}}
             runs[-1][key] = info
             if repeat == 0:
                 files[key] = info
@@ -193,12 +416,23 @@ def capture(corpus_path, model, backend_path, output, repetitions=3, timeout=180
                 repeatable = False
             print(json.dumps({"event": "native_case", "repeat": repeat+1, "case": key}), flush=True)
         check_backend(backend)
-    result = {"schema": "xe-quality-fixture-capture-v1", "corpus_sha256": manifest_hash(corpus),
+    result = {"schema": "xe-quality-fixture-capture-v2", "corpus_sha256": manifest_hash(corpus),
               "backend": backend, "files": files, "runs": runs, "repetitions": repetitions,
               "repeatable": repeatable, "effective_dispatch": dispatch,
               "seconds": time.monotonic() - started}
     write_json(output / "capture.json", result)
+    verify_capture(output, corpus, inputs)
     return result
+
+
+def _copy_corpus(corpus_path, corpus, output):
+    (output / "corpus").mkdir()
+    shutil.copyfile(corpus_path, output / "corpus/manifest.json")
+    for item in [*(case["input"] for case in corpus["cases"]), *document_files(corpus)]:
+        src = checked_file(corpus_path.parent, item)
+        dst = output / "corpus" / item["path"]
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
 
 
 def seal(corpus_path, google_dir, baseline_dir, output):
@@ -216,13 +450,7 @@ def seal(corpus_path, google_dir, baseline_dir, output):
         raise ValueError("explicit llama production profile required")
     output = Path(output)
     output.mkdir(parents=True, exist_ok=False)
-    (output / "corpus").mkdir()
-    shutil.copyfile(corpus_path, output / "corpus/manifest.json")
-    for item in [c["input"] for c in corpus["cases"]] + [d["text"] for d in corpus.get("documents", [])]:
-        src = checked_file(corpus_path.parent, item)
-        dst = output / "corpus" / item["path"]
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, dst)
+    _copy_corpus(corpus_path, corpus, output)
     arrays = {}
     for role, folder, receipt, dtype in (("google", google_dir, google, "<f8"),
                                          ("llama", baseline_dir, baseline, "<f4")):
@@ -243,6 +471,92 @@ def seal(corpus_path, google_dir, baseline_dir, output):
         "path": "corpus/manifest.json", "sha256": file_hash(output / "corpus/manifest.json")},
         "reference": google["producer"], "baseline": profile, "arrays": arrays,
         "acceptance": ACCEPTANCE}
+    manifest["content_sha256"] = manifest_hash(manifest)
+    write_json(output / "manifest.json", manifest)
+    verify(output)
+    return manifest
+
+
+def seal_vulkan(source_fixtures, baselines, output):
+    """Reuse verified reference bytes and seal explicitly named Vulkan captures."""
+    source = Path(source_fixtures)
+    original, corpus, inputs = verify(source)
+    return _seal_vulkan(checked_file(source, original["corpus"]), corpus, inputs,
+                        source, original.get("reference"), original["arrays"]["google"],
+                        original["acceptance"], baselines, output, groups=original.get("groups"))
+
+
+def seal_vulkan_from_google(corpus_path, google_dir, baselines, output):
+    """Seal fresh Google and Vulkan captures for the same frozen corpus."""
+    corpus_path, google_dir = Path(corpus_path), Path(google_dir)
+    corpus, inputs = load_corpus(corpus_path)
+    google = read_json(google_dir / "google.json")
+    if (google.get("schema") != "xe-quality-fixture-google-v1"
+            or google.get("corpus_sha256") != manifest_hash(corpus)
+            or set(google["files"]) != set(inputs)):
+        raise ValueError("Google producer/corpus join mismatch")
+    if google.get("producer", {}).get("kind") != "trusted-google-fp64":
+        raise ValueError("explicit trusted Google reference required")
+    for key, item in google["files"].items():
+        array(checked_file(google_dir, item), len(inputs[key]["positions"]), "<f8")
+    return _seal_vulkan(corpus_path, corpus, inputs, google_dir, google["producer"],
+                        google["files"], ACCEPTANCE, baselines, output)
+
+
+def _seal_vulkan(corpus_path, corpus, inputs, google_dir, reference, google_files,
+                 acceptance, baselines, output, *, groups=None):
+    pairs = list(baselines)
+    names = [baseline_name(name) for name, _ in pairs]
+    if not names or len(names) != len(set(names)):
+        raise ValueError("nonempty unique baseline names required")
+    verified = []
+    for name, folder in pairs:
+        folder = Path(folder)
+        selected_corpus, selected_inputs = corpus, inputs
+        if groups is not None:
+            ids = list(read_json(folder / "capture.json")["files"])
+            selected_corpus, selected_inputs = _scope(corpus, inputs, ids)
+        receipt = verify_capture(folder, selected_corpus, selected_inputs)
+        if receipt["repetitions"] < 3 or not receipt["repeatable"]:
+            raise ValueError("baseline needs three identical runs before sealing")
+        backend = receipt["backend"]
+        if backend.get("backend") != "llama.cpp Vulkan":
+            raise ValueError("Vulkan baseline required")
+        profile = portable_profile(backend)
+        profile.update(backend=backend["backend"], source_commit=backend["source_commit"],
+                       driver_sha256=backend["driver_sha256"],
+                       verified_repetitions=receipt["repetitions"], repeatability="bitwise",
+                       effective_dispatch=portable_dispatch(receipt["effective_dispatch"]))
+        _profile(profile, vulkan=True)
+        verified.append((name, folder, receipt, profile))
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=False)
+    _copy_corpus(corpus_path, corpus, output)
+    google_arrays = {}
+    (output / "google").mkdir()
+    for key, item in google_files.items():
+        dst = output / "google" / (key + ".npy")
+        shutil.copyfile(checked_file(google_dir, item), dst)
+        google_arrays[key] = {"path": str(dst.relative_to(output)), "sha256": file_hash(dst)}
+    entries = {}
+    for name, folder, receipt, profile in verified:
+        dest = output / "llama" / name
+        dest.mkdir(parents=True)
+        arrays = {}
+        for key, item in receipt["files"].items():
+            dst = dest / (key + ".npy")
+            shutil.copyfile(checked_file(folder, item), dst)
+            arrays[key] = {"path": str(dst.relative_to(output)), "sha256": file_hash(dst)}
+        entries[name] = {"profile": profile, "arrays": arrays}
+        if groups is not None:
+            entries[name] = {"cases": sorted(arrays), "profiles": [profile], "arrays": arrays}
+    manifest = {"schema": "xe-quality-fixtures-v2", "corpus": {
+        "path": "corpus/manifest.json", "sha256": file_hash(output / "corpus/manifest.json")},
+        "reference": reference, "arrays": {"google": google_arrays},
+        "baselines": entries, "acceptance": acceptance}
+    if groups is not None:
+        manifest.pop("reference")
+        manifest.update(schema=GROUPED_FIXTURES, groups=groups)
     manifest["content_sha256"] = manifest_hash(manifest)
     write_json(output / "manifest.json", manifest)
     verify(output)
@@ -299,17 +613,14 @@ def _summarize(grouped, precise):
     return strata, overall
 
 
-def evaluate(root, capture_dir):
-    manifest, corpus, inputs = verify(root)
-    capture_dir, root = Path(capture_dir), Path(root)
-    captured = verify_capture(capture_dir, corpus, inputs)
+def _evaluate_cases(root, capture_dir, manifest, corpus, inputs, baseline_arrays, captured):
     grouped, precise, cases = defaultdict(list), defaultdict(list), []
     position_regressions, uncertain_positions = [], []
     for case in corpus["cases"]:
         key = case["id"]
         n = len(inputs[key]["positions"])
         g = array(checked_file(root, manifest["arrays"]["google"][key]), n, "<f8")
-        l = array(checked_file(root, manifest["arrays"]["llama"][key]), n, "<f4")
+        l = array(checked_file(root, baseline_arrays[key]), n, "<f4")
         x = array(checked_file(capture_dir, captured["files"][key]), n, "<f4")
         values, extended = _metrics(g, x, l), _metrics(g, x, l, True)
         for row, position in enumerate(inputs[key]["positions"]):
@@ -341,12 +652,12 @@ def evaluate(root, capture_dir):
     failed = any(e["resolution_interval"][0] > 0 for e in gates)
     unstable = any(e["resolution_interval"][0] <= 0 < e["resolution_interval"][1] for e in gates)
     # Repetitions establish observed stability, not an independent document sample.
-    enough = captured["repetitions"] >= 3 and captured["repeatable"]
+    repeatable = inputs.keys().isdisjoint(captured["unstable_cases"])
+    enough = captured["repetitions"] >= 3 and repeatable
     outcome = "FAIL" if failed else ("INCONCLUSIVE" if unstable else "PASS")
     if not enough:
         outcome = "INCONCLUSIVE"
-    return {"schema": "xe-quality-fixture-report-v1", "outcome": outcome,
-            "scope": "fixed-public-corpus", "population_inference": "NOT_ESTABLISHED",
+    return {"outcome": outcome,
             "reason": ("Legacy per-family endpoint gate." if legacy else
                        "Equal-family mean KL gate; local regressions are diagnostic, not vetoes.")
                       + " Zero margin; three identical native runs required.",
@@ -356,13 +667,56 @@ def evaluate(root, capture_dir):
                 "family_endpoint_regressions": family_regressions,
                 "position_regressions": position_regressions,
                 "uncertain_position_differences": uncertain_positions},
-            "fixture_sha256": manifest["content_sha256"], "strata": strata, "cases": cases,
-            "comparator": {"python": platform.python_version(), "numpy": np.__version__,
+            "strata": strata, "cases": cases,
+            "repetitions": captured["repetitions"], "repeatable": repeatable}
+
+
+def evaluate(root, capture_dir, baseline=None):
+    manifest, corpus, inputs = verify(root)
+    selected, profile, baseline_arrays = select_baseline(manifest, baseline)
+    grouped = manifest["schema"] == GROUPED_FIXTURES
+    if grouped:
+        covered = manifest["baselines"][selected]["cases"]
+        corpus, inputs = _scope(corpus, inputs, covered)
+    capture_dir, root = Path(capture_dir), Path(root)
+    captured = verify_capture(capture_dir, corpus, inputs)
+    backend = captured.get("backend", {})
+    require_xenolith_backend(backend)
+    report = {
+        "scope": "fixed-public-corpus", "population_inference": "NOT_ESTABLISHED",
+        "fixture_sha256": manifest["content_sha256"],
+        "candidate": {key: backend[key] for key in (
+            "source_commit", "source_diff_sha256", "driver_sha256") if key in backend},
+        "comparator": {"python": platform.python_version(), "numpy": np.__version__,
                            "source_sha256": file_hash(__file__),
                            "metrics_sha256": file_hash(Path(__file__).with_name("metrics.py"))},
-            "repetitions": captured["repetitions"], "repeatable": captured["repeatable"],
-            "resolution_check": "FP64 vs longdouble; empirical sensitivity, not a rigorous error bound",
-            "longdouble_mantissa_bits": int(np.finfo(np.longdouble).nmant)}
+        "resolution_check": "FP64 vs longdouble; empirical sensitivity, not a rigorous error bound",
+        "longdouble_mantissa_bits": int(np.finfo(np.longdouble).nmant),
+    }
+    if not grouped:
+        report.update(schema="xe-quality-fixture-report-v1", baseline={
+            "id": selected, "profile": profile, "profile_sha256": manifest_hash(profile),
+            "selection": "explicit caller selection" if selected is not None else "legacy v1 baseline",
+        })
+        report.update(_evaluate_cases(root, capture_dir, manifest, corpus, inputs, baseline_arrays, captured))
+        return report
+
+    report.update(schema="xe-quality-fixture-report-v2", baseline={
+        "id": selected, "profiles": profile, "profile_sha256": [manifest_hash(p) for p in profile],
+        "selection": "explicit caller selection",
+    }, groups={})
+    for name, group in manifest["groups"].items():
+        cases = [key for key in group["cases"] if key in inputs]
+        result = {"covered_cases": cases,
+                  "missing_cases": [key for key in group["cases"] if key not in inputs]}
+        if cases:
+            group_corpus, group_inputs = _scope(corpus, inputs, cases)
+            result.update(_evaluate_cases(
+                root, capture_dir, manifest, group_corpus, group_inputs, baseline_arrays, captured))
+        else:
+            result["outcome"] = "NO_BASELINE"
+        report["groups"][name] = result
+    return report
 
 
 def main(argv=None):
@@ -377,32 +731,70 @@ def main(argv=None):
     p.add_argument("--output", required=True)
     p.add_argument("--repetitions", type=int, default=3)
     p.add_argument("--timeout", type=int, default=1800)
+    p.add_argument("--case", action="append", help="Case ID to capture (repeatable, defaults to all)")
     p = sub.add_parser("seal")
     for arg in ("corpus", "google", "baseline", "output"):
         p.add_argument("--"+arg, required=True)
+    p = sub.add_parser("seal-vulkan")
+    source = p.add_mutually_exclusive_group(required=True)
+    source.add_argument("--fixtures")
+    source.add_argument("--corpus")
+    p.add_argument("--google", help="Google FP64 capture directory for --corpus")
+    p.add_argument("--baseline", action="append", required=True, help="ID=CAPTURE (repeatable)")
+    p.add_argument("--output", required=True)
+    p = sub.add_parser("evaluate")
+    p.add_argument("--fixtures", required=True)
+    p.add_argument("--capture", required=True)
+    p.add_argument("--baseline")
     p = sub.add_parser("compare")
     for arg in ("fixtures", "model", "backend-config", "output"):
         p.add_argument("--"+arg, required=True)
     p.add_argument("--repetitions", type=int, default=3)
     p.add_argument("--timeout", type=int, default=1800)
+    p.add_argument("--baseline")
     args = parser.parse_args(argv)
     try:
         if args.command == "verify":
             m, c, _ = verify(args.fixtures)
             result = {"status": "VERIFIED", "cases": len(c["cases"]), "content_sha256": m["content_sha256"]}
         elif args.command == "capture":
-            result = capture(args.corpus, args.model, args.backend_config, args.output, args.repetitions, args.timeout)
+            result = capture(args.corpus, args.model, args.backend_config, args.output,
+                             args.repetitions, args.timeout, case_ids=args.case)
             result = {k: result[k] for k in ("repetitions", "repeatable", "seconds")}
         elif args.command == "seal":
             result = seal(args.corpus, args.google, args.baseline, args.output)
             result = {"status": "SEALED", "content_sha256": result["content_sha256"]}
+        elif args.command == "seal-vulkan":
+            pairs = []
+            for item in args.baseline:
+                name, sep, folder = item.partition("=")
+                if not sep or not folder:
+                    raise ValueError("baseline must be ID=CAPTURE")
+                pairs.append((name, folder))
+            if (args.corpus is None) != (args.google is None):
+                raise ValueError("--google must be supplied with --corpus only")
+            if args.corpus:
+                result = seal_vulkan_from_google(args.corpus, args.google, pairs, args.output)
+            else:
+                result = seal_vulkan(args.fixtures, pairs, args.output)
+            result = {"status": "SEALED", "content_sha256": result["content_sha256"]}
+        elif args.command == "evaluate":
+            result = evaluate(args.fixtures, args.capture, args.baseline)
         else:
             m, _, _ = verify(args.fixtures)
+            select_baseline(m, args.baseline)
             corpus_path = checked_file(args.fixtures, m["corpus"])
-            capture(corpus_path, args.model, args.backend_config, args.output, args.repetitions, args.timeout)
-            result = evaluate(args.fixtures, args.output)
+            case_ids = m["baselines"][args.baseline]["cases"] if m["schema"] == GROUPED_FIXTURES else None
+            capture(corpus_path, args.model, args.backend_config, args.output,
+                    args.repetitions, args.timeout, require_xenolith=True, case_ids=case_ids)
+            result = evaluate(args.fixtures, args.output, args.baseline)
             write_json(Path(args.output) / "report.json", result)
         print(json.dumps(result, indent=2, allow_nan=False))
+        outcomes = {group["outcome"] for group in result.get("groups", {}).values()}
+        if "FAIL" in outcomes:
+            return 1
+        if "INCONCLUSIVE" in outcomes:
+            return 3
         return {"PASS": 0, "FAIL": 1, "INCONCLUSIVE": 3}.get(result.get("outcome"), 0)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(json.dumps({"outcome": "ERROR", "scientific_decision": "INCONCLUSIVE", "reason": str(exc)}))

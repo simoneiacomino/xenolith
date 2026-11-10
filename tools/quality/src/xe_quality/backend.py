@@ -58,9 +58,8 @@ def prepare(source, model, output, *, make="make", jobs=2):
         raise ValueError("jobs must be between 1 and 256")
     output.parent.mkdir(parents=True, exist_ok=True)
     commit_before = command(["git", "rev-parse", "HEAD"], source).strip()
-    diff_before = subprocess.check_output(
-        ["git", "diff", "HEAD", "--binary"], cwd=source
-    )
+    diff_argv = ["git", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--binary", "HEAD"]
+    diff_before = subprocess.check_output(diff_argv, cwd=source)
     build_info = command([make, "--no-print-directory", "quality-build-info"], source)
     before = {str(p): sha(p) for p in source_files(source)}
     started = time.monotonic()
@@ -74,8 +73,7 @@ def prepare(source, model, output, *, make="make", jobs=2):
     if (
         after != before
         or command(["git", "rev-parse", "HEAD"], source).strip() != commit_before
-        or subprocess.check_output(["git", "diff", "HEAD", "--binary"], cwd=source)
-        != diff_before
+        or subprocess.check_output(diff_argv, cwd=source) != diff_before
     ):
         raise ValueError(
             "Source changed during build; keep log and rebuild to a new receipt"

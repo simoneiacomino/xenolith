@@ -542,11 +542,15 @@ quality-driver: $(QUALITY_NATIVE)/xenolith_driver
 quality-tokenizer: $(QUALITY_NATIVE)/xe_tokenizer
 
 # Independent tokenizer, against an explicitly supplied external llama.cpp build.
+# Link the CPU library directly when present so RUNPATH resolves it after a move.
 LLAMA_TOKENIZER_DIR ?=
 LLAMA_TOKENIZER_BUILD ?=$(LLAMA_TOKENIZER_DIR)/build-cpu
 quality-llama-tokenizer:
 	@test -n "$(LLAMA_TOKENIZER_DIR)" -a -f "$(LLAMA_TOKENIZER_BUILD)/bin/libllama.so" || { printf '%s\n' 'Set LLAMA_TOKENIZER_DIR and LLAMA_TOKENIZER_BUILD to an explicit built llama.cpp checkout.' >&2; exit 2; }
-	$(CXX) -O2 -std=c++17 -I"$(LLAMA_TOKENIZER_DIR)/include" -I"$(LLAMA_TOKENIZER_DIR)/ggml/include" -o $(QUALITY_NATIVE)/llama_tokenizer $(QUALITY_NATIVE)/llama_tokenizer.cpp -L"$(LLAMA_TOKENIZER_BUILD)/bin" -Wl,-rpath,"$(abspath $(LLAMA_TOKENIZER_BUILD)/bin)" $(LLAMA_LDLIBS)
+	$(CXX) -O2 -std=c++17 -I"$(LLAMA_TOKENIZER_DIR)/include" -I"$(LLAMA_TOKENIZER_DIR)/ggml/include" \
+		-o $(QUALITY_NATIVE)/llama_tokenizer $(QUALITY_NATIVE)/llama_tokenizer.cpp \
+		-L"$(LLAMA_TOKENIZER_BUILD)/bin" -Wl,-rpath,"$(abspath $(LLAMA_TOKENIZER_BUILD)/bin)" $(LLAMA_LDLIBS) \
+		-Wl,--no-as-needed $(if $(wildcard $(LLAMA_TOKENIZER_BUILD)/bin/libggml-cpu.so),-lggml-cpu) -Wl,--as-needed
 
 quality-build-info:
 	@printf '%s\n' 'CC=$(CC)' 'CFLAGS=$(CFLAGS)' 'LDLIBS=$(LDLIBS)' 'NUMERIC_SOURCE_HASH=$(NUMERIC_SOURCE_HASH)' 'NUMERIC_CFLAGS_HASH=$(NUMERIC_CFLAGS_HASH)'
@@ -555,12 +559,13 @@ check-quality-unit:
 	$(PYTHON) -m unittest discover -s tests/quality -p 'test_*.py' -v
 
 QUALITY_FIXTURES ?=tools/quality/fixtures/gemma4
+QUALITY_BASELINE ?=
 verify-quality-fixtures:
 	$(PYTHON) -m xe_quality.fixtures verify --fixtures "$(QUALITY_FIXTURES)"
 
 check-quality-fixtures: require-model
 	@test -f "$(BACKEND_CONFIG)" -a -n "$(QUALITY_OUTPUT)" || { printf '%s\n' 'Set BACKEND_CONFIG and a new QUALITY_OUTPUT; see tools/quality/fixtures/README.md.' >&2; exit 2; }
-	$(PYTHON) -m xe_quality.fixtures compare --fixtures "$(QUALITY_FIXTURES)" --model "$(MODEL)" --backend-config "$(BACKEND_CONFIG)" --output "$(QUALITY_OUTPUT)"
+	$(PYTHON) -m xe_quality.fixtures compare --fixtures "$(QUALITY_FIXTURES)" --model "$(MODEL)" --backend-config "$(BACKEND_CONFIG)" --output "$(QUALITY_OUTPUT)" $(if $(QUALITY_BASELINE),--baseline "$(QUALITY_BASELINE)")
 
 # An explicit policy is required for acceptance. Without one the gate exits 3.
 REFERENCE ?=

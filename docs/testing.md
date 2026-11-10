@@ -19,7 +19,8 @@ The maintained text fidelity path is [tools/quality](../tools/quality/README.md)
 exact represented GGUF weights, a streamed **Google FP64** reference, frozen
 corpus, immutable full-vocabulary archives, and a driver built from the current
 Xenolith checkout. The [shared fixture suite](../tools/quality/fixtures/README.md)
-commits exact inputs and Google/llama logits directly in the repository. It
+commits exact inputs, shared Google logits and a named llama.cpp Vulkan
+baseline for each of Panther Lake and Raptor Lake directly in the repository. It
 trusts the pinned Google producer and applies a zero-margin relative acceptance
 criterion to the equally weighted mean across families in the finite public
 corpus. Individual family/position regressions remain visible as nonblocking
@@ -30,8 +31,11 @@ JAX, Flax or Torch. The engine itself needs none of these Python dependencies.
 
 After installing the compare profile, `make verify-quality-fixtures` checks the
 committed data without a model. `make check-quality-fixtures MODEL=...
-BACKEND_CONFIG=... QUALITY_OUTPUT=...` compares a current-build backend with the
-committed baseline. Supply `PYTHON=/path/to/compare-venv/bin/python` for both
+BACKEND_CONFIG=... QUALITY_OUTPUT=... QUALITY_BASELINE=panther-vulkan` compares
+a current-build backend with the selected Vulkan baseline. Use `raptor-vulkan`
+for the Raptor Lake profile; other GPU hosts need their own verified baseline.
+Selection is explicit: the tool does not infer or
+certify a hardware match from the hostname. Supply `PYTHON=/path/to/compare-venv/bin/python` for both
 targets. PASS is scoped to the fixed suite, not unseen-text statistical
 equivalence or free-response quality. See the fixture guide for repetitions,
 numerical resolution and explicit reproduction commands.

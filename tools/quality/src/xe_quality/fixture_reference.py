@@ -64,6 +64,13 @@ def checked_file(root, record):
     return path
 
 
+def document_files(corpus):
+    for document in corpus.get("documents", []):
+        yield document["text"]
+        if "license_file" in document:
+            yield document["license_file"]
+
+
 def load_corpus(path):
     import re
 
@@ -107,12 +114,12 @@ def load_corpus(path):
                 or spec.get("mode") != "prefill"):
             raise ValueError("unsupported context/state/mode contract")
         inputs[key] = spec
-    for document in data.get("documents", []):
-        checked_file(path.parent, document["text"])
+    for record in document_files(data):
+        checked_file(path.parent, record)
     return data, inputs
 
 
-def produce(corpus_path, model, google_source, output, max_forwards):
+def produce(corpus_path, model, google_source, output, max_forwards, *, before_forward=None):
     corpus, inputs = load_corpus(corpus_path)
     if type(max_forwards) is not int or max_forwards < 1:
         raise ValueError("explicit positive forward budget required")
@@ -140,6 +147,8 @@ def produce(corpus_path, model, google_source, output, max_forwards):
             reference.reset()
             rows, offset = [], 0
             for count in spec["chunks"]:
+                if before_forward is not None:
+                    before_forward()
                 positions = [p - offset for p in spec["positions"]
                              if offset <= p < offset + count]
                 forwards += 1
