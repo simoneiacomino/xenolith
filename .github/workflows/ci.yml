@@ -75,6 +75,9 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/validation-installed/tests"
           cp -a tests/quality "$RUNNER_TEMP/validation-installed/tests/quality"
+          # Backend tests verify the exact native producer source as test data.
+          mkdir -p "$RUNNER_TEMP/validation-installed/tools/quality/native"
+          cp tools/quality/native/llama_driver.cpp "$RUNNER_TEMP/validation-installed/tools/quality/native/"
           cd "$RUNNER_TEMP/validation-installed"
           /tmp/xe-reference/bin/python - <<'PYTEST'
           import unittest

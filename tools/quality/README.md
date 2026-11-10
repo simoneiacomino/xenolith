@@ -9,7 +9,7 @@ Ordinary comparisons use only Python, NumPy, a compatible reference archive,
 the model GGUF and a current-build native driver. No reference model is loaded
 by a comparison, and an engine-only change does not invalidate reference results.
 
-For the shared, in-repository Google and llama.cpp logits, use the
+For the shared, in-repository Google and host-specific llama.cpp Vulkan logits, use the
 [fixture suite](fixtures/README.md). Its `xe-quality-fixtures` commands verify
 and compare the finite public corpus with a zero-margin criterion on the
 equally weighted mean KL across families, retaining local regressions as diagnostics.

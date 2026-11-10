@@ -7,10 +7,14 @@ statistical noninferiority on unseen documents or free-generation task quality.
 from __future__ import annotations
 
 import argparse
+import copy
+import hashlib
+import os
 from collections import defaultdict
 import json
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import time
@@ -43,11 +47,35 @@ def array(path, rows, dtype):
     return z
 
 
+def baseline_name(name):
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
+        raise ValueError("unsafe baseline name")
+    return name
+
+
+def _profile(profile, vulkan=False):
+    expected = "llama.cpp Vulkan" if vulkan else "llama.cpp CPU"
+    if (profile.get("backend") != expected or not profile.get("source_commit")
+            or profile.get("verified_repetitions", 0) < 3
+            or profile.get("repeatability") != "bitwise"):
+        raise ValueError("pinned repeatable llama baseline required")
+    if vulkan:
+        validate_vulkan_dispatch(profile, profile.get("effective_dispatch", {}))
+        hashes = profile.get("stderr_sha256", [])
+        dispatch = profile["effective_dispatch"]
+        if (len(hashes) != profile["verified_repetitions"]
+                or any(set(run) != set(dispatch) or any(
+                    not isinstance(h, str) or not re.fullmatch(r"[0-9a-f]{64}", h)
+                    for h in run.values()) for run in hashes)):
+            raise ValueError("Vulkan stderr hash inventory required")
+
+
 def verify(root):
     root = Path(root).absolute()
     manifest = read_json(root / "manifest.json")
     digest = manifest.pop("content_sha256", None)
-    if manifest.get("schema") != "xe-quality-fixtures-v1" or digest != manifest_hash(manifest):
+    schema = manifest.get("schema")
+    if schema not in ("xe-quality-fixtures-v1", "xe-quality-fixtures-v2") or digest != manifest_hash(manifest):
         raise ValueError("fixture manifest identity mismatch")
     corpus_path = checked_file(root, manifest["corpus"])
     corpus, inputs = load_corpus(corpus_path)
@@ -55,19 +83,40 @@ def verify(root):
         raise ValueError("explicit trusted Google reference required")
     if manifest.get("acceptance") not in (ACCEPTANCE, LEGACY_ACCEPTANCE):
         raise ValueError("unsupported fixture acceptance contract")
-    keys = set(inputs)
-    for role, dtype in (("google", "<f8"), ("llama", "<f4")):
-        if set(manifest["arrays"][role]) != keys:
+    inventories = [(manifest["arrays"]["google"], "<f8")]
+    if schema == "xe-quality-fixtures-v1":
+        inventories.append((manifest["arrays"]["llama"], "<f4"))
+        _profile(manifest.get("baseline", {}))
+    else:
+        if set(manifest["arrays"]) != {"google"} or not manifest.get("baselines"):
+            raise ValueError("named baseline inventory required")
+        for name, entry in manifest["baselines"].items():
+            baseline_name(name)
+            _profile(entry["profile"], vulkan=True)
+            if set(entry["profile"]["effective_dispatch"]) != set(inputs):
+                raise ValueError("incomplete baseline dispatch inventory")
+            inventories.append((entry["arrays"], "<f4"))
+    for inventory, dtype in inventories:
+        if set(inventory) != set(inputs):
             raise ValueError("reference/baseline cases are missing or extra")
         for key, spec in inputs.items():
-            array(checked_file(root, manifest["arrays"][role][key]), len(spec["positions"]), dtype)
-    baseline = manifest.get("baseline", {})
-    if (baseline.get("backend") != "llama.cpp CPU" or not baseline.get("source_commit")
-            or baseline.get("verified_repetitions", 0) < 3
-            or baseline.get("repeatability") != "bitwise"):
-        raise ValueError("pinned repeatable llama baseline required")
+            array(checked_file(root, inventory[key]), len(spec["positions"]), dtype)
     manifest["content_sha256"] = digest
     return manifest, corpus, inputs
+
+
+def select_baseline(manifest, name=None):
+    if manifest["schema"] == "xe-quality-fixtures-v2":
+        if name is None:
+            raise ValueError("explicit --baseline ID required for v2 fixtures")
+        baseline_name(name)
+        if name not in manifest["baselines"]:
+            raise ValueError("unknown fixture baseline: " + name)
+        entry = manifest["baselines"][name]
+        return name, entry["profile"], entry["arrays"]
+    if name is not None:
+        raise ValueError("named baseline selection requires v2 fixtures")
+    return None, manifest["baseline"], manifest["arrays"]["llama"]
 
 
 def backend_receipt(path, model, expected_weights):
@@ -80,6 +129,62 @@ def backend_receipt(path, model, expected_weights):
     if file_hash(driver) != backend.get("driver_sha256"):
         raise ValueError("driver identity mismatch")
     return backend
+
+
+_RUNTIME_ENV = {"LD_LIBRARY_PATH", "LD_PRELOAD", "LD_AUDIT", "LD_DEBUG", "LD_DEBUG_OUTPUT",
+                "LD_ORIGIN_PATH", "LD_HWCAP_MASK", "LD_BIND_NOW", "LD_BIND_NOT",
+                "LD_ASSUME_KERNEL", "VULKAN_SDK", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+                "XDG_CONFIG_DIRS", "XDG_DATA_DIRS", "XDG_RUNTIME_DIR", "HOME"}
+
+
+def _runtime_env_key(key):
+    return key in _RUNTIME_ENV or key.startswith(("VK_", "GGML_VK_", "LD_", "XDG_"))
+
+
+def check_runtime_environment(backend):
+    if backend.get("backend") != "llama.cpp Vulkan":
+        return
+    expected = backend.get("public_profile", {}).get("environment")
+    if not isinstance(expected, dict):
+        raise ValueError("Vulkan builder runtime environment inventory required")
+    keys = _RUNTIME_ENV | {k for k in set(expected) | set(os.environ) if _runtime_env_key(k)}
+    # Older receipts did not explicitly inventory HOME; those receipts rely on
+    # their pinned ICD manifests rather than implying a different HOME value.
+    if "HOME" not in expected:
+        keys.discard("HOME")
+    changed = sorted(k for k in keys if expected.get(k) != os.environ.get(k))
+    if changed:
+        raise ValueError("Vulkan runtime environment differs from builder: " + ", ".join(changed))
+
+
+def portable_profile(backend):
+    profile = copy.deepcopy(backend["public_profile"])
+    profile.pop("build_environment", None)
+    runtime = profile.get("vulkan_runtime", {})
+    for field in ("mapped_files", "icd_manifests"):
+        runtime[field] = [{"basename": Path(path).name, "sha256": backend["input_pins"][path]}
+                          for path in runtime.get(field, [])]
+    environment = profile.get("environment", {})
+    path_keys = {"LD_LIBRARY_PATH", "LD_PRELOAD", "LD_AUDIT", "LD_DEBUG_OUTPUT",
+                 "LD_ORIGIN_PATH", "VULKAN_SDK", "HOME", "VK_DRIVER_FILES",
+                 "VK_ICD_FILENAMES", "VK_ADD_DRIVER_FILES", "VK_LAYER_PATH",
+                 "VK_ADD_LAYER_PATH", "VK_DRIVER_PATH"}
+    path_keys.update(k for k in environment if k.startswith("XDG_"))
+    for key, value in list(environment.items()):
+        if value is not None and (key in path_keys or "/" in str(value)):
+            environment[key] = {"value_sha256": hashlib.sha256(value.encode()).hexdigest()}
+    # Preserve the receipt's numerical settings and identities while ensuring
+    # extra producer fields cannot publish private absolute paths.
+    def scrub(value):
+        if isinstance(value, dict):
+            return {key: scrub(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [scrub(item) for item in value]
+        if isinstance(value, str) and (value.startswith("/") or any(
+                prefix in value for prefix in ("/home/", "/tmp/", "/private/"))):
+            return {"value_sha256": hashlib.sha256(value.encode()).hexdigest()}
+        return value
+    return scrub(profile)
 
 
 def check_backend(backend):
@@ -95,15 +200,44 @@ def check_backend(backend):
 def dispatch_lines(path):
     return [line.strip() for line in Path(path).read_text(errors="replace").splitlines()
             if any(field in line for field in
-                   ("flash_attn", "Flash Attention", "flash attention",
+                   ("XE_QUALITY_VULKAN ", "offloaded ", "flash_attn", "Flash Attention", "flash attention",
                     "compute buffer size", "n_ctx ", "n_ctx_per_seq ",
                     "n_batch ", "n_ubatch ", "type_k =", "type_v ="))]
+
+
+def validate_vulkan_dispatch(profile, dispatch):
+    config = profile.get("configuration", {})
+    devices = config.get("devices")
+    if (profile.get("profile") != "vulkan" or not isinstance(devices, list)
+            or len(devices) != 1 or not re.fullmatch(r"Vulkan[0-9]+", devices[0])
+            or config.get("n_gpu_layers") != 999
+            or config.get("flash_attn_type") != "OFF"
+            or config.get("offload_kqv") is not True or config.get("op_offload") is not True):
+        raise ValueError("explicit full-offload Vulkan FA OFF profile required")
+    identities = [line for line in profile.get("vulkan_runtime", {}).get("identity", [])
+                  if line.startswith("XE_QUALITY_VULKAN device=")]
+    identity_pattern = (r"XE_QUALITY_VULKAN device=" + re.escape(devices[0])
+        + r" description=.+ vendor_id=\d+ device_id=\d+ driver_version=\d+ api_version=\d+ physical_type=\d+")
+    if len(identities) != 1 or not re.fullmatch(identity_pattern, identities[0]):
+        raise ValueError("pinned Vulkan device identity required")
+    marker = "XE_QUALITY_VULKAN dispatch=full-layer-offload flash_attn=OFF offload_kqv=1 op_offload=1"
+    if not dispatch:
+        raise ValueError("Vulkan dispatch evidence missing")
+    for lines in dispatch.values():
+        actual = [line for line in lines if line.startswith("XE_QUALITY_VULKAN device=")]
+        counts = [tuple(map(int, match)) for line in lines
+                  for match in re.findall(r"offloaded (\d+)/(\d+) layers to GPU", line)]
+        if (actual != identities or lines.count(marker) != 1 or not counts
+                or any(a <= 0 or a != b for a, b in counts)
+                or any(re.search(r"(?:Flash Attention|flash attention).*enabled|flash_attn\s*=\s*1(?:\s|$)", line)
+                       for line in lines)):
+            raise ValueError("Vulkan actual offload/device/FA dispatch mismatch")
 
 
 def verify_capture(folder, corpus, inputs):
     folder = Path(folder)
     receipt = read_json(folder / "capture.json")
-    if (receipt.get("schema") != "xe-quality-fixture-capture-v1"
+    if (receipt.get("schema") not in ("xe-quality-fixture-capture-v1", "xe-quality-fixture-capture-v2")
             or receipt.get("corpus_sha256") != manifest_hash(corpus)
             or set(receipt["files"]) != set(inputs)):
         raise ValueError("capture/corpus join mismatch")
@@ -123,6 +257,10 @@ def verify_capture(folder, corpus, inputs):
             array(checked_file(folder, record), len(inputs[key]["positions"]), "<f4")
             repeatable &= record["sha256"] == receipt["files"][key]["sha256"]
             stderr = (folder / record["path"]).parent / "stderr.txt"
+            if receipt["schema"] == "xe-quality-fixture-capture-v2":
+                stderr = checked_file(folder, record["stderr"])
+                if stderr != (folder / record["path"]).parent / "stderr.txt":
+                    raise ValueError("stderr must belong to its independent execution")
             if stderr.is_symlink():
                 raise ValueError("symlink in retained dispatch logs")
             if stderr.is_file():
@@ -138,6 +276,11 @@ def verify_capture(folder, corpus, inputs):
         receipt["repeatable"] = receipt["repeatable"] and all(
             d == observed_dispatch[0] for d in observed_dispatch)
         receipt["effective_dispatch"] = observed_dispatch[0]
+    if receipt.get("backend", {}).get("backend") == "llama.cpp Vulkan":
+        if receipt["schema"] != "xe-quality-fixture-capture-v2":
+            raise ValueError("Vulkan capture requires hashed stderr evidence")
+        for dispatch in observed_dispatch:
+            validate_vulkan_dispatch(receipt["backend"]["public_profile"], dispatch)
     return receipt
 
 
@@ -146,6 +289,14 @@ def capture(corpus_path, model, backend_path, output, repetitions=3, timeout=180
         raise ValueError("invalid repetition count/timeout")
     corpus, inputs = load_corpus(corpus_path)
     backend = backend_receipt(backend_path, model, corpus["weights_sha256"])
+    check_runtime_environment(backend)
+    execution_affinity = None
+    if backend.get("backend") == "llama.cpp Vulkan":
+        backend = copy.deepcopy(backend)
+        profile = backend["public_profile"]
+        profile["build_affinity"] = profile.get("affinity")
+        execution_affinity = sorted(os.sched_getaffinity(0))
+        profile["affinity"] = execution_affinity
     output = Path(output).absolute()
     output.mkdir(parents=True, exist_ok=False)
     write_json(output / "backend.json", backend)
@@ -169,6 +320,9 @@ def capture(corpus_path, model, backend_path, output, repetitions=3, timeout=180
                           ",".join(map(str, spec["chunks"]))]) + "\n")
             argv = [str(Path(backend["driver"]).resolve()), str(Path(model).resolve()),
                     str(tsv), str(dest), str(spec["context"]), spec["mode"]]
+            check_runtime_environment(backend)
+            if execution_affinity is not None and sorted(os.sched_getaffinity(0)) != execution_affinity:
+                raise ValueError("Vulkan execution affinity changed during capture")
             with (dest / "stdout.txt").open("wb") as stdout, (dest / "stderr.txt").open("wb") as stderr:
                 subprocess.run(argv, stdout=stdout, stderr=stderr, check=True, timeout=timeout)
             selected_dispatch = dispatch_lines(dest / "stderr.txt")
@@ -185,7 +339,9 @@ def capture(corpus_path, model, backend_path, output, repetitions=3, timeout=180
             target = dest / (key + ".npy")
             with target.open("xb") as stream:
                 np.save(stream, z, allow_pickle=False)
-            info = {"path": str(target.relative_to(output)), "sha256": file_hash(target)}
+            info = {"path": str(target.relative_to(output)), "sha256": file_hash(target),
+                    "stderr": {"path": str((dest / "stderr.txt").relative_to(output)),
+                               "sha256": file_hash(dest / "stderr.txt")}}
             runs[-1][key] = info
             if repeat == 0:
                 files[key] = info
@@ -193,11 +349,12 @@ def capture(corpus_path, model, backend_path, output, repetitions=3, timeout=180
                 repeatable = False
             print(json.dumps({"event": "native_case", "repeat": repeat+1, "case": key}), flush=True)
         check_backend(backend)
-    result = {"schema": "xe-quality-fixture-capture-v1", "corpus_sha256": manifest_hash(corpus),
+    result = {"schema": "xe-quality-fixture-capture-v2", "corpus_sha256": manifest_hash(corpus),
               "backend": backend, "files": files, "runs": runs, "repetitions": repetitions,
               "repeatable": repeatable, "effective_dispatch": dispatch,
               "seconds": time.monotonic() - started}
     write_json(output / "capture.json", result)
+    verify_capture(output, corpus, inputs)
     return result
 
 
@@ -243,6 +400,67 @@ def seal(corpus_path, google_dir, baseline_dir, output):
         "path": "corpus/manifest.json", "sha256": file_hash(output / "corpus/manifest.json")},
         "reference": google["producer"], "baseline": profile, "arrays": arrays,
         "acceptance": ACCEPTANCE}
+    manifest["content_sha256"] = manifest_hash(manifest)
+    write_json(output / "manifest.json", manifest)
+    verify(output)
+    return manifest
+
+
+def seal_vulkan(source_fixtures, baselines, output):
+    """Reuse verified reference bytes and seal explicitly named Vulkan captures."""
+    source = Path(source_fixtures)
+    original, corpus, inputs = verify(source)
+    pairs = list(baselines)
+    names = [baseline_name(name) for name, _ in pairs]
+    if not names or len(names) != len(set(names)):
+        raise ValueError("nonempty unique baseline names required")
+    verified = []
+    for name, folder in pairs:
+        receipt = verify_capture(folder, corpus, inputs)
+        if receipt["repetitions"] < 3 or not receipt["repeatable"]:
+            raise ValueError("baseline needs three identical runs before sealing")
+        backend = receipt["backend"]
+        if backend.get("backend") != "llama.cpp Vulkan":
+            raise ValueError("Vulkan baseline required")
+        profile = portable_profile(backend)
+        profile.update(backend=backend["backend"], source_commit=backend["source_commit"],
+                       driver_sha256=backend["driver_sha256"],
+                       verified_repetitions=receipt["repetitions"], repeatability="bitwise",
+                       effective_dispatch=receipt["effective_dispatch"],
+                       stderr_sha256=[{key: record["stderr"]["sha256"] for key, record in run.items()}
+                                      for run in receipt["runs"]])
+        _profile(profile, vulkan=True)
+        verified.append((name, Path(folder), receipt, profile))
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=False)
+    corpus_path = checked_file(source, original["corpus"])
+    (output / "corpus").mkdir()
+    shutil.copyfile(corpus_path, output / "corpus/manifest.json")
+    for item in [c["input"] for c in corpus["cases"]] + [d["text"] for d in corpus.get("documents", [])]:
+        src = checked_file(corpus_path.parent, item)
+        dst = output / "corpus" / item["path"]
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+    google_arrays = {}
+    (output / "google").mkdir()
+    for key, item in original["arrays"]["google"].items():
+        dst = output / "google" / (key + ".npy")
+        shutil.copyfile(checked_file(source, item), dst)
+        google_arrays[key] = {"path": str(dst.relative_to(output)), "sha256": file_hash(dst)}
+    entries = {}
+    for name, folder, receipt, profile in verified:
+        dest = output / "llama" / name
+        dest.mkdir(parents=True)
+        arrays = {}
+        for key, item in receipt["files"].items():
+            dst = dest / (key + ".npy")
+            shutil.copyfile(checked_file(folder, item), dst)
+            arrays[key] = {"path": str(dst.relative_to(output)), "sha256": file_hash(dst)}
+        entries[name] = {"profile": profile, "arrays": arrays}
+    manifest = {"schema": "xe-quality-fixtures-v2", "corpus": {
+        "path": "corpus/manifest.json", "sha256": file_hash(output / "corpus/manifest.json")},
+        "reference": original["reference"], "arrays": {"google": google_arrays},
+        "baselines": entries, "acceptance": original["acceptance"]}
     manifest["content_sha256"] = manifest_hash(manifest)
     write_json(output / "manifest.json", manifest)
     verify(output)
@@ -299,8 +517,9 @@ def _summarize(grouped, precise):
     return strata, overall
 
 
-def evaluate(root, capture_dir):
+def evaluate(root, capture_dir, baseline=None):
     manifest, corpus, inputs = verify(root)
+    selected, profile, baseline_arrays = select_baseline(manifest, baseline)
     capture_dir, root = Path(capture_dir), Path(root)
     captured = verify_capture(capture_dir, corpus, inputs)
     grouped, precise, cases = defaultdict(list), defaultdict(list), []
@@ -309,7 +528,7 @@ def evaluate(root, capture_dir):
         key = case["id"]
         n = len(inputs[key]["positions"])
         g = array(checked_file(root, manifest["arrays"]["google"][key]), n, "<f8")
-        l = array(checked_file(root, manifest["arrays"]["llama"][key]), n, "<f4")
+        l = array(checked_file(root, baseline_arrays[key]), n, "<f4")
         x = array(checked_file(capture_dir, captured["files"][key]), n, "<f4")
         values, extended = _metrics(g, x, l), _metrics(g, x, l, True)
         for row, position in enumerate(inputs[key]["positions"]):
@@ -356,7 +575,10 @@ def evaluate(root, capture_dir):
                 "family_endpoint_regressions": family_regressions,
                 "position_regressions": position_regressions,
                 "uncertain_position_differences": uncertain_positions},
-            "fixture_sha256": manifest["content_sha256"], "strata": strata, "cases": cases,
+            "fixture_sha256": manifest["content_sha256"],
+            "baseline": {"id": selected, "profile": profile, "profile_sha256": manifest_hash(profile),
+                         "selection": "explicit caller selection" if selected is not None else "legacy v1 baseline"},
+            "strata": strata, "cases": cases,
             "comparator": {"python": platform.python_version(), "numpy": np.__version__,
                            "source_sha256": file_hash(__file__),
                            "metrics_sha256": file_hash(Path(__file__).with_name("metrics.py"))},
@@ -380,11 +602,20 @@ def main(argv=None):
     p = sub.add_parser("seal")
     for arg in ("corpus", "google", "baseline", "output"):
         p.add_argument("--"+arg, required=True)
+    p = sub.add_parser("seal-vulkan")
+    p.add_argument("--fixtures", required=True)
+    p.add_argument("--baseline", action="append", required=True, help="ID=CAPTURE (repeatable)")
+    p.add_argument("--output", required=True)
+    p = sub.add_parser("evaluate")
+    p.add_argument("--fixtures", required=True)
+    p.add_argument("--capture", required=True)
+    p.add_argument("--baseline")
     p = sub.add_parser("compare")
     for arg in ("fixtures", "model", "backend-config", "output"):
         p.add_argument("--"+arg, required=True)
     p.add_argument("--repetitions", type=int, default=3)
     p.add_argument("--timeout", type=int, default=1800)
+    p.add_argument("--baseline")
     args = parser.parse_args(argv)
     try:
         if args.command == "verify":
@@ -396,11 +627,23 @@ def main(argv=None):
         elif args.command == "seal":
             result = seal(args.corpus, args.google, args.baseline, args.output)
             result = {"status": "SEALED", "content_sha256": result["content_sha256"]}
+        elif args.command == "seal-vulkan":
+            pairs = []
+            for item in args.baseline:
+                name, sep, folder = item.partition("=")
+                if not sep or not folder:
+                    raise ValueError("baseline must be ID=CAPTURE")
+                pairs.append((name, folder))
+            result = seal_vulkan(args.fixtures, pairs, args.output)
+            result = {"status": "SEALED", "content_sha256": result["content_sha256"]}
+        elif args.command == "evaluate":
+            result = evaluate(args.fixtures, args.capture, args.baseline)
         else:
             m, _, _ = verify(args.fixtures)
+            select_baseline(m, args.baseline)
             corpus_path = checked_file(args.fixtures, m["corpus"])
             capture(corpus_path, args.model, args.backend_config, args.output, args.repetitions, args.timeout)
-            result = evaluate(args.fixtures, args.output)
+            result = evaluate(args.fixtures, args.output, args.baseline)
             write_json(Path(args.output) / "report.json", result)
         print(json.dumps(result, indent=2, allow_nan=False))
         return {"PASS": 0, "FAIL": 1, "INCONCLUSIVE": 3}.get(result.get("outcome"), 0)
