@@ -139,13 +139,15 @@ make install
 
 See the [source build guide](docs/build.md) for dependencies, install prefixes and staging.
 
-## Reasoning prefixes
+## Thought and response prefixes
 
 Clients can supply the opening text of Gemma's thought channel through
 `reasoning.prefix` in the wire protocol. Xenolith prefills the text before
 sampling its continuation, retaining its provenance across sessions and replay.
 See [the protocol](docs/protocol.md#reasoning-prefixes) for capability detection,
-limits and accounting. The companion Xenopi command is `/lobotomy`.
+limits and accounting. With thinking disabled, `response.prefix` supplies the
+opening text of the visible answer instead. The companion Xenopi command
+`/lobotomy` selects the appropriate channel from the current thinking setting.
 
 ## Experimental activation steering
 

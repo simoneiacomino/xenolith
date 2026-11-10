@@ -611,3 +611,41 @@ result is committed rolls back to the user boundary and reuses the prefix record
 at generation start; a conflicting replacement is rejected. Rewind removes the
 prefix with its discarded branch. New prefix records contain critical fields,
 so older engines reject them rather than silently losing their meaning.
+
+
+## Response prefixes
+
+`describe.response.prefix: {"max_bytes":4096}` advertises support for prefilling
+the visible assistant answer when thinking is disabled. Clients must check this
+capability before using `response.prefix` in `generate` or `ephemeral`:
+
+```json
+{"op":"generate","reasoning":false,"response":{"prefix":"Here is my answer: "}}
+```
+
+The text is prefilled after the model's empty, closed thought channel; sampling
+continues directly in the answer. It follows the same UTF-8 validation, byte
+limit and whitespace preservation as reasoning prefixes. A nonempty response
+prefix requires thinking off and a fresh user turn. Supplying both prefix types
+is rejected. Omission or an empty prefix means no new insertion; prefixes are
+not inherited by subsequent requests or tool continuations.
+
+The `start` event supplies `response_prefix` and `response_prefix_tokens`.
+`text_delta` contains only the generated continuation, so clients display the
+start-event prefix once before those deltas. History stores the complete answer
+in `text`, with a separate `response_prefix` recording the supplied beginning.
+Imported assistant messages in `rebuild` and `ephemeral` can retain that field;
+it must match the start of `text`. Response-prefix imports preserve text
+whitespace when rendering history.
+
+`usage.response_prefix` counts supplied text tokens, excluding framing. Those
+tokens are input context, not generated `usage.output` or `usage.reasoning`, and
+do not consume the generated-token limit. Context overflow is rejected without
+truncation. Cancellation, continuation, rewind and crash recovery follow the
+same rules as reasoning prefixes. A pending generation cannot be retried with a
+different prefix or by switching its destination channel. Response-prefix
+records use critical fields so older engines reject incompatible history.
+
+Xenopi's `/lobotomy` selects `reasoning.prefix` when thinking is enabled and
+`response.prefix` when it is off. The same saved text therefore follows the
+thinking setting on each new user turn.

@@ -64,6 +64,7 @@ struct profile {
     size_t run_capacity;
     int failed;
     int exact_reasoning;
+    int exact_response;
 
     int state;
     int in_string;
@@ -279,6 +280,7 @@ static profile_status prof_finish(profile *p, profile_render *out) {
     out->tokens = p->tokens;
     out->token_count = p->token_count;
     out->reasoning_prefix_tokens = 0;
+    out->response_prefix_tokens = 0;
     return PROFILE_OK;
 }
 
@@ -763,6 +765,21 @@ profile_status profile_render_assistant_exact(profile *p, const char *reasoning,
     return status;
 }
 
+profile_status profile_render_assistant_response_exact(profile *p, const char *reasoning,
+                                        int reasoning_complete,
+                                        const char *text,
+                                        const profile_call *calls,
+                                        size_t call_count, uint32_t turn,
+                                        int turn_complete,
+                                        profile_render *out) {
+    if (!p) return PROFILE_INVALID_ARGUMENT;
+    p->exact_response = 1;
+    profile_status status = profile_render_assistant(p,reasoning,reasoning_complete,text,
+                                                     calls,call_count,turn,turn_complete,out);
+    p->exact_response = 0;
+    return status;
+}
+
 profile_status profile_render_assistant(profile *p, const char *reasoning,
                                         int reasoning_complete,
                                         const char *text,
@@ -794,7 +811,8 @@ profile_status profile_render_assistant(profile *p, const char *reasoning,
     if (text) {
         const char *begin;
         size_t length;
-        prof_trim(text, &begin, &length);
+        if (p->exact_response) { begin=text; length=strlen(text); }
+        else prof_trim(text, &begin, &length);
         if (!prof_run_put(p, begin, length)) return PROFILE_NOMEM;
     }
     for (size_t i = 0; i < call_count; i++) {
@@ -878,6 +896,19 @@ profile_status profile_render_reasoning_prefix(profile *p, const char *prefix,
     if (!prof_run_text(p,prefix)) return PROFILE_NOMEM;
     status = prof_finish(p,out);
     if (status == PROFILE_OK) out->reasoning_prefix_tokens = out->token_count - framing;
+    return status;
+}
+
+profile_status profile_render_response_prefix(profile *p, const char *prefix,
+                                               uint32_t turn, profile_render *out) {
+    if (!p || !out || !prefix || !*prefix || turn == PROFILE_TURN_OPEN ||
+        !profile_reasoning_prefix_valid(prefix)) return PROFILE_INVALID_ARGUMENT;
+    profile_status status = profile_render_reply_open(p, turn, 0, 0, out);
+    if (status != PROFILE_OK) return status;
+    uint32_t framing = p->token_count;
+    if (!prof_run_text(p, prefix)) return PROFILE_NOMEM;
+    status = prof_finish(p, out);
+    if (status == PROFILE_OK) out->response_prefix_tokens = out->token_count - framing;
     return status;
 }
 

@@ -640,4 +640,5 @@ check-reasoning-prefix: require-model xenolith tests/test_profile tests/test_run
 	./tests/test_profile "$(MODEL)"
 	./tests/test_runtime "$(MODEL)"
 	python3 tests/check_reasoning_prefix.py --xenolith ./xenolith --model "$(MODEL)"
+	python3 tests/check_response_prefix.py --xenolith ./xenolith --model "$(MODEL)"
 .PHONY: check-reasoning-prefix

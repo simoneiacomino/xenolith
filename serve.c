@@ -636,6 +636,12 @@ static int serve_messages_parse(serve *s,const json_value *request,
         } else if (!strcmp(role, "assistant")) {
             m->kind = RUNTIME_MESSAGE_ASSISTANT;
             m->reasoning = serve_str(v, "reasoning");
+            const json_value *response_prefix_field = json_member(v,"response_prefix");
+            if (response_prefix_field && (response_prefix_field->type != JSON_STRING ||
+                memchr(response_prefix_field->text,0,response_prefix_field->text_length))) return 0;
+            m->response_prefix = serve_str(v,"response_prefix");
+            if (m->response_prefix && (!profile_reasoning_prefix_valid(m->response_prefix) ||
+                !m->text || strncmp(m->text,m->response_prefix,strlen(m->response_prefix)))) return 0;
             const json_value *prefix_field = json_member(v,"reasoning_prefix");
             if (prefix_field && (prefix_field->type != JSON_STRING ||
                 memchr(prefix_field->text,0,prefix_field->text_length))) return 0;
@@ -717,6 +723,15 @@ static int serve_params_parse(const json_value *request,
                 params->steering_strength=(float)strength->number;
             }
         }
+    }
+    v = json_member(request, "response");
+    if (v) {
+        if (v->type != JSON_OBJECT) return 0;
+        const json_value *prefix = json_member(v, "prefix");
+        if (!prefix || prefix->type != JSON_STRING ||
+            memchr(prefix->text,0,prefix->text_length) ||
+            !profile_reasoning_prefix_valid(prefix->text)) return 0;
+        params->response_prefix = prefix->text;
     }
     v = json_member(request, "reasoning");
     if (!v) return 1;
@@ -851,6 +866,12 @@ static void serve_emit_event(serve *s, serve_conn *c,
     switch (event->kind) {
     case RUNTIME_EVENT_START:
         json_raw(out, "{\"event\":\"start\"");
+        if (event->response_prefix_length) {
+            json_raw(out,",\"response_prefix\":");
+            json_string(out,event->response_prefix,event->response_prefix_length);
+            json_raw(out,",\"response_prefix_tokens\":");
+            json_u64(out,event->usage.response_prefix);
+        }
         if (event->reasoning_prefix_length) {
             json_raw(out,",\"reasoning_prefix\":");
             json_string(out,event->reasoning_prefix,event->reasoning_prefix_length);
@@ -911,6 +932,8 @@ static void serve_emit_event(serve *s, serve_conn *c,
         json_u64(out, event->usage.reasoning);
         json_raw(out,",\"reasoning_prefix\":");
         json_u64(out,event->usage.reasoning_prefix);
+        json_raw(out,",\"response_prefix\":");
+        json_u64(out,event->usage.response_prefix);
         json_raw(out, ",\"replayed\":");
         json_u64(out, event->usage.replayed);
         json_raw(out, ",\"shadow_prefilled\":");
@@ -1013,6 +1036,7 @@ static int serve_dispatch(serve *s, serve_conn *c,
         json_raw(out,",\"site\":\"post_layer_residual_v1\",\"modes\":[\"additive\",\"projection\"],\"prospective\":true,\"preserves_reasoning_history\":true,\"sites\":[\"post_layer_residual_v1\",\"post_ffn_output_v1\"]}");
         json_raw(out, ",\"kvstore\":");
         json_raw(out, info.kvstore ? "true" : "false");
+        json_raw(out, ",\"response\":{\"prefix\":{\"max_bytes\":4096}}");
         json_raw(out, ",\"reasoning\":{\"efforts\":[\"low\","
                       "\"medium\",\"high\",\"max\"],\"history\":["
                       "\"discard\",\"preserve_tool_calls\"],"
@@ -1411,6 +1435,10 @@ static int serve_dispatch(serve *s, serve_conn *c,
             json_string(out, entry.text ? entry.text : "",
                         entry.text_length);
             if(entry.image)serve_image_description(out,&entry);
+            if (entry.response_prefix_length) {
+                json_raw(out,",\"response_prefix\":");
+                json_string(out,entry.response_prefix,entry.response_prefix_length);
+            }
             if (entry.reasoning_prefix_length) {
                 json_raw(out,",\"reasoning_prefix\":");
                 json_string(out,entry.reasoning_prefix,entry.reasoning_prefix_length);

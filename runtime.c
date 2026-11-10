@@ -99,6 +99,8 @@ struct runtime {
     xe_sampler sampler;
     int32_t gen_max_tokens;
     char gen_reasoning_prefix[4097];
+    char gen_response_prefix[4097];
+    uint32_t gen_response_prefix_tokens;
     uint64_t gen_prefix_tokens;
     int gen_thinking;
     int gen_after_tool;
@@ -1551,6 +1553,8 @@ runtime_status runtime_history_at(runtime *w, uint64_t position,
     }
     out->reasoning_prefix = (const char *)ev->reasoning_prefix;
     out->reasoning_prefix_length = ev->reasoning_prefix_length;
+    out->response_prefix = (const char *)ev->response_prefix;
+    out->response_prefix_length = ev->response_prefix_length;
     out->reasoning = (const char *)ev->reasoning;
     out->reasoning_length = ev->reasoning_length;
     switch (ev->type) {
@@ -1676,7 +1680,10 @@ static void runtime_settings_defaults(conversation_settings *settings) {
 
 static int runtime_params_valid(const runtime_gen_params *params) {
     if (!params) return 1;
-    if (!profile_reasoning_prefix_valid(params->reasoning_prefix)) return 0;
+    if (!profile_reasoning_prefix_valid(params->reasoning_prefix) ||
+        !profile_reasoning_prefix_valid(params->response_prefix) ||
+        (params->reasoning_prefix && *params->reasoning_prefix &&
+         params->response_prefix && *params->response_prefix)) return 0;
     if (params->steering_set && (!isfinite(params->steering_strength) ||
         (params->steering_id && !xe_steering_valid_id(params->steering_id)) ||
         (!params->steering_id && params->steering_strength != 0))) return 0;
@@ -1755,6 +1762,8 @@ static void runtime_gen_reset(runtime *w, int reasoning_open) {
     w->first_sync_done = 0;
     w->sampled_length = 0;
     w->gen_reasoning_prefix[0] = 0;
+    w->gen_response_prefix[0] = 0;
+    w->gen_response_prefix_tokens = 0;
     w->gen_prefix_tokens = 0;
     w->reasoning_tokens = 0;
     w->reasoning_close = CONVERSATION_REASONING_NONE;
@@ -1907,7 +1916,9 @@ runtime_status runtime_generate(runtime *w, const runtime_gen_params *params) {
     int is_thinking = settings.reasoning_effort !=
                       CONVERSATION_REASONING_OFF;
     const char *prefix = params ? params->reasoning_prefix : NULL;
+    const char *response_prefix = params ? params->response_prefix : NULL;
     char recovered_prefix[4097];
+    char recovered_response_prefix[4097];
     /* An interrupted, uncommitted generation has no visible assistant entry.
      * Retry from its user boundary using the durable prefix recorded at start. */
     const conversation_event *last_visible = runtime_last_visible(c);
@@ -1917,12 +1928,23 @@ runtime_status runtime_generate(runtime *w, const runtime_gen_params *params) {
         for (uint64_t i=conversation_event_count(c); i>boundary+1;) {
             const conversation_event *event = conversation_event_at(c,--i);
             if (event->type != CONVERSATION_EVENT_GENERATION_STARTED) continue;
+            if (event->response_prefix_length) {
+                if (event->response_prefix_length > 4096)
+                    return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"invalid stored response prefix");
+                memcpy(recovered_response_prefix,event->response_prefix,event->response_prefix_length);
+                recovered_response_prefix[event->response_prefix_length]=0;
+                if ((response_prefix && *response_prefix && strcmp(response_prefix,recovered_response_prefix)) ||
+                    (prefix && *prefix) || is_thinking)
+                    return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"cannot replace a pending response prefix");
+                response_prefix=recovered_response_prefix;
+            }
             if (event->reasoning_prefix_length) {
                 if (event->reasoning_prefix_length > 4096)
                     return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"invalid stored reasoning prefix");
                 memcpy(recovered_prefix,event->reasoning_prefix,event->reasoning_prefix_length);
                 recovered_prefix[event->reasoning_prefix_length]=0;
-                if (prefix && *prefix && strcmp(prefix,recovered_prefix))
+                if ((prefix && *prefix && strcmp(prefix,recovered_prefix)) ||
+                    (response_prefix && *response_prefix) || !is_thinking)
                     return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"cannot replace a pending reasoning prefix");
                 prefix=recovered_prefix;
             }
@@ -1936,6 +1958,10 @@ runtime_status runtime_generate(runtime *w, const runtime_gen_params *params) {
             return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,
                                 "reasoning prefix requires a new user turn with thinking enabled");
     }
+    if (response_prefix && *response_prefix &&
+        (is_thinking || !last_visible || last_visible->role != CONVERSATION_ROLE_USER))
+        return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,
+                            "response prefix requires a new user turn with thinking disabled");
     int projection_changed = stored &&
         (was_thinking != is_thinking ||
          (is_thinking &&
@@ -1957,6 +1983,8 @@ runtime_status runtime_generate(runtime *w, const runtime_gen_params *params) {
         (runtime_reasoning_continues(c) || after_tool);
     status = runtime_from_profile(w, prefix && *prefix
         ? profile_render_reasoning_prefix(w->prof,prefix,turn,&render)
+        : response_prefix && *response_prefix
+        ? profile_render_response_prefix(w->prof,response_prefix,turn,&render)
         : profile_render_reply_open(w->prof,turn,is_thinking,after_tool,&render));
     if (status != RUNTIME_OK) return status;
     status = runtime_budget_check(w, tokens + render.token_count);
@@ -1996,7 +2024,7 @@ runtime_status runtime_generate(runtime *w, const runtime_gen_params *params) {
         if (event->role == CONVERSATION_ROLE_USER) break;
         if (event->reasoning_prefix_length || event->preserve_raw_reasoning) preserve_raw_reasoning=1;
     }
-    conversation_generation generation = { w->generation_id, settings, prefix, preserve_raw_reasoning };
+    conversation_generation generation = { w->generation_id, settings, prefix, preserve_raw_reasoning, response_prefix };
     status = runtime_from_conversation(
         w, conversation_append_generation_started(c, &generation));
     if (status == RUNTIME_OK)
@@ -2013,6 +2041,11 @@ runtime_status runtime_generate(runtime *w, const runtime_gen_params *params) {
         strcpy(w->gen_reasoning_prefix,prefix);
         w->gen_prefix_tokens = render.reasoning_prefix_tokens;
         if (!json_raw(&w->reasoning,prefix)) return runtime_fail(w,RUNTIME_NOMEM,"out of memory");
+    }
+    if (response_prefix && *response_prefix) {
+        strcpy(w->gen_response_prefix,response_prefix);
+        w->gen_response_prefix_tokens = render.response_prefix_tokens;
+        if (!json_raw(&w->content,response_prefix)) return runtime_fail(w,RUNTIME_NOMEM,"out of memory");
     }
     if (json_rawn(&w->render, render.render,
                   render.render_length) == 0)
@@ -2053,6 +2086,10 @@ static runtime_status runtime_ephemeral_generate_impl(runtime *w, const char *sy
     int thinking = settings.reasoning_effort !=
                    CONVERSATION_REASONING_OFF;
     const char *prefix = params ? params->reasoning_prefix : NULL;
+    const char *response_prefix = params ? params->response_prefix : NULL;
+    if (response_prefix && *response_prefix &&
+        (thinking || !count || messages[count-1].kind != RUNTIME_MESSAGE_USER))
+        return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"response prefix requires a new user turn with thinking disabled");
     if (prefix && *prefix && (!thinking || !count || messages[count-1].kind != RUNTIME_MESSAGE_USER))
         return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"reasoning prefix requires a new user turn with thinking enabled");
     profile_render render;
@@ -2078,6 +2115,11 @@ static runtime_status runtime_ephemeral_generate_impl(runtime *w, const char *sy
     uint32_t turn = PROFILE_TURN_PADDED;
     for (size_t i = 0; i < count; i++) {
         const runtime_message *m = &messages[i];
+        if (m->response_prefix && (m->kind != RUNTIME_MESSAGE_ASSISTANT ||
+            !profile_reasoning_prefix_valid(m->response_prefix) || !m->text ||
+            (m->reasoning_prefix && *m->reasoning_prefix) ||
+            strncmp(m->text,m->response_prefix,strlen(m->response_prefix))))
+            return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"invalid imported response prefix");
         if (m->reasoning_prefix && (m->kind != RUNTIME_MESSAGE_ASSISTANT ||
             !profile_reasoning_prefix_valid(m->reasoning_prefix) || !m->reasoning ||
             strncmp(m->reasoning,m->reasoning_prefix,strlen(m->reasoning_prefix))))
@@ -2109,7 +2151,8 @@ static runtime_status runtime_ephemeral_generate_impl(runtime *w, const char *sy
                     CONVERSATION_REASONING_PRESERVE_TOOL_CALLS &&
                 m->call_count;
             status = runtime_from_profile(
-                w, (m->reasoning_prefix ? profile_render_assistant_exact : profile_render_assistant)(
+                w, (m->response_prefix ? profile_render_assistant_response_exact :
+                    m->reasoning_prefix ? profile_render_assistant_exact : profile_render_assistant)(
                        w->prof, current || historical ? m->reasoning : NULL,
                        1,
                                             m->text,
@@ -2143,6 +2186,8 @@ static runtime_status runtime_ephemeral_generate_impl(runtime *w, const char *sy
     }
     status = runtime_from_profile(w, prefix && *prefix
         ? profile_render_reasoning_prefix(w->prof,prefix,turn,&render)
+        : response_prefix && *response_prefix
+        ? profile_render_response_prefix(w->prof,response_prefix,turn,&render)
         : profile_render_reply_open(w->prof, turn, thinking,
                  count && messages[count-1].kind == RUNTIME_MESSAGE_TOOL_RESULT,&render));
     if (status != RUNTIME_OK) return status;
@@ -2164,6 +2209,11 @@ static runtime_status runtime_ephemeral_generate_impl(runtime *w, const char *sy
         strcpy(w->gen_reasoning_prefix,prefix);
         w->gen_prefix_tokens = render.reasoning_prefix_tokens;
         if (!json_raw(&w->reasoning,prefix)) return runtime_fail(w,RUNTIME_NOMEM,"out of memory");
+    }
+    if (response_prefix && *response_prefix) {
+        strcpy(w->gen_response_prefix,response_prefix);
+        w->gen_response_prefix_tokens = render.response_prefix_tokens;
+        if (!json_raw(&w->content,response_prefix)) return runtime_fail(w,RUNTIME_NOMEM,"out of memory");
     }
     w->gen_settings = settings;
     w->sampler.temperature = settings.temperature;
@@ -2304,7 +2354,8 @@ static runtime_status runtime_generation_render(runtime *w, const char *reasonin
         }
     }
     profile_render render;
-    profile_status ps = (w->gen_reasoning_prefix[0] ? profile_render_assistant_exact : profile_render_assistant)(
+    profile_status ps = (w->gen_response_prefix[0] ? profile_render_assistant_response_exact :
+                         w->gen_reasoning_prefix[0] ? profile_render_assistant_exact : profile_render_assistant)(
         w->prof, reasoning, reasoning_complete,
         w->content.data ? w->content.data : NULL,
         calls, w->call_count, w->gen_turn, turn_complete, &render);
@@ -2355,6 +2406,7 @@ static runtime_status runtime_finalize(runtime *w, uint32_t runtime_stop_reason,
     w->usage.output = (uint64_t)w->sampled_length;
     w->usage.reasoning = (uint64_t)w->reasoning_tokens;
     w->usage.reasoning_prefix = w->gen_prefix_tokens;
+    w->usage.response_prefix = w->gen_response_prefix_tokens;
     runtime_marker marker = RUNTIME_MARKER_NONE;
     int shadow_promoted = 0;
     int main_reconciled = 0;
@@ -2594,6 +2646,9 @@ static runtime_status runtime_next_event_impl(runtime *w, runtime_event *out) {
         out->reasoning_prefix = w->gen_reasoning_prefix;
         out->reasoning_prefix_length = strlen(w->gen_reasoning_prefix);
         out->usage.reasoning_prefix = w->gen_prefix_tokens;
+        out->response_prefix = w->gen_response_prefix;
+        out->response_prefix_length = strlen(w->gen_response_prefix);
+        out->usage.response_prefix = w->gen_response_prefix_tokens;
         out->kind = RUNTIME_EVENT_START;
         return RUNTIME_OK;
     }
@@ -2881,6 +2936,11 @@ runtime_status runtime_rebuild(runtime *w, const char *system,
         return runtime_fail(w, RUNTIME_SESSION_NOT_FOUND, "no open session");
     for (size_t i=0; i<count; i++) {
         const runtime_message *m=&messages[i];
+        if (m->response_prefix && (m->kind != RUNTIME_MESSAGE_ASSISTANT ||
+            !profile_reasoning_prefix_valid(m->response_prefix) || !m->text ||
+            (m->reasoning_prefix && *m->reasoning_prefix) ||
+            strncmp(m->text,m->response_prefix,strlen(m->response_prefix))))
+            return runtime_fail(w,RUNTIME_INVALID_ARGUMENT,"invalid imported response prefix");
         if (m->reasoning_prefix && (m->kind != RUNTIME_MESSAGE_ASSISTANT ||
             !profile_reasoning_prefix_valid(m->reasoning_prefix) || !m->reasoning ||
             strncmp(m->reasoning,m->reasoning_prefix,strlen(m->reasoning_prefix))))
@@ -2948,7 +3008,7 @@ runtime_status runtime_rebuild(runtime *w, const char *system,
             break;
         case RUNTIME_MESSAGE_ASSISTANT: {
             status = runtime_from_profile(
-                w, profile_render_assistant(w->prof, NULL, 1, m->text,
+                w, (m->response_prefix ? profile_render_assistant_response_exact : profile_render_assistant)(w->prof, NULL, 1, m->text,
                                             m->calls, m->call_count, turn,
                                             1, &render));
             if (status != RUNTIME_OK) goto abort;
@@ -2961,7 +3021,8 @@ runtime_status runtime_rebuild(runtime *w, const char *system,
             memset(&alternate, 0, sizeof alternate);
             if (m->reasoning && *m->reasoning) {
                 status = runtime_from_profile(
-                    w, (m->reasoning_prefix ? profile_render_assistant_exact : profile_render_assistant)(
+                    w, (m->response_prefix ? profile_render_assistant_response_exact :
+                    m->reasoning_prefix ? profile_render_assistant_exact : profile_render_assistant)(
                            w->prof, m->reasoning, 1, m->text,
                            m->calls, m->call_count, turn, 1, &render));
                 if (status != RUNTIME_OK ||
@@ -3021,7 +3082,7 @@ runtime_status runtime_rebuild(runtime *w, const char *system,
                        m->reasoning ? strlen(m->reasoning) : 0,
                        m->reasoning && *m->reasoning
                        ? CONVERSATION_REASONING_NATURAL
-                       : CONVERSATION_REASONING_NONE, m->reasoning_prefix));
+                       : CONVERSATION_REASONING_NONE, m->reasoning_prefix, m->response_prefix));
             runtime_render_copy_free(&alternate);
             runtime_render_copy_free(&primary);
             if (status != RUNTIME_OK) goto abort;

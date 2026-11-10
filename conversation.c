@@ -452,7 +452,7 @@ static int conversation_node_parse(conversation_node *node) {
     conversation_event *view = &node->view;
     const uint8_t *payload = node->payload;
     uint64_t length = node->payload_length;
-    conversation_field fields[14];
+    conversation_field fields[15];
     switch (view->type) {
     case CONVERSATION_EVENT_TITLE:
     case CONVERSATION_EVENT_WORKSPACE:
@@ -468,7 +468,7 @@ static int conversation_node_parse(conversation_node *node) {
                                             fields[0].length,
                                             &view->settings);
     case CONVERSATION_EVENT_MESSAGE: {
-        if (!conversation_fields_parse(payload, length, fields, 9) ||
+        if (!conversation_fields_parse(payload, length, fields, 10) ||
             !conversation_field_u32(&fields[0], &view->role) ||
             view->role < CONVERSATION_ROLE_SYSTEM ||
             view->role > CONVERSATION_ROLE_TOOL ||
@@ -488,6 +488,10 @@ static int conversation_node_parse(conversation_node *node) {
             decoded = conversation_tokens_decode(node, &fields[5], 1);
             if (decoded <= 0) return decoded;
         }
+        if (fields[9].present) {
+            view->response_prefix = fields[9].data;
+            view->response_prefix_length = fields[9].length;
+        }
         if (fields[8].present) {
             view->reasoning_prefix = fields[8].data;
             view->reasoning_prefix_length = fields[8].length;
@@ -503,9 +507,13 @@ static int conversation_node_parse(conversation_node *node) {
         return 1;
     }
     case CONVERSATION_EVENT_GENERATION_STARTED:
-        if (!conversation_fields_parse(payload, length, fields, 4) ||
+        if (!conversation_fields_parse(payload, length, fields, 5) ||
             !conversation_field_u64(&fields[0], &view->generation_id) ||
             !fields[1].present) return 0;
+        if (fields[4].present) {
+            view->response_prefix = fields[4].data;
+            view->response_prefix_length = fields[4].length;
+        }
         if (fields[2].present) {
             view->reasoning_prefix = fields[2].data;
             view->reasoning_prefix_length = fields[2].length;
@@ -515,7 +523,7 @@ static int conversation_node_parse(conversation_node *node) {
                                             fields[1].length,
                                             &view->settings);
     case CONVERSATION_EVENT_GENERATION_RESULT: {
-        if (!conversation_fields_parse(payload, length, fields, 14) ||
+        if (!conversation_fields_parse(payload, length, fields, 15) ||
             !conversation_field_u64(&fields[0], &view->generation_id) ||
             !conversation_field_u32(&fields[1], &view->stop_reason) ||
             view->stop_reason < CONVERSATION_STOP_EOT_SAMPLED ||
@@ -539,6 +547,10 @@ static int conversation_node_parse(conversation_node *node) {
             if (decoded <= 0) return decoded;
         }
         if (fields[13].present && !conversation_field_u32(&fields[13], &view->preserve_raw_reasoning)) return 0;
+        if (fields[14].present) {
+            view->response_prefix = fields[14].data;
+            view->response_prefix_length = fields[14].length;
+        }
         if (fields[12].present) {
             view->reasoning_prefix = fields[12].data;
             view->reasoning_prefix_length = fields[12].length;
@@ -1804,7 +1816,7 @@ conversation_status conversation_append_message_variants(
         uint32_t reasoning_close) {
     return conversation_append_message_variants_prefix(c, role, blocks, block_count,
         render, render_length, tokens, token_count, alternate_render, alternate_render_length,
-        alternate_tokens, alternate_token_count, reasoning, reasoning_length, reasoning_close, NULL);
+        alternate_tokens, alternate_token_count, reasoning, reasoning_length, reasoning_close, NULL, NULL);
 }
 
 conversation_status conversation_append_message_variants_prefix(
@@ -1815,7 +1827,7 @@ conversation_status conversation_append_message_variants_prefix(
         const void *alternate_render, uint64_t alternate_render_length,
         const int32_t *alternate_tokens, uint32_t alternate_token_count,
         const void *reasoning, uint64_t reasoning_length,
-        uint32_t reasoning_close, const char *reasoning_prefix) {
+        uint32_t reasoning_close, const char *reasoning_prefix, const char *response_prefix) {
     if (!c || (block_count && !blocks) || (render_length && !render) ||
         (token_count && !tokens) ||
         (alternate_render_length && !alternate_render) ||
@@ -1843,6 +1855,8 @@ conversation_status conversation_append_message_variants_prefix(
     if (ok && reasoning_close != CONVERSATION_REASONING_NONE)
         ok = conversation_buffer_field_u32(
             &payload, CONVERSATION_FIELD_OPTIONAL | 8, reasoning_close);
+    if (ok && response_prefix && *response_prefix)
+        ok = conversation_buffer_field(&payload, 10, response_prefix, strlen(response_prefix));
     if (ok && reasoning_prefix && *reasoning_prefix)
         ok = conversation_buffer_field(&payload, 9, reasoning_prefix, strlen(reasoning_prefix));
     if (ok)
@@ -1872,6 +1886,9 @@ conversation_status conversation_append_generation_started(
         (!generation->reasoning_prefix || !*generation->reasoning_prefix ||
          conversation_buffer_field(&payload, 3, generation->reasoning_prefix,
                                    strlen(generation->reasoning_prefix))) &&
+        (!generation->response_prefix || !*generation->response_prefix ||
+         conversation_buffer_field(&payload, 5, generation->response_prefix,
+                                   strlen(generation->response_prefix))) &&
         (!generation->preserve_raw_reasoning ||
          conversation_buffer_field_u32(&payload,4,1)))
         status = conversation_frame_write(
@@ -1945,7 +1962,9 @@ conversation_status conversation_append_generation_result_variants(
                  raw_tokens, raw_token_count);
     if (ok && generation_id < c->event_count) {
         const conversation_event *started = &c->events[generation_id].view;
-        if (started->preserve_raw_reasoning)
+        if (started->type == CONVERSATION_EVENT_GENERATION_STARTED && started->response_prefix_length)
+            ok = conversation_buffer_field(&payload, 15, started->response_prefix, started->response_prefix_length);
+        if (ok && started->preserve_raw_reasoning)
             ok = conversation_buffer_field_u32(&payload,14,1);
         if (ok && started->type == CONVERSATION_EVENT_GENERATION_STARTED && started->reasoning_prefix_length)
             ok = conversation_buffer_field(&payload, 13, started->reasoning_prefix,

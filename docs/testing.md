@@ -375,5 +375,7 @@ use the same prompt/span and projected rows as the candidate.
 `make check-reasoning-prefix MODEL=/path/to/model.gguf` checks profile rendering,
 plain UTF-8 validation, generated-token accounting, continuation without duplicate
 framing, cold replay, reopen, rewind, cancellation before prefill, crash recovery,
-rebuild provenance and ephemeral isolation. It requires the supported Linux/Intel
+rebuild provenance and ephemeral isolation for both thought and response prefixes.
+It also verifies mode switching and rejection of conflicting crash retries.
+It requires the supported Linux/Intel
 runtime and model. Xenopi command and adapter checks run in its own `npm test`.
