@@ -12,6 +12,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--xenolith', default='./xenolith')
     p.add_argument('--model', required=True)
+    p.add_argument('--registry')
+    p.add_argument('--projection')
     args = p.parse_args()
     prefix = '  Verifico prima i dati disponibili.\nÈ importante distinguere le ipotesi.\n'
     with tempfile.TemporaryDirectory(prefix='xe-reasoning-prefix-') as tmp:
@@ -92,6 +94,20 @@ def main():
             recovered = w.generate(op='generate',temperature=0,max_tokens=4)
             assert recovered['events'][0]['reasoning_prefix'] == prefix
 
+        if args.registry and args.projection:
+            mixed = dict(common, registry=args.registry)
+            with Wire(**mixed) as w:
+                w.request(op='create')
+                w.request(op='append',role='user',text='Say hello.')
+                w.generate(op='generate',temperature=0,max_tokens=96,
+                           reasoning=dict(effort='low',budget_tokens=8))
+                w.request(op='steer',artifact=args.projection,strength=-0.25)
+                w.request(op='append',role='user',text='Quanto fa 17 per 24?')
+                result = w.generate(op='generate',**options)
+                assert result['events'][0]['reasoning_prefix'] == prefix
+                assert w.request(op='history')['entries'][-1]['reasoning_prefix'] == prefix
+                assert w.request(op='steer')['steering']['transitions'] == 1
+            print('reasoning prefix with activation steering and frozen history: PASS')
     print('reasoning prefix: validation, exact text, accounting, continuation, reopen, rewind, cancellation and isolation PASS')
 
 

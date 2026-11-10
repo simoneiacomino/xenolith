@@ -1,4 +1,4 @@
-"""Small synchronous wire client shared by steering evaluation and integration tests."""
+"""Synchronous wire client for prefix integration tests."""
 import json
 import os
 from pathlib import Path
