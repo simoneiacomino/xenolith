@@ -555,12 +555,13 @@ check-quality-unit:
 	$(PYTHON) -m unittest discover -s tests/quality -p 'test_*.py' -v
 
 QUALITY_FIXTURES ?=tools/quality/fixtures/gemma4
+QUALITY_BASELINE ?=
 verify-quality-fixtures:
 	$(PYTHON) -m xe_quality.fixtures verify --fixtures "$(QUALITY_FIXTURES)"
 
 check-quality-fixtures: require-model
 	@test -f "$(BACKEND_CONFIG)" -a -n "$(QUALITY_OUTPUT)" || { printf '%s\n' 'Set BACKEND_CONFIG and a new QUALITY_OUTPUT; see tools/quality/fixtures/README.md.' >&2; exit 2; }
-	$(PYTHON) -m xe_quality.fixtures compare --fixtures "$(QUALITY_FIXTURES)" --model "$(MODEL)" --backend-config "$(BACKEND_CONFIG)" --output "$(QUALITY_OUTPUT)"
+	$(PYTHON) -m xe_quality.fixtures compare --fixtures "$(QUALITY_FIXTURES)" --model "$(MODEL)" --backend-config "$(BACKEND_CONFIG)" --output "$(QUALITY_OUTPUT)" $(if $(QUALITY_BASELINE),--baseline "$(QUALITY_BASELINE)")
 
 # An explicit policy is required for acceptance. Without one the gate exits 3.
 REFERENCE ?=

@@ -1,7 +1,10 @@
 # Shared numerical fixtures
 
-`gemma4/` contains the exact inputs, Google FP64 logits and pinned llama.cpp CPU
-baseline used by the shared regression suite. The arrays are ordinary Git files;
+`gemma4/` contains exact inputs, shared Google FP64 logits and a pinned
+llama.cpp Vulkan baseline for each of Panther Lake (`panther-vulkan`) and
+Raptor Lake (`raptor-vulkan`). The format supports separate named baselines for
+additional hosts.
+The arrays are ordinary Git files;
 there is no separate download service. Model weights are not included.
 Source text attribution and licenses are listed in [ATTRIBUTION.md](ATTRIBUTION.md).
 
@@ -22,6 +25,7 @@ then run these commands from the repository root:
 
 /tmp/xe-quality/bin/xe-quality-fixtures compare \
   --fixtures tools/quality/fixtures/gemma4 --model /data/model.gguf \
+  --baseline panther-vulkan \
   --backend-config /data/new-candidate/backend.json \
   --output /data/new-candidate/comparison
 ```
@@ -30,7 +34,11 @@ Comparison verifies the entire fixture before starting the candidate. It needs
 NumPy, the exact GGUF and the current-build native driver; it imports neither
 JAX nor Torch and performs no Google or llama model inference. The native
 candidate runs three times from new processes, with recorded input orders.
-Every output is retained in the chosen new comparison directory. Use
+Select `panther-vulkan` or `raptor-vulkan` explicitly. The report identifies the
+chosen profile; selection does not automatically certify that the candidate
+ran on matching hardware. Check its GPU/runtime provenance against that profile.
+Verification checks every baseline in a fixture, including unselected profiles. Missing or
+unknown selections fail before inference. Every output is retained in the chosen new comparison directory. Use
 `--repetitions 1` for a faster diagnostic, which remains `INCONCLUSIVE`.
 
 ## What is accepted
@@ -41,14 +49,12 @@ Logits cover all 262,144 tokens, after the model softcap and before sampling,
 at temperature one. A long document needs only a few saved rows, but the model
 must still process its full prefix.
 
-The initial corpus uses five existing documents: the complete WikiText Du Fu
-article (5,348 tokens including BOS), a 2,048-token prefix of Frank Headlam,
-an IFEval JSON-format instruction (42), a HumanEval Python prompt (132), and
-an Italian Belebele passage/question (206). There are 14 saved positions.
-This covers cached prefill; it does not qualify 8,192-token inputs, single-token
-decode, cache restoration or every intermediate position.
+The [Gemma4 dataset card](gemma4/README.md) lists the five inputs and 14 saved
+positions, with a maximum prefix of 5,348 tokens. This covers cached prefill;
+it does not qualify 8,192-token inputs, single-token decode, cache restoration
+or every intermediate position.
 
-The primary quantity is `KL(Google || Xenolith) - KL(Google || llama.cpp)`;
+The primary quantity is `KL(Google || Xenolith) - KL(Google || selected Vulkan baseline)`;
 negative values favor Xenolith. Average the observed positions within each
 document group, then give groups equal weight within each family (the corpus
 `stratum`), then give families equal weight in the overall mean. Thus a longer
@@ -94,60 +100,100 @@ exact GGUF. New fixture generation does not require a second HF run and does
 not claim new independent HF qualification. Independently qualified archives use the separate archive CLI and retain
 their recorded qualification scope.
 
-The baseline uses official llama.cpp commit
-`f0458bd05e698306ce423b1850164042112f59c4`, CPU, eight regular and batch threads,
-F16 K/V, native CPU optimizations and production extra buffer types enabled.
+Both included baselines use official llama.cpp commit
+`f0458bd05e698306ce423b1850164042112f59c4`, full layer offload to one explicitly
+selected Vulkan GPU, eight regular and batch CPU threads, F16 K/V, native CPU
+optimizations and production extra buffer types enabled.
 Context capacity is explicit per case; requested batch and microbatch capacity
-are 1,024. Flash attention uses the pinned source's `AUTO` policy; the fixture
-records its effective per-case settings and the build/runtime profile. This
-baseline does not represent Vulkan or every possible llama.cpp configuration.
+are 1,024. Flash attention is explicitly **OFF**. K/Q/V and supported operations
+are offloaded. Each profile records its device, compiler, driver/runtime hashes
+and observed dispatch. These profiles do not represent other GPUs, drivers or
+llama.cpp configurations; a performance comparison must use the same profile
+before claiming matching numerical quality and speed.
 
-To reproduce that backend, supply a clean checkout of the exact revision and
-GCC/G++ 15.2.0, then build into a new output directory:
+Historical v1 CPU fixtures remain readable under their original contract.
+Their verdicts do not establish a result against either Vulkan baseline.
+
+To reproduce a backend, supply a clean checkout of the exact revision, Vulkan
+development headers/loader, SPIRV-Headers (including its CMake package) and
+`glslc`, then build on the intended GPU host into
+a new output directory. The builder records the actual compiler; `--cc` and
+`--cxx` select explicit compiler executables. Runtime environment controls must
+remain identical between building/probing and capture:
+
+The maintained wrapper uses the same numerical configuration as the included
+baselines. Exact sources used for the committed arrays are identified in the
+[producer source record](producers/README.md).
 
 ```sh
 OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 OMP_DYNAMIC=FALSE \
   /tmp/xe-quality/bin/xe-quality-llama-backend \
-  --source /data/llama.cpp \
+  --source /data/llama.cpp --profile vulkan --device Vulkan0 \
   --driver-source tools/quality/native/llama_driver.cpp \
   --model /data/model.gguf --output /data/new-llama-build
 ```
 
 The receipt records the compiler, CMake options, source, libraries and executable
-hashes. Rebuilding on a different CPU/runtime produces a new baseline identity;
+hashes, including the dynamically loaded Vulkan ICD. A hardware Vulkan device
+and full layer offload are required; CPU fallback cannot become a Vulkan fixture.
+Rebuilding on a different CPU/runtime produces a new baseline identity;
 do not silently substitute its logits for the committed baseline.
 
 ## Reproduce the arrays
 
-Install the separate Google reference profile, fetch the pinned upstream sources
-as described in the package guide, and use the committed corpus manifest:
+Run the following capture on each intended GPU host, using its own freshly
+built receipt. This executes five cases in three independent passes: 15 native
+processes per host. The repeated logits and dispatch must match exactly;
+nonrepeatable outputs are retained and cannot be sealed. Stderr evidence is
+hashed in the capture receipt. These are repeatability checks, not statistical
+population samples.
 
 ```sh
-JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=8 OMP_NUM_THREADS=8 \
-  /tmp/xe-reference/bin/python -m xe_quality.fixture_reference \
-  --corpus tools/quality/fixtures/gemma4/corpus/manifest.json \
-  --model /data/model.gguf --google-source /data/pinned-google-source \
-  --output /data/new-google-rows --max-forwards 40
-
 OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 OMP_DYNAMIC=FALSE \
   /tmp/xe-quality/bin/xe-quality-fixtures capture \
   --corpus tools/quality/fixtures/gemma4/corpus/manifest.json \
   --model /data/model.gguf --backend-config /data/new-llama-build/backend.json \
   --output /data/new-llama-rows
 
-/tmp/xe-quality/bin/xe-quality-fixtures seal \
-  --corpus tools/quality/fixtures/gemma4/corpus/manifest.json \
-  --google /data/new-google-rows --baseline /data/new-llama-rows \
+```
+
+Collect the complete capture directories, then seal a new
+fixture. Existing Google/corpus bytes and producer identity are reused unchanged;
+no Google or HF inference is needed:
+
+```sh
+/tmp/xe-quality/bin/xe-quality-fixtures seal-vulkan \
+  --fixtures tools/quality/fixtures/gemma4 \
+  --baseline panther-vulkan=/data/panther-capture \
+  --baseline raptor-vulkan=/data/raptor-capture \
   --output /data/new-fixture
 ```
+
+To include additional hosts, repeat `--baseline NAME=CAPTURE` with each verified
+capture. All supplied captures must satisfy the same corpus and repeatability
+contract. Generate a separate baseline before claiming a comparison against
+llama.cpp Vulkan on hardware not represented by the included profile.
 
 Generation is explicit and resource intensive. Use a host with sufficient memory
 and its normal admission controls; it is not part of ordinary CI or comparison.
 All output directories must be new. Preserve the production receipts separately;
-`seal` copies only the corpus, verified arrays and portable provenance. Review
-the generated fixture and its source attributions before replacing repository
-data. Changing texts, tokenization, selected positions or state protocols requires
+`seal-vulkan` copies the corpus, verified arrays and reproduction metadata:
+device/runtime identity, compiler and numerical settings, source hashes and
+observed dispatch. Local
+paths, desktop-session variables and hashes of unpublished build receipts or
+logs remain in the capture directory. Verification of a published fixture
+checks its arrays and declared profile; auditing the original repeated executions
+requires the complete capture, including logs. Review the generated fixture and
+its source attributions before replacing repository data. Changing texts,
+tokenization, selected positions or state protocols requires
 corresponding new reference rows; changing only the candidate does not.
+
+To reproduce Google outputs independently, install the separate reference profile
+and fetch the pinned upstream sources described in the package guide, then run
+`python -m xe_quality.fixture_reference --corpus CORPUS_MANIFEST --model MODEL
+--google-source GOOGLE_SOURCE --output NEW_DIRECTORY --max-forwards 40` in that
+environment. This is optional reference generation, not a step in replacing a
+Vulkan baseline on an unchanged corpus.
 
 Keep the corpus, baseline and rule fixed while evaluating an optimization.
 Do not remove failing cases or regenerate a more favorable baseline in response
