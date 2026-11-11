@@ -130,8 +130,17 @@ void xe_tokens_push(xe_tokens *tokens, int32_t token);
 void xe_tokens_free(xe_tokens *tokens);
 const char *xe_chat_template(const xe_engine *e, uint64_t *length);
 
-void xe_oracle(xe_engine *e, const int32_t *tokens, int n_tokens, const char *dump_path,
-               const char *layers_dir, int q8_mode, FILE *out);
+/* Optional diagnostic observation of the real execution path after each layer.
+ * hidden contains count floats, borrowed until callback returns; position is
+ * absolute. Callbacks must not mutate data or reenter engine/session APIs.
+ * Prefill observations synchronize the GPU and can substantially affect timing.
+ * Registration survives reset/rewind, is not inherited by new shadow sessions,
+ * and is not snapshot state. Keep user valid until disabling or session free.
+ * Set NULL to disable. */
+typedef void (*xe_layer_observer)(void *user, int layer, int position,
+                                  const float *hidden, int count);
+void xe_session_set_layer_observer(xe_session *s, xe_layer_observer observer,
+                                   void *user);
 
 xe_session *xe_session_new(xe_engine *e);
 void xe_session_free(xe_session *s);

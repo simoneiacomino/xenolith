@@ -17,9 +17,6 @@ static int check(const char *command, const char *model, char **options,
     if (!strcmp(command, "run")) {
         args[n++] = "-p";
         args[n++] = "--ctx"; /* A prompt value must remain literal. */
-    } else if (!strcmp(command, "oracle")) {
-        args[n++] = "-t";
-        args[n++] = "2";
     }
     /* Keep a missing --ctx value at the end, after required command options. */
     if (n > 3 && options[0] && !strcmp(options[0], "--ctx") && !options[1]) {
@@ -62,7 +59,7 @@ int main(void) {
         unsetenv("XENOLITH_CONFIG") || setenv("XDG_CONFIG_HOME", root, 1)) return 2;
     char model[256];
     snprintf(model, sizeof model, "%s/missing.gguf", root);
-    const char *commands[] = { "info", "run", "chat", "oracle", "bench", "wire", "serve" };
+    const char *commands[] = { "info", "run", "chat", "bench", "wire", "serve" };
     char *invalid[] = { "", "0", "63", "262145", "-65", "+65", " 65", "65 ",
                         "65x", "65.0", "999999999999999999999999999999" };
     char *valid[] = { "64", "65", "4097", "50000", "65536", "262144" };

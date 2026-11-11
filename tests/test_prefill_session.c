@@ -571,6 +571,8 @@ int main(int argc, char **argv) {
                    (!strcmp(argv[4], "cow") || !strcmp(argv[4], "cow-cycle"));
     int cow_cycle_mode = argc > 4 && !strcmp(argv[4], "cow-cycle");
     int hybrid_mode = argc > 4 && !strcmp(argv[4], "hybrid");
+    if (argc > 6 && !split_mode && !cow_mode)
+        xe_fatal("external golden logits are no longer supported; use xe-quality");
     int cpu_tail = argc > 5 && !split_mode && !cow_mode
                    ? (int)strtol(argv[5], NULL, 10) : 0;
     if (rows < 1 || rows > (cow_mode ? context : 512))
@@ -681,23 +683,6 @@ int main(int argc, char **argv) {
                          || gpu_v[i] != reference_v[i];
     double k_error = session_half_rel(gpu_k, reference_k, kv_elements);
     double v_error = session_half_rel(gpu_v, reference_v, kv_elements);
-    if (argc > 6 && !split_mode) {
-        float *golden = xe_alloc(
-            NULL, XE_VOCAB * sizeof(*golden), XE_MEM_HOST);
-        FILE *f = fopen(argv[6], "rb");
-        if (!f) xe_fatal("%s: %s", argv[6], strerror(errno));
-        if (fread(golden, sizeof(*golden), XE_VOCAB, f) != XE_VOCAB)
-            xe_fatal("%s: short logits file", argv[6]);
-        fclose(f);
-        printf("prefill-golden: CPU %.3e top %d/%d GPU %.3e top %d/%d\n",
-               session_rel(reference_logits, golden, XE_VOCAB),
-               session_argmax(reference_logits, XE_VOCAB),
-               session_argmax(golden, XE_VOCAB),
-               session_rel(gpu->logits, golden, XE_VOCAB),
-               session_argmax(gpu->logits, XE_VOCAB),
-               session_argmax(golden, XE_VOCAB));
-        xe_free(NULL, golden, XE_MEM_HOST);
-    }
     int greedy_mismatches = 0;
     int first_greedy_mismatch = -1;
     double next_error = 0.0;

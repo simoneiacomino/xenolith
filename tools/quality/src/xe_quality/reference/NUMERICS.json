@@ -1,0 +1,28 @@
+{
+  "status": "FP64 reference qualification protocol",
+  "weights": "Exact represented GGUF decoded FP32 then exactly promoted FP64 in bounded tensor reads",
+  "parameters_activations_kv": "FP64",
+  "dot_precision": "CPU FP64; jax_enable_x64=True, matmul highest; no BF16/TF32",
+  "router": "Google softmax and renormalization, exact lax.top_k descending with lower expert ID first on ties",
+  "gelu": "Google flax.nn.gelu default approximate=True tanh architecture",
+  "rope": "Canonical Google formula with exponent, phase, cosine and sine in FP64; infinite timescale leaves global half-pairs unrotated",
+  "qualification": {
+    "exact": [
+      "byte decoding",
+      "mapping indices",
+      "mask and cache indices",
+      "router synthetic ties"
+    ],
+    "fp32_operator_relative_l2": 3e-05,
+    "fp32_operator_absolute_scale": "3e-5 * max(1, RMS expected) per operation; fail and investigate larger values",
+    "rationale": "Empirical FP32 operator checks against independent FP64 calculations for dimensions up to 2816; not a rigorous full-model error bound",
+    "state_logits_absolute": 1e-06,
+    "state_rationale": "FP64 full/chunk/decode must agree within fixed1e-6; restore and reset repeats bitwise",
+    "rope_element_bound": "(|first|+|second|) * 8*eps32*(|position/timescale|+1) + 2e-6 per component; includes position-conditioned mandatory FP32 frequency errors; empirical resolution gate not global rigorous pow bound",
+    "fp64_trajectory_relative_l2": 1e-08,
+    "fp64_layer_absolute": "1e-6 * max(1,RMS expected)",
+    "fp64_logits_absolute": 1e-06
+  },
+  "candidate_acceptance": null,
+  "candidate_outcome_without_thresholds": "INCONCLUSIVE"
+}

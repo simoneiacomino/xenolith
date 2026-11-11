@@ -55,8 +55,9 @@ serve.o: serve.c serve.h format.h runtime.h xenolith.h kvstore.h conversation.h 
 main.o profile.o kvstore.o conversation.o runtime.o serve.o: vision.h
 
 clean:
+	rm -f tools/quality/native/xenolith_driver tools/quality/native/xe_tokenizer tools/quality/native/llama_tokenizer
 	rm -f tests/test_cli_config tests/test_visual_cache tests/test_visual_replay tests/test_workers tests/test_cpu_policy tests/test_cpu_topology
-	rm -f *.o xenolith tests/test_cache_policy tests/test_cache_model tests/certify tests/test_kv tests/test_kv_model tests/test_decode tests/test_context_limits \
+	rm -f *.o xenolith tests/test_cache_policy tests/test_cache_model tests/test_tokenizer_model tests/test_kv tests/test_kv_model tests/test_decode tests/test_context_limits \
 		tests/test_model_decode tests/test_fixture_decode bench/bench_decode \
 		tests/test_prefill_projection tests/test_prefill_qkv tests/test_prefill_swa \
 		tests/test_prefill_dense tests/test_prefill_layer tests/test_prefill_session \
@@ -71,7 +72,7 @@ clean:
 		bench/bench_guard bench/compare_pp_tg_xe bench/compare_pp_tg_tokens \
 		bench/bench_b3b.spv bench/bench_b3b_adlp.spv \
 		bench/bench_prefill_gemm bench/bench_prefill_gemm_down \
-		bench/bench_prefill_gemm.spv $(GPU_SPV) $(TEST_TOOLS) $(VISION_REFERENCE_TOOLS) tests/test_vision_input tests/test_vision_gpu tests/test_vision_session tests/test_text_batch_model tools/vision_prepare tests/test_sha256 tests/test_weights_identity
+		bench/bench_prefill_gemm.spv $(GPU_SPV) $(VISION_REFERENCE_TOOLS) tests/test_vision_input tests/test_vision_gpu tests/test_vision_session tests/test_text_batch_model tools/vision_prepare tests/test_sha256 tests/test_weights_identity
 
 $(GPU_SPV): xenolith.cl vision.cl
 	# Xe-LP is the SPIR-V feature baseline; native code is compiled at startup.
@@ -82,11 +83,6 @@ $(GPU_OBJ): $(GPU_SPV) Makefile
 	ld -r -b binary -z noexecstack -o $@ $<
 	objcopy --rename-section .data=.rodata,alloc,load,readonly,data,contents $@
 
-LLAMA_DIR=../llama.cpp
-LLAMA_BUILD=$(LLAMA_DIR)/build-cpu
-LLAMA_LIBDIR=$(LLAMA_BUILD)/bin
-LLAMA_CFLAGS=-I$(LLAMA_DIR)/include -I$(LLAMA_DIR)/ggml/include
-LLAMA_LDFLAGS=-L$(LLAMA_LIBDIR) -Wl,-rpath,$(abspath $(LLAMA_LIBDIR))
 LLAMA_LDLIBS=-lllama -lggml -lggml-base
 
 TEST_CFLAGS=-O2 -std=c11 -Wall -Wextra -pthread
@@ -114,7 +110,6 @@ tests/test_runtime tests/test_runtime_model tests/test_serve: xenolith.h convers
 tests/test_serve: serve.h
 tests/test_profile: json.h
 
-VOCAB_DIR=$(LLAMA_DIR)/models
 MODEL?=
 # Explicit inputs for the optional model/fixture regression runners below.
 TEST_CONTEXT?=
@@ -123,11 +118,9 @@ VISION_EMBEDDING?=
 MMPROJ?=
 MMPROJ_VARIANT?=
 MMPROJ_INVALID?=
-GOLDEN_PROMPTS=short long mixed ws nl nlonly json
-ORACLE_PROMPTS=short long
 
-tests/certify: tests/certify.c xenolith.o format.o $(VISION_OBJS) profile.o json.o xenolith.h profile.h $(GPU_OBJ) $(CPU_OBJS)
-	$(CC) $(TEST_CFLAGS) -I. -o $@ tests/certify.c xenolith.o format.o $(VISION_OBJS) profile.o json.o $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
+tests/test_tokenizer_model: tests/test_tokenizer_model.c xenolith.o format.o $(VISION_OBJS) profile.o json.o xenolith.h profile.h $(GPU_OBJ) $(CPU_OBJS)
+	$(CC) $(TEST_CFLAGS) -I. -o $@ tests/test_tokenizer_model.c xenolith.o format.o $(VISION_OBJS) profile.o json.o $(GPU_OBJ) $(CPU_OBJS) $(LDLIBS)
 
 tests/test_gpu_alloc: tests/test_gpu_alloc.c xenolith.c xenolith.h xenolith_internal.h format.h
 	$(CC) $(CFLAGS) -ffunction-sections -fdata-sections -I. -o $@ $< \
@@ -340,12 +333,12 @@ check-gpu: $(GPU_TESTS)
 	./tests/test_prefill_session route-reset
 	./tests/test_vision_gpu
 
-check: require-model tests/certify tests/test_model_decode
+check: require-model tests/test_tokenizer_model tests/test_model_decode
 	$(MAKE) check-unit
 	$(MAKE) check-context
 	$(MAKE) check-gpu
 	./tests/test_model_decode "$(MODEL)"
-	XENOLITH_MODEL="$(MODEL)" ./tests/certify
+	XENOLITH_MODEL="$(MODEL)" ./tests/test_tokenizer_model
 
 check-persistence: require-model $(PERSISTENCE_TESTS)
 	@set -e; for test in $(PERSISTENCE_TESTS); do ./$$test "$(MODEL)"; done
@@ -371,44 +364,6 @@ check-runtime: require-model xenolith tests/test_json tests/test_profile tests/t
 	./tests/test_profile "$(MODEL)"
 	./tests/test_runtime "$(MODEL)"
 	./tests/test_runtime_model "$(MODEL)"
-
-golden: require-model test-tools
-	mkdir -p tests/golden tests/fixtures
-	@set -e; stage=$$(mktemp -d tests/.golden.XXXXXX); \
-	trap 'rm -f "$$stage"/*; rmdir "$$stage"' EXIT; \
-	trap 'exit 1' HUP INT TERM; \
-	for p in $(GOLDEN_PROMPTS); do \
-		tools/tokenize_prompt "$(MODEL)" tests/prompts/$$p.txt > "$$stage/$$p.ids"; \
-	done; \
-	for p in $(ORACLE_PROMPTS); do \
-		ids=$$(tools/tokenize_prompt "$(MODEL)" tests/prompts/$$p.txt); \
-		tools/dump_logits "$(MODEL)" "$$ids" "$$stage/$$p.logits"; \
-	done; \
-	cp "$(VOCAB_DIR)/ggml-vocab-gemma-4.gguf.inp" "$$stage/ggml-vocab-gemma-4.gguf.inp"; \
-	cp "$(VOCAB_DIR)/ggml-vocab-gemma-4.gguf.out" "$$stage/ggml-vocab-gemma-4.gguf.out"; \
-	for p in $(GOLDEN_PROMPTS); do mv "$$stage/$$p.ids" tests/golden/$$p.ids; done; \
-	for p in $(ORACLE_PROMPTS); do mv "$$stage/$$p.logits" tests/golden/$$p.logits; done; \
-	mv "$$stage/ggml-vocab-gemma-4.gguf.inp" tests/fixtures/ggml-vocab-gemma-4.gguf.inp; \
-	mv "$$stage/ggml-vocab-gemma-4.gguf.out" tests/fixtures/ggml-vocab-gemma-4.gguf.out
-
-TEST_TOOLS=tools/dump_logits tools/tokenize_prompt tools/dump_layers tools/compare_logits
-
-test-tools: $(TEST_TOOLS)
-
-tools/dump_logits: tools/dump_logits.c
-	$(CC) $(TEST_CFLAGS) $(LLAMA_CFLAGS) -o $@ $< $(LLAMA_LDFLAGS) $(LLAMA_LDLIBS) $(LDLIBS)
-
-tools/dump_layers: tools/dump_layers.c
-	$(CC) $(TEST_CFLAGS) $(LLAMA_CFLAGS) -o $@ $< $(LLAMA_LDFLAGS) $(LLAMA_LDLIBS) $(LDLIBS)
-
-tools/tokenize_prompt: tools/tokenize_prompt.c
-	$(CC) $(TEST_CFLAGS) $(LLAMA_CFLAGS) -o $@ $< $(LLAMA_LDFLAGS) $(LLAMA_LDLIBS) $(LDLIBS)
-
-tools/compare_logits: tools/compare_logits.c
-	$(CC) $(TEST_CFLAGS) -o $@ $< -lm
-
-test-tools-clean:
-	rm -f $(TEST_TOOLS)
 
 # Optional CPU oracles, never linked into Xenolith. Build the two pinned llama.cpp
 # checkouts separately first: encoder uses vision_reference_patch.py; decoder must
@@ -488,7 +443,7 @@ require-model:
 	@test -f "$(MODEL)" || { printf '%s\n' 'Set MODEL to the path of the Gemma 4 GGUF file.' >&2; exit 2; }
 
 .PHONY: check-cache-large require-model clean check check-inference check-host check-host-unit check-vnni check-unit check-gpu check-context check-persistence check-prefill check-all check-snapshot-compat-host check-snapshot-compat \
-	check-snapshot-compat-model check-kv check-kv-edges check-kv-load-bounds check-runtime check-serve golden test-tools test-tools-clean \
+	check-snapshot-compat-model check-kv check-kv-edges check-kv-load-bounds check-runtime check-serve \
 	bench-b3b bench-b14 bench-prefill-gemm check-vision check-vision-weights
 
 .PHONY: check-vision-session-model check-text-batch-model check-weights-identity \
@@ -570,3 +525,61 @@ check-installer:
 	python3 -m unittest discover -s installer/tests -v
 
 .PHONY: check-engine-package check-installer
+
+# The driver links the same objects and flags as the current engine build.
+# Use xe-quality-backend to force a rebuild and create an immutable receipt.
+PYTHON ?= python3
+QUALITY_NATIVE=tools/quality/native
+QUALITY_OBJECTS=xenolith.o format.o $(VISION_OBJS) $(GPU_OBJ) $(CPU_OBJS)
+
+$(QUALITY_NATIVE)/xenolith_driver: $(QUALITY_NATIVE)/xenolith_driver.c xenolith.h $(QUALITY_OBJECTS)
+	$(CC) $(CFLAGS) -I. -o $@ $< $(QUALITY_OBJECTS) $(LDLIBS)
+
+$(QUALITY_NATIVE)/xe_tokenizer: $(QUALITY_NATIVE)/xe_tokenizer.c xenolith.h $(QUALITY_OBJECTS)
+	$(CC) $(CFLAGS) -I. -o $@ $< $(QUALITY_OBJECTS) $(LDLIBS)
+
+quality-driver: $(QUALITY_NATIVE)/xenolith_driver
+quality-tokenizer: $(QUALITY_NATIVE)/xe_tokenizer
+
+# Independent tokenizer, against an explicitly supplied external llama.cpp build.
+LLAMA_TOKENIZER_DIR ?=
+LLAMA_TOKENIZER_BUILD ?=$(LLAMA_TOKENIZER_DIR)/build-cpu
+quality-llama-tokenizer:
+	@test -n "$(LLAMA_TOKENIZER_DIR)" -a -f "$(LLAMA_TOKENIZER_BUILD)/bin/libllama.so" || { printf '%s\n' 'Set LLAMA_TOKENIZER_DIR and LLAMA_TOKENIZER_BUILD to an explicit built llama.cpp checkout.' >&2; exit 2; }
+	$(CXX) -O2 -std=c++17 -I"$(LLAMA_TOKENIZER_DIR)/include" -I"$(LLAMA_TOKENIZER_DIR)/ggml/include" -o $(QUALITY_NATIVE)/llama_tokenizer $(QUALITY_NATIVE)/llama_tokenizer.cpp -L"$(LLAMA_TOKENIZER_BUILD)/bin" -Wl,-rpath,"$(abspath $(LLAMA_TOKENIZER_BUILD)/bin)" $(LLAMA_LDLIBS)
+
+quality-build-info:
+	@printf '%s\n' 'CC=$(CC)' 'CFLAGS=$(CFLAGS)' 'LDLIBS=$(LDLIBS)' 'NUMERIC_SOURCE_HASH=$(NUMERIC_SOURCE_HASH)' 'NUMERIC_CFLAGS_HASH=$(NUMERIC_CFLAGS_HASH)'
+
+check-quality-unit:
+	$(PYTHON) -m unittest discover -s tests/quality -p 'test_*.py' -v
+
+QUALITY_FIXTURES ?=tools/quality/fixtures/gemma4
+QUALITY_BASELINE ?=
+verify-quality-fixtures:
+	$(PYTHON) -m xe_quality.fixtures verify --fixtures "$(QUALITY_FIXTURES)"
+
+check-quality-fixtures: require-model
+	@test -f "$(BACKEND_CONFIG)" -a -n "$(QUALITY_OUTPUT)" || { printf '%s\n' 'Set BACKEND_CONFIG and a new QUALITY_OUTPUT; see tools/quality/fixtures/README.md.' >&2; exit 2; }
+	$(PYTHON) -m xe_quality.fixtures compare --fixtures "$(QUALITY_FIXTURES)" --model "$(MODEL)" --backend-config "$(BACKEND_CONFIG)" --output "$(QUALITY_OUTPUT)" $(if $(QUALITY_BASELINE),--baseline "$(QUALITY_BASELINE)")
+
+# An explicit policy is required for acceptance. Without one the gate exits 3.
+REFERENCE ?=
+BACKEND_CONFIG ?=
+QUALITY_OUTPUT ?=
+POLICY ?=
+check-quality: require-model
+	@test -d "$(REFERENCE)" -a -f "$(BACKEND_CONFIG)" -a -n "$(QUALITY_OUTPUT)" || { printf '%s\n' 'Set REFERENCE, BACKEND_CONFIG and a new QUALITY_OUTPUT; see docs/testing.md.' >&2; exit 2; }
+	$(PYTHON) -m xe_quality compare --archive "$(REFERENCE)" --model "$(MODEL)" --driver "$(QUALITY_NATIVE)/xenolith_driver" --backend-config "$(BACKEND_CONFIG)" --output "$(QUALITY_OUTPUT)" --timeout 1800 $(if $(POLICY),--policy "$(POLICY)")
+
+CORPUS ?=
+REFERENCE_CONFIG ?=
+QUALIFICATION ?=
+GOOGLE_SOURCE ?=
+reference: require-model
+	$(PYTHON) -m xe_quality build-reference --model "$(MODEL)" --google-source "$(GOOGLE_SOURCE)" --corpus "$(CORPUS)" --config "$(REFERENCE_CONFIG)" --qualification "$(QUALIFICATION)" --output "$(QUALITY_OUTPUT)"
+
+tests/test_decode tests/test_kv tests/test_model_decode tests/test_prefill_layer: tests/support/scalar_ops.h
+
+.PHONY: quality-driver quality-tokenizer quality-llama-tokenizer quality-build-info check-quality-unit check-quality reference
+.PHONY: verify-quality-fixtures check-quality-fixtures

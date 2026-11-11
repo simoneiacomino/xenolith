@@ -1,0 +1,656 @@
+{
+  "schema": "xe-quality-fixtures-v2",
+  "corpus": {
+    "path": "corpus/manifest.json",
+    "sha256": "2b1fa05427f3b2e12232f7523a89c812391373ca2a2f081fd444917de3c229f1"
+  },
+  "reference": {
+    "kind": "trusted-google-fp64",
+    "upstream": {
+      "commit": "9e1f74131ba9d45e5fe6ae7bb3941d9f2abb39c3",
+      "execution": "OfficialBlock, denseMLP, norms, attention, RoPE and routing probabilities; bounded per-expert dispatch adapter, exact top_k; canonical26B_A4B architecture values audited from_gemma4.py and exactGGUF metadata",
+      "files": {
+        "gemma/gm/math/_positional_embeddings.py": "6f4814d3554dbb4c67bba794e9fb13a2ae39ea7c77dc4a040527d1536fcb0c92",
+        "gemma/gm/nn/gemma4/_config.py": "0e9e037107c05a52a45a282a1252f81daf0b04c9094ec154dc17ddd5a4f8de1b",
+        "gemma/gm/nn/gemma4/_gemma4.py": "67cf8c06eed95cbea613e1014f8dd23aade95edf5fb415d875118fe5c1605c4f",
+        "gemma/gm/nn/gemma4/_layers.py": "55643c31628bd66e94d72bd035910635a4c5bbf2e5a131ce8fb663ddb28b405c",
+        "gemma/gm/nn/gemma4/_modules.py": "55dee2ef3397b3e12631bd000d34d62ac1cdcf1b511c5fb945a73e8975f0bda1",
+        "gemma/gm/nn/gemma4/_moe.py": "b117304a147657da903cb07b2579ce0a44cde6a82a54d4b014c52a3a9415d4a2"
+      },
+      "license": {
+        "path": "LICENSE",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "spdx": "Apache-2.0"
+      },
+      "notice_files": [],
+      "repository": "https://github.com/google-deepmind/gemma"
+    },
+    "precision": "FP64 weights/activations/KV/head; temperature 1; post-softcap",
+    "independent_qualification": "Not asserted for this fixture corpus",
+    "adapter_hashes": {
+      "precise_rope.py": "799321810fd85f0adc32e99d9b7d4a0ac4911a933fa382ca026fb8648776fa93",
+      "hf_source_pin.py": "28241cb2734fce1f815518382962338d9713cb48495aa977ef3133d54bee6894",
+      "fetch_google.py": "f0aa97b53d81ee687a7938aa663eb2d6ddfa85d9d86ab3c166cacf7a674f5ef7",
+      "hf_control.py": "c2cc6cd240f0f95c136ec98938d6d2dddfaec8f6073714d48fd25a44ef0dcafd",
+      "source_pin.py": "fd5f2d3d7d7290e1fba452cd01d150c7f60e3226a3a634264d946df1e41bc04e",
+      "stream.py": "cf534cba0db773cccce18ed8f6dbc403c7098423ffed2dac807835e1ed5c7179",
+      "hf_precise.py": "f176a57ed12148a033751bc7e00e9c57f06aeef2f48a07334bd94f7de757ecae",
+      "upstream.py": "bbe5cbb9f2a408aff079e0a88ace4a1dd46cd412e3ea2089df324077552f4565",
+      "runtime_info.py": "2c35dbe76a0ebe334ab42abf61ee13063a42e86338136623862c5d1b8f90b0f9",
+      "qualify_ops.py": "712af73b7a11c162f2c5558e21d4fe04b30a9068dd16f225e778b14f3f2b1118",
+      "__init__.py": "3d256b4b361a512cc0bdb536a08ab2245d03831d5f502f0a35f48a44ee1a85ee"
+    },
+    "importer_sha256": "b402b0ed39f86883719c5a624d5b6a48fe2fbb8fb002bf4b4a35577d104790c4",
+    "generator_sha256": "17aa6b206474bbee099a842e2ddc4ea2aabacce1963869fce35245c4136a0ce4",
+    "runtime_fingerprint": "f66f07d1a42ad2d3efc0a83a48f542f0eb6eaaa5193f63aa5c443bda32110244",
+    "runtime_versions": {
+      "python": "3.12.15",
+      "jax": "0.8.2",
+      "jaxlib": "0.8.2",
+      "flax": "0.12.2",
+      "numpy": "2.3.5",
+      "backend": "cpu"
+    }
+  },
+  "arrays": {
+    "google": {
+      "wiki-du-fu": {
+        "path": "google/wiki-du-fu.npy",
+        "sha256": "bc80683aceb7d0192fd40208a772489fd80e3ce091af0eb8d54ce43fd23cf77e"
+      },
+      "wiki-frank-headlam": {
+        "path": "google/wiki-frank-headlam.npy",
+        "sha256": "58b3643124f4c7230bc1ab6f57023668f0beeebf0a4480df04c0b243ac69bf79"
+      },
+      "instruction-json": {
+        "path": "google/instruction-json.npy",
+        "sha256": "605e85804a65d3575feb29853020310957e5bd7f0b356dfb97cbfd63a96d38de"
+      },
+      "python-close-elements": {
+        "path": "google/python-close-elements.npy",
+        "sha256": "fd9b2134de0b0c5770efc768444c4986f81fad59d81fc175cc39047421492484"
+      },
+      "italian-accordion": {
+        "path": "google/italian-accordion.npy",
+        "sha256": "27c0ecae00ca6ead5aeb1f5549a52303b695da2cc211e250035bcfff652eac3c"
+      }
+    }
+  },
+  "baselines": {
+    "panther-vulkan": {
+      "profile": {
+        "profile": "vulkan",
+        "configuration": {
+          "n_gpu_layers": 999,
+          "use_extra_bufts": true,
+          "n_ctx": "per-case context",
+          "n_batch": 1024,
+          "n_ubatch": 1024,
+          "n_seq_max": 1,
+          "n_threads": 8,
+          "n_threads_batch": 8,
+          "type_k": "F16",
+          "type_v": "F16",
+          "offload_kqv": true,
+          "op_offload": true,
+          "swa_full": true,
+          "kv_unified": true,
+          "no_perf": true,
+          "flash_attn_type": "OFF",
+          "other_parameters": "Unmodified defaults at the pinned upstream commit; no sampler",
+          "devices": [
+            "Vulkan0"
+          ],
+          "split_mode": "NONE",
+          "main_gpu": 0
+        },
+        "toolchain": {
+          "gcc": "x86_64-linux-gnu-gcc-15 (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+          "g++": "x86_64-linux-gnu-g++-15 (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+          "cmake": "cmake version 4.2.3",
+          "glslc": "shaderc 2026.1-1"
+        },
+        "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+        "cpu": {
+          "vendor_id": "GenuineIntel",
+          "cpu family": "6",
+          "model": "204",
+          "model name": "Intel(R) Core(TM) Ultra X7 358H",
+          "stepping": "2",
+          "microcode": "0x115",
+          "flags": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_perfmon bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq dtes64 monitor ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rdt_a rdseed adx smap clflushopt clwb intel_pt sha_ni xsaveopt xsavec xgetbv1 xsaves split_lock_detect user_shstk avx_vnni lam wbnoinvd dtherm ida arat pln pts hwp hwp_notify hwp_act_window hwp_epp hwp_pkg_req hfi vnmi umip pku ospke waitpkg gfni vaes vpclmulqdq rdpid bus_lock_detect movdiri movdir64b fsrm md_clear serialize arch_lbr ibt flush_l1d arch_capabilities"
+        },
+        "affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "cmake_options": [
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DGGML_NATIVE=ON",
+          "-DGGML_CPU=ON",
+          "-DGGML_SYCL=OFF",
+          "-DGGML_CUDA=OFF",
+          "-DGGML_VULKAN=ON",
+          "-DGGML_BLAS=OFF",
+          "-DLLAMA_BUILD_APP=OFF",
+          "-DLLAMA_BUILD_COMMON=OFF",
+          "-DLLAMA_CURL=OFF",
+          "-DLLAMA_BUILD_TESTS=OFF",
+          "-DLLAMA_BUILD_EXAMPLES=OFF",
+          "-DLLAMA_BUILD_TOOLS=OFF",
+          "-DBUILD_SHARED_LIBS=OFF",
+          "-DGGML_BACKEND_DL=OFF"
+        ],
+        "wrapper_sha256": "5de74d8e67b864050fbd9fcfeae18adeb2239b287e0d687453b33a9d024ff8d6",
+        "source_archive_sha256": "8e13888498d8e2e9723b7662dd40985cdb79d94dbfc4841212ba521d5cfb924a",
+        "vulkan_runtime": {
+          "identity": [
+            "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Graphics (PTL) vendor_id=32902 device_id=45184 driver_version=109051912 api_version=4211023 physical_type=1"
+          ],
+          "mapped_files": [
+            {
+              "basename": "ld-linux-x86-64.so.2",
+              "sha256": "bda779ea9e9ad234f60315477d7cfd0bdde861cd8ddd9df8cdaf62f18c4cec14"
+            },
+            {
+              "basename": "libVkLayer_MESA_device_select.so",
+              "sha256": "de1880d4c750f871d3491d2e8d77f1ca13f31eaa5ba0784bd4dfca0fa7dc9531"
+            },
+            {
+              "basename": "libX11-xcb.so.1.0.0",
+              "sha256": "6a9047ac83e4e1afb8032e62332aa449e7c6307c731f621054c9c0573a460899"
+            },
+            {
+              "basename": "libXau.so.6.0.0",
+              "sha256": "2b742de65acd00f154ed156720af66c0c0af9a58360ba041f25a41e2f775fab5"
+            },
+            {
+              "basename": "libXdmcp.so.6.0.0",
+              "sha256": "24beecbb0faf600d1a646b5edfc8c144da6f2965cb427598f4e17edc1285a733"
+            },
+            {
+              "basename": "libc.so.6",
+              "sha256": "85e64f97e348786a8fb4d9f3d52fec289e2fb86bba20f0731dfe61990525e0f7"
+            },
+            {
+              "basename": "libdisplay-info.so.0.3.0",
+              "sha256": "b3822cd8ca06feaf57da22fc4e5c905c2cb873f5bc2664e53a3c5f2cf060cb27"
+            },
+            {
+              "basename": "libdrm.so.2.131.0",
+              "sha256": "c8be7d3863453898666977c12b0b392014a1c728d84215d885d574882d6e7b89"
+            },
+            {
+              "basename": "libexpat.so.1.11.2",
+              "sha256": "2e5f66e2784c2746775567ff9916f6e7503182a8f1f2deb8ca729dfc1463849f"
+            },
+            {
+              "basename": "libffi.so.8.2.0",
+              "sha256": "1a0dc86f787f73e025a6e521056360afcbe70f2a82cd808132fefc2b4ee95daa"
+            },
+            {
+              "basename": "libgcc_s.so.1",
+              "sha256": "9d339ecb409578d6a5d587e6c537a8f9589b8a13fefba30d167433a4b5758bee"
+            },
+            {
+              "basename": "libgomp.so.1.0.0",
+              "sha256": "645478cbe100d1465b9d45f7047bca3965358f4d399937e544f55ac7a924d5a3"
+            },
+            {
+              "basename": "libm.so.6",
+              "sha256": "1c488db6f4fe8cecb72456bc018de000b7a9b539c2994864b0416b5e8371b3d8"
+            },
+            {
+              "basename": "liboneagentproc.so",
+              "sha256": "17119d3219191246a02728b4ebf4f7ee785c6e0d1554e5c44a42b584f84c9423"
+            },
+            {
+              "basename": "libstdc++.so.6.0.35",
+              "sha256": "5bb0d21308f123b6ad46c6f35b42cedfcb8d6d439a53aa3dae04d880aaffdde3"
+            },
+            {
+              "basename": "libvulkan.so.1.4.341",
+              "sha256": "def4af45e9e5784cf65eaaaa289530a5c73546b01015da4c0920ef0a144fe189"
+            },
+            {
+              "basename": "libvulkan_intel.so",
+              "sha256": "42cf53b56a34c4e67440bccf2cf30afea65a96c1df0a2d061eeccda6e26a79f9"
+            },
+            {
+              "basename": "libwayland-client.so.0.24.0",
+              "sha256": "f27b9eecd96d76ae49ec9f7d4da17dcc43df3411ef3d432ce56d710c8b62930c"
+            },
+            {
+              "basename": "libxcb-dri3.so.0.1.0",
+              "sha256": "d2f0488a28a351718192c01bba15f60556f514db555dfbce9a132dedd1401e98"
+            },
+            {
+              "basename": "libxcb-present.so.0.0.0",
+              "sha256": "085bc629d45125f8c3b0f09f9c37ee65d35b1ea55e1f047cffd6aef4ce218b5a"
+            },
+            {
+              "basename": "libxcb-randr.so.0.1.0",
+              "sha256": "a9444026ba3c927a917ff5a0ce47318bed09ab8f9382fe231c72b33da4ec8bbc"
+            },
+            {
+              "basename": "libxcb-shm.so.0.0.0",
+              "sha256": "58fcb847e2009affbd7eeb1f6d39949f29ccc153f230e0b0d23de00d2b5c1353"
+            },
+            {
+              "basename": "libxcb-sync.so.1.0.0",
+              "sha256": "bf494083f05bc427135042b5cdaa5bf5fbe0886f34f611151dde0056257022c9"
+            },
+            {
+              "basename": "libxcb-xfixes.so.0.0.0",
+              "sha256": "37c933b3e89f66330a930207b3133ce5b2c7aade777c7711b70945cc7d4b2333"
+            },
+            {
+              "basename": "libxcb.so.1.1.0",
+              "sha256": "6af94be329e17e57f1cc0f5e4afb5bdfe669a5168accdc31b03274110b937b41"
+            },
+            {
+              "basename": "libxshmfence.so.1.0.0",
+              "sha256": "8b4406ff7f9f2b2830e6d135f9e7ffe991d32832b8fc3569fed189517b557d2b"
+            },
+            {
+              "basename": "libz.so.1.3.1",
+              "sha256": "27fa6c6cb94fb5b099ead61758a300dbc392d1dbf307fff6c16a9b8e57fdc9de"
+            },
+            {
+              "basename": "libzstd.so.1.5.7",
+              "sha256": "060eeb79531d435306665fd78329d8a9dd579f95876c5960bb67937825362a80"
+            }
+          ]
+        },
+        "environment": {
+          "OMP_DYNAMIC": "FALSE",
+          "OMP_NUM_THREADS": "8",
+          "OPENBLAS_NUM_THREADS": "8"
+        },
+        "backend": "llama.cpp Vulkan",
+        "source_commit": "f0458bd05e698306ce423b1850164042112f59c4",
+        "driver_sha256": "0a781aaa88fad359053e287717c6394f85464c0ec1fa3fb09c337295d5939c2b",
+        "verified_repetitions": 3,
+        "repeatability": "bitwise",
+        "effective_dispatch": {
+          "wiki-frank-headlam": [
+            "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Graphics (PTL) vendor_id=32902 device_id=45184 driver_version=109051912 api_version=4211023 physical_type=1",
+            "load_tensors: offloaded 31/31 layers to GPU",
+            "XE_QUALITY_VULKAN dispatch=full-layer-offload flash_attn=OFF offload_kqv=1 op_offload=1",
+            "llama_context: n_ctx                 = 2048",
+            "llama_context: n_batch               = 1024",
+            "llama_context: n_ubatch              = 1024",
+            "llama_context: flash_attn            = disabled"
+          ],
+          "python-close-elements": [
+            "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Graphics (PTL) vendor_id=32902 device_id=45184 driver_version=109051912 api_version=4211023 physical_type=1",
+            "load_tensors: offloaded 31/31 layers to GPU",
+            "XE_QUALITY_VULKAN dispatch=full-layer-offload flash_attn=OFF offload_kqv=1 op_offload=1",
+            "llama_context: n_ctx                 = 256",
+            "llama_context: n_batch               = 132",
+            "llama_context: n_ubatch              = 132",
+            "llama_context: flash_attn            = disabled"
+          ],
+          "wiki-du-fu": [
+            "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Graphics (PTL) vendor_id=32902 device_id=45184 driver_version=109051912 api_version=4211023 physical_type=1",
+            "load_tensors: offloaded 31/31 layers to GPU",
+            "XE_QUALITY_VULKAN dispatch=full-layer-offload flash_attn=OFF offload_kqv=1 op_offload=1",
+            "llama_context: n_ctx                 = 5376",
+            "llama_context: n_batch               = 1024",
+            "llama_context: n_ubatch              = 1024",
+            "llama_context: flash_attn            = disabled"
+          ],
+          "instruction-json": [
+            "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Graphics (PTL) vendor_id=32902 device_id=45184 driver_version=109051912 api_version=4211023 physical_type=1",
+            "load_tensors: offloaded 31/31 layers to GPU",
+            "XE_QUALITY_VULKAN dispatch=full-layer-offload flash_attn=OFF offload_kqv=1 op_offload=1",
+            "llama_context: n_ctx                 = 256",
+            "llama_context: n_batch               = 64",
+            "llama_context: n_ubatch              = 64",
+            "llama_context: flash_attn            = disabled"
+          ],
+          "italian-accordion": [
+            "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Graphics (PTL) vendor_id=32902 device_id=45184 driver_version=109051912 api_version=4211023 physical_type=1",
+            "load_tensors: offloaded 31/31 layers to GPU",
+            "XE_QUALITY_VULKAN dispatch=full-layer-offload flash_attn=OFF offload_kqv=1 op_offload=1",
+            "llama_context: n_ctx                 = 256",
+            "llama_context: n_batch               = 206",
+            "llama_context: n_ubatch              = 206",
+            "llama_context: flash_attn            = disabled"
+          ]
+        }
+      },
+      "arrays": {
+        "wiki-frank-headlam": {
+          "path": "llama/panther-vulkan/wiki-frank-headlam.npy",
+          "sha256": "1f81f8b9c20740c4560c1c487197be58f4260f9517a2986d339f19f10fdeed89"
+        },
+        "python-close-elements": {
+          "path": "llama/panther-vulkan/python-close-elements.npy",
+          "sha256": "6266a244d58ce20b244ca5790eee8f71f45b9a76d026982748ad44bd2801bb6e"
+        },
+        "wiki-du-fu": {
+          "path": "llama/panther-vulkan/wiki-du-fu.npy",
+          "sha256": "51ee6f1cb485a2ddab77a0fdbc1e11f9cfffe30862d8b4018198ed152e7973ba"
+        },
+        "instruction-json": {
+          "path": "llama/panther-vulkan/instruction-json.npy",
+          "sha256": "8ea170d71c39c640e35b12d1c78617a1e3d5b7e5b623b5460fa01c49defcc900"
+        },
+        "italian-accordion": {
+          "path": "llama/panther-vulkan/italian-accordion.npy",
+          "sha256": "938a0c2a09a89b198058f7f9a28a6bcc400658189efa19bbb25ded86129cc3e1"
+        }
+      }
+    },
+    "raptor-vulkan": {
+      "profile": {
+        "profile": "vulkan",
+        "configuration": {
+          "n_gpu_layers": 999,
+          "use_extra_bufts": true,
+          "n_ctx": "per-case context",
+          "n_batch": 1024,
+          "n_ubatch": 1024,
+          "n_seq_max": 1,
+          "n_threads": 8,
+          "n_threads_batch": 8,
+          "type_k": "F16",
+          "type_v": "F16",
+          "offload_kqv": true,
+          "op_offload": true,
+          "swa_full": true,
+          "kv_unified": true,
+          "no_perf": true,
+          "flash_attn_type": "OFF",
+          "other_parameters": "Unmodified defaults at the pinned upstream commit; no sampler",
+          "devices": [
+            "Vulkan0"
+          ],
+          "split_mode": "NONE",
+          "main_gpu": 0
+        },
+        "toolchain": {
+          "gcc": "gcc (GCC) 16.2.1 20260810",
+          "g++": "g++ (GCC) 16.2.1 20260810",
+          "cmake": "cmake version 4.4.3",
+          "glslc": "2026.3"
+        },
+        "platform": "Linux-7.2.7-arch1-1-x86_64-with-glibc2.44",
+        "cpu": {
+          "vendor_id": "GenuineIntel",
+          "cpu family": "6",
+          "model": "186",
+          "model name": "13th Gen Intel(R) Core(TM) i7-13700H",
+          "stepping": "2",
+          "microcode": "0x6134",
+          "flags": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_perfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq dtes64 monitor ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rdseed adx smap clflushopt clwb intel_pt sha_ni xsaveopt xsavec xgetbv1 xsaves split_lock_detect user_shstk avx_vnni dtherm ida arat pln pts hwp hwp_notify hwp_act_window hwp_epp hwp_pkg_req hfi vnmi umip pku ospke waitpkg gfni vaes vpclmulqdq rdpid movdiri movdir64b fsrm md_clear serialize arch_lbr ibt flush_l1d arch_capabilities"
+        },
+        "affinity": [
+          12,
+          13
+        ],
+        "cmake_options": [
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DGGML_NATIVE=ON",
+          "-DGGML_CPU=ON",
+          "-DGGML_SYCL=OFF",
+          "-DGGML_CUDA=OFF",
+          "-DGGML_VULKAN=ON",
+          "-DGGML_BLAS=OFF",
+          "-DLLAMA_BUILD_APP=OFF",
+          "-DLLAMA_BUILD_COMMON=OFF",
+          "-DLLAMA_CURL=OFF",
+          "-DLLAMA_BUILD_TESTS=OFF",
+          "-DLLAMA_BUILD_EXAMPLES=OFF",
+          "-DLLAMA_BUILD_TOOLS=OFF",
+          "-DBUILD_SHARED_LIBS=OFF",
+          "-DGGML_BACKEND_DL=OFF"
+        ],
+        "wrapper_sha256": "b39a78bcaf88f54ab6ccc998c98f73a427992d73c088c0132374fa3194dc1c50",
+        "source_archive_sha256": "8e13888498d8e2e9723b7662dd40985cdb79d94dbfc4841212ba521d5cfb924a",
+        "vulkan_runtime": {
+          "identity": [
+            "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Iris(R) Xe Graphics (RPL-P) vendor_id=32902 device_id=42912 driver_version=109060099 api_version=4211042 physical_type=1"
+          ],
+          "mapped_files": [
+            {
+              "basename": "ld.so.cache",
+              "sha256": "3f64a7f7717421b2b5db2d50f6c5081b13929ea966843d3eb9b3549953c4a01e"
+            },
+            {
+              "basename": "ld-linux-x86-64.so.2",
+              "sha256": "d011113b7054c641c8ca064f58bcc23804fd2654a3dff2444dad06ddeda61bfb"
+            },
+            {
+              "basename": "libSPIRV-Tools.so",
+              "sha256": "e12f83159f86b969b6fc5c3668a670f15038d3182b510ac04fce68e833b7be2a"
+            },
+            {
+              "basename": "libVkLayer_MESA_device_select.so",
+              "sha256": "1a670e7f81ac28dbd30d430644a69519a0c38e704ce5b637e44b9776f513cb83"
+            },
+            {
+              "basename": "libX11-xcb.so.1.0.0",
+              "sha256": "3913178fdde804e000803ff435b79eac731b121f13f719ac1bf2390c86a474be"
+            },
+            {
+              "basename": "libXau.so.6.0.0",
+              "sha256": "3e229dba702d7b56f1c58ac0e004ae691ae2ad5ede7b50968e1cd7d8b2ccdecc"
+            },
+            {
+              "basename": "libXdmcp.so.6.0.0",
+              "sha256": "0c572ba75de0f967c9c4d088161d3e435ea721bd99c169aae707aba6870a71b1"
+            },
+            {
+              "basename": "libc.so.6",
+              "sha256": "e221b10fee9ee4776d8f0f1701253bc06817f7a4dbe6c5292487277d0bf8ffff"
+            },
+            {
+              "basename": "libdisplay-info.so.0.3.0",
+              "sha256": "98f632c36bdd89d75914200cb6d1b3cfce8b21067e73845b8a6c4d959903f97f"
+            },
+            {
+              "basename": "libdrm.so.2.134.0",
+              "sha256": "8b97afc5e15a07442768b302660cf844b0962623f8dcecbaebccadf288c611b1"
+            },
+            {
+              "basename": "libexpat.so.1.12.5",
+              "sha256": "a5df7b8b81c2785d3b5c24b3b021186663867390586e1f8fd714f406b4f88f0d"
+            },
+            {
+              "basename": "libffi.so.8.5.0",
+              "sha256": "b38bb3a55ba04dfbb5be68e881a72385d6c30010afffb1cf1dfc373b72c2278c"
+            },
+            {
+              "basename": "libgcc_s.so.1",
+              "sha256": "e618cb9c90c2eb3a1dad1cfea5b6c1eebcf2e799ad805976f4ae47bdd61c716a"
+            },
+            {
+              "basename": "libgomp.so.1.0.0",
+              "sha256": "d6c6309ee83dbe9b50bf38342489799a4822ee22451677730ff5542aa74bdefc"
+            },
+            {
+              "basename": "libm.so.6",
+              "sha256": "965106704753eefe8c31ae7da6daba3ead3d18c52b19b5fcc41178bcc4aa999d"
+            },
+            {
+              "basename": "libstdc++.so.6.0.36",
+              "sha256": "f5fc7380f2ae46fa4053a64be04e7b98109f1066a4bbfff3c37042488aa0be0e"
+            },
+            {
+              "basename": "libudev.so.1.7.15",
+              "sha256": "5e41a27ff6a9c8016b16f4b69b41a1d63d51973d0df2c6a895ab51ba006b880c"
+            },
+            {
+              "basename": "libvulkan.so.1.4.357",
+              "sha256": "7d9f8ced1fae1d02ee7953a5a22e4efae74545e83333eedc41c53a50f51ebab6"
+            },
+            {
+              "basename": "libvulkan_intel.so",
+              "sha256": "bcdec35221a775f04ad96316c18a3c5f2cc1732a45a0d290e45e1f32f10c8107"
+            },
+            {
+              "basename": "libwayland-client.so.0.26.0",
+              "sha256": "39c83ae7b73d22f18b4f81da14749c4535c304b7e62910a2f1aae682f279cc9d"
+            },
+            {
+              "basename": "libxcb-dri3.so.0.1.0",
+              "sha256": "116d544940cb64e6b218dfe547434c309e1e99a5c208853c953cd6bb66b78717"
+            },
+            {
+              "basename": "libxcb-keysyms.so.1.0.0",
+              "sha256": "3ffbacf50c3bcf9390ce804492a39bd8e549d1b68908e4076444a2651c58468f"
+            },
+            {
+              "basename": "libxcb-present.so.0.0.0",
+              "sha256": "d9f47da0e4925c706e83c1ea7572b2660c74a22b01c0f2b95723cc96a258f7c7"
+            },
+            {
+              "basename": "libxcb-randr.so.0.1.0",
+              "sha256": "5db40f22bfc3a142d653d69669f509b971dc8cd36215e90f977158d109b3dbf5"
+            },
+            {
+              "basename": "libxcb-shm.so.0.0.0",
+              "sha256": "e04329f8117411113e6094e3dc354ed50b8b3b10e6cf5f8a21a6b7bec4786eec"
+            },
+            {
+              "basename": "libxcb-sync.so.1.0.0",
+              "sha256": "e5e6f35089a65d0d34761fdfb6ea9c74a86b9c7e57ab6fc56e1282491ad6bbd0"
+            },
+            {
+              "basename": "libxcb-xfixes.so.0.0.0",
+              "sha256": "dad274e042c86866ac9b624a47c2f46648a291dbc1e11f8c906cd355ce60e38f"
+            },
+            {
+              "basename": "libxcb.so.1.1.0",
+              "sha256": "40df5eff95408b67d969e559f2689b3e50e6151251b1f4e03608ce5cd9c9a133"
+            },
+            {
+              "basename": "libxshmfence.so.1.0.0",
+              "sha256": "ac614957c4966511f815774fdafbd33dfad0d6142b1c52669343b160066e04d9"
+            },
+            {
+              "basename": "libz.so.1.3.2",
+              "sha256": "9ba92a0b85dc9b659e8f5e596a69452cec801def6ece0883a8a2c1f032e52397"
+            },
+            {
+              "basename": "libzstd.so.1.5.7",
+              "sha256": "f023d49e85fb22057bfdd21857263d2638b73356c06f3b342f678a75212379f8"
+            }
+          ]
+        },
+        "environment": {
+          "OMP_DYNAMIC": "FALSE",
+          "OMP_NUM_THREADS": "8",
+          "OPENBLAS_NUM_THREADS": "8"
+        },
+        "backend": "llama.cpp Vulkan",
+        "source_commit": "f0458bd05e698306ce423b1850164042112f59c4",
+        "driver_sha256": "857bcc9906d722dd1b1c5f27dc5444b766eff79b38cd94aab82e86cbbb331b97",
+        "verified_repetitions": 3,
+        "repeatability": "bitwise",
+        "effective_dispatch": {
+          "wiki-frank-headlam": [
+            "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Iris(R) Xe Graphics (RPL-P) vendor_id=32902 device_id=42912 driver_version=109060099 api_version=4211042 physical_type=1",
+            "load_tensors: offloaded 31/31 layers to GPU",
+            "XE_QUALITY_VULKAN dispatch=full-layer-offload flash_attn=OFF offload_kqv=1 op_offload=1",
+            "llama_context: n_ctx                 = 2048",
+            "llama_context: n_batch               = 1024",
+            "llama_context: n_ubatch              = 1024",
+            "llama_context: flash_attn            = disabled"
+          ],
+          "python-close-elements": [
+            "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Iris(R) Xe Graphics (RPL-P) vendor_id=32902 device_id=42912 driver_version=109060099 api_version=4211042 physical_type=1",
+            "load_tensors: offloaded 31/31 layers to GPU",
+            "XE_QUALITY_VULKAN dispatch=full-layer-offload flash_attn=OFF offload_kqv=1 op_offload=1",
+            "llama_context: n_ctx                 = 256",
+            "llama_context: n_batch               = 132",
+            "llama_context: n_ubatch              = 132",
+            "llama_context: flash_attn            = disabled"
+          ],
+          "wiki-du-fu": [
+            "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Iris(R) Xe Graphics (RPL-P) vendor_id=32902 device_id=42912 driver_version=109060099 api_version=4211042 physical_type=1",
+            "load_tensors: offloaded 31/31 layers to GPU",
+            "XE_QUALITY_VULKAN dispatch=full-layer-offload flash_attn=OFF offload_kqv=1 op_offload=1",
+            "llama_context: n_ctx                 = 5376",
+            "llama_context: n_batch               = 1024",
+            "llama_context: n_ubatch              = 1024",
+            "llama_context: flash_attn            = disabled"
+          ],
+          "instruction-json": [
+            "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Iris(R) Xe Graphics (RPL-P) vendor_id=32902 device_id=42912 driver_version=109060099 api_version=4211042 physical_type=1",
+            "load_tensors: offloaded 31/31 layers to GPU",
+            "XE_QUALITY_VULKAN dispatch=full-layer-offload flash_attn=OFF offload_kqv=1 op_offload=1",
+            "llama_context: n_ctx                 = 256",
+            "llama_context: n_batch               = 64",
+            "llama_context: n_ubatch              = 64",
+            "llama_context: flash_attn            = disabled"
+          ],
+          "italian-accordion": [
+            "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Iris(R) Xe Graphics (RPL-P) vendor_id=32902 device_id=42912 driver_version=109060099 api_version=4211042 physical_type=1",
+            "load_tensors: offloaded 31/31 layers to GPU",
+            "XE_QUALITY_VULKAN dispatch=full-layer-offload flash_attn=OFF offload_kqv=1 op_offload=1",
+            "llama_context: n_ctx                 = 256",
+            "llama_context: n_batch               = 206",
+            "llama_context: n_ubatch              = 206",
+            "llama_context: flash_attn            = disabled"
+          ]
+        },
+        "production_note": "Acquired with GPU-synchronized cooling pauses between unchanged chunks; see ../producers/README.md for the exact historical wrapper. Acquisition times are not throughput measurements."
+      },
+      "arrays": {
+        "wiki-frank-headlam": {
+          "path": "llama/raptor-vulkan/wiki-frank-headlam.npy",
+          "sha256": "47c229cfe15ddda959e061bde920c2dceb0bea9fbe429f052ef00c0c272dab07"
+        },
+        "python-close-elements": {
+          "path": "llama/raptor-vulkan/python-close-elements.npy",
+          "sha256": "54b9639278ef5f60f57dfb6c5dffc1ab691e2ef39499ddfbae29bf7ba1f5032c"
+        },
+        "wiki-du-fu": {
+          "path": "llama/raptor-vulkan/wiki-du-fu.npy",
+          "sha256": "ec2d9b056ecf664f7e9013437c0481851c422144f4a1a9a45ebded57babe1a73"
+        },
+        "instruction-json": {
+          "path": "llama/raptor-vulkan/instruction-json.npy",
+          "sha256": "b134cd973e7ffd98c6ecb048df11c6d9092d26de621e2a8ba770db0d7f13ed6f"
+        },
+        "italian-accordion": {
+          "path": "llama/raptor-vulkan/italian-accordion.npy",
+          "sha256": "49259b028f19650ab4ff2aca98f9ae3f8a73e06ddcb3ad581abdc5b067ea821e"
+        }
+      }
+    }
+  },
+  "acceptance": {
+    "scope": "fixed-public-corpus",
+    "margin": 0,
+    "gate": "mean-family-kl",
+    "aggregation": "equal-families/equal-document-groups/equal-observed-positions",
+    "diagnostics": [
+      "family_mean_kl",
+      "family_max_kl",
+      "family_max_tv",
+      "position_kl",
+      "position_tv"
+    ],
+    "direction": "Google||backend",
+    "temperature": 1
+  },
+  "content_sha256": "bc1c6dcbbc30958762fc111f1208901918509c9ff3fa57f0c4fee1600023c414"
+}

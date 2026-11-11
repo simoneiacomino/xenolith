@@ -19,7 +19,7 @@ static char *read_file(const char *path, size_t *len_out) {
         fclose(f);
         return NULL;
     }
-    char *buf = malloc((size_t)n + 1);
+    char *buf = (char *)malloc((size_t)n + 1);
     if (!buf) {
         fclose(f);
         return NULL;
@@ -68,7 +68,7 @@ int main(int argc, char **argv) {
     }
 
     const struct llama_vocab *vocab = llama_model_get_vocab(model);
-    const bool add_special  = llama_vocab_get_add_bos(vocab);
+    const bool add_special  = false; /* Explicit raw IDs; Gemma4 loader otherwise forces BOS. */
     const bool parse_specl  = false;
 
     int32_t n = -llama_tokenize(vocab, text, (int32_t)len, NULL, 0, add_special, parse_specl);
@@ -80,7 +80,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    llama_token *ids = malloc((size_t)n * sizeof *ids);
+    llama_token *ids = (llama_token *)malloc((size_t)n * sizeof *ids);
     if (!ids) {
         llama_model_free(model);
         free(text);
