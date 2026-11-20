@@ -51,8 +51,37 @@
         "path": "inputs/italian-accordion.json",
         "sha256": "33655e0dbb70feea8b876748674b5fcb6c6177e88961d04cd7709ec193ebd96f"
       }
+    },
+    {
+      "id": "manzoni-promessi-sposi-8192",
+      "group": "manzoni-promessi-sposi",
+      "stratum": "italian-prose-long",
+      "input": {
+        "path": "inputs/manzoni-promessi-sposi-8192.json",
+        "sha256": "915e7acdfbbb2cd6f3c3efe3b13bda1e0366a5bd4a3c508c81d05d7e02348c21"
+      }
+    },
+    {
+      "id": "cpython-base-events-8192",
+      "group": "cpython-base-events",
+      "stratum": "python-source-long",
+      "input": {
+        "path": "inputs/cpython-base-events-8192.json",
+        "sha256": "4200a2dcad2b884886124836c1a4dab3c52bf9dc6bf26f635023869cd9a9d5b3"
+      }
+    },
+    {
+      "id": "manzoni-promessi-sposi-16384",
+      "group": "manzoni-promessi-sposi",
+      "stratum": "italian-prose-long",
+      "input": {
+        "path": "inputs/manzoni-promessi-sposi-16384.json",
+        "sha256": "dc193c265ea58690ef26d8ad6bfccde5e7968fbdbc686af7f1dde144e6f0463c"
+      }
     }
   ],
+  "gguf_metadata_sha256": "925e6b73ad87d433b4c950a83bb6f1f82d4f23e896077ea60dac7822ed04bf44",
+  "template": "Raw UTF-8, no chat template, one explicit BOS=2.",
   "documents": [
     {
       "id": "wiki-du-fu",
@@ -123,6 +152,52 @@
       "full_raw_token_count": 205,
       "used_tokens_including_bos": 206,
       "template": "raw unchanged UTF-8, no chat wrapper, one explicit BOS=2"
+    },
+    {
+      "id": "manzoni-promessi-sposi",
+      "source": "Wikisource",
+      "author": "Alessandro Manzoni",
+      "record_id": "I promessi sposi (1840), chapters I–II",
+      "revisions": [
+        {
+          "chapter": "I",
+          "oldid": 3699528,
+          "url": "https://it.wikisource.org/wiki/Speciale:LinkPermanente/3699528",
+          "rendered_html_sha256": "000cf3bf4c79c6ee360f27e4a957b333b14741c99a64d1c9aac66f5f5f7cc5a7"
+        },
+        {
+          "chapter": "II",
+          "oldid": 3699529,
+          "url": "https://it.wikisource.org/wiki/Speciale:LinkPermanente/3699529",
+          "rendered_html_sha256": "e1f9db810b8b6f0724b56010faac5bde2f85a97cdd312c24b83646dc05bcf6ba"
+        }
+      ],
+      "license": "CC BY-SA 4.0",
+      "text_normalization": "UTF-8 plaintext of the transcribed chapters. Retain chapter headings and paragraph boundaries. Omit site chrome, page numbers and illustrations. Render decorative initials as text and normalize whitespace.",
+      "text": {
+        "path": "texts/manzoni-promessi-sposi.txt",
+        "sha256": "5dff06fa100c4a4623f471296155c81274d869f87f66515af656deb19d3e7527"
+      },
+      "full_raw_token_count": 17828
+    },
+    {
+      "id": "cpython-base-events",
+      "source": "CPython",
+      "record_id": "Lib/asyncio/base_events.py",
+      "tag": "v3.13.0",
+      "revision": "60403a5409ff2c3f3b07dd2ca91a7a3e096839c7",
+      "url": "https://github.com/python/cpython/blob/60403a5409ff2c3f3b07dd2ca91a7a3e096839c7/Lib/asyncio/base_events.py",
+      "license": "PSF-2.0",
+      "license_file": {
+        "path": "licenses/CPython-LICENSE.txt",
+        "sha256": "78b12c3a81360b357002334f0e70ea0e92eebf7a9b358805c03c48484945f3bb"
+      },
+      "text_normalization": "Unchanged upstream UTF-8 bytes.",
+      "text": {
+        "path": "texts/cpython-base-events.txt",
+        "sha256": "06368fda7fba857cedfa5dec24d907b1d04f0a3ac8313e9b059b5191734ea354"
+      },
+      "full_raw_token_count": 18756
     }
   ]
 }

@@ -17,10 +17,16 @@ for the exact wrappers and acquisition details.
 | instruction-json | 42 | 20, 41 |
 | python-close-elements | 132 | 65, 131 |
 | italian-accordion | 206 | 102, 205 |
+| manzoni-promessi-sposi-8192 | 8192 | 1023, 2047, 4095, 8191 |
+| cpython-base-events-8192 | 8192 | 1023, 2047, 4095, 8191 |
+| manzoni-promessi-sposi-16384 | 16384 | 16383 |
 
-There are 14 full-vocabulary rows per backend: 28 MiB Google FP64 and
-14 MiB FP32 per Vulkan baseline, plus headers and metadata. All cases use cached prefill,
-explicit chunks of at most 1,024 tokens and initially empty state.
+The validation report groups inputs up to 5,348 tokens, 8,192 tokens and
+16,384 tokens. Panther covers all eight cases and 23 positions. Raptor covers
+the first five cases and 14 positions. There are 46 MiB of Google FP64 logits,
+23 MiB of Panther FP32 logits and 14 MiB of Raptor FP32 logits, plus headers
+and metadata. All cases use cached prefill, explicit chunks of at most 1,024
+tokens and initially empty state. The two Manzoni cases share one source text.
 Frank Headlam retains the full source text for attribution; its numerical
 input is a 2,048-token prefix. Du Fu is complete, with no artificial repetition.
 

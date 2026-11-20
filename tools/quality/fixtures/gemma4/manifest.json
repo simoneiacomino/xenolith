@@ -2,7 +2,7 @@
   "schema": "xe-quality-fixtures-v3",
   "corpus": {
     "path": "corpus/manifest.json",
-    "sha256": "2b1fa05427f3b2e12232f7523a89c812391373ca2a2f081fd444917de3c229f1"
+    "sha256": "6320d49f806c5a2e3d5c940397a81d8242d44ac03db5be80804ea7b0296a6c02"
   },
   "groups": {
     "short": {
@@ -63,6 +63,117 @@
       },
       "source_fixture_sha256": "bc1c6dcbbc30958762fc111f1208901918509c9ff3fa57f0c4fee1600023c414",
       "source_corpus_sha256": "bb1109c12e958fd07184e489bdc2fc8aad4331942fbcdfe6970b7129932b9fb1"
+    },
+    "8k": {
+      "cases": [
+        "manzoni-promessi-sposi-8192",
+        "cpython-base-events-8192"
+      ],
+      "reference": {
+        "kind": "trusted-google-fp64",
+        "upstream": {
+          "commit": "9e1f74131ba9d45e5fe6ae7bb3941d9f2abb39c3",
+          "execution": "OfficialBlock, denseMLP, norms, attention, RoPE and routing probabilities; bounded per-expert dispatch adapter, exact top_k; canonical26B_A4B architecture values audited from_gemma4.py and exactGGUF metadata",
+          "files": {
+            "gemma/gm/math/_positional_embeddings.py": "6f4814d3554dbb4c67bba794e9fb13a2ae39ea7c77dc4a040527d1536fcb0c92",
+            "gemma/gm/nn/gemma4/_config.py": "0e9e037107c05a52a45a282a1252f81daf0b04c9094ec154dc17ddd5a4f8de1b",
+            "gemma/gm/nn/gemma4/_gemma4.py": "67cf8c06eed95cbea613e1014f8dd23aade95edf5fb415d875118fe5c1605c4f",
+            "gemma/gm/nn/gemma4/_layers.py": "55643c31628bd66e94d72bd035910635a4c5bbf2e5a131ce8fb663ddb28b405c",
+            "gemma/gm/nn/gemma4/_modules.py": "55dee2ef3397b3e12631bd000d34d62ac1cdcf1b511c5fb945a73e8975f0bda1",
+            "gemma/gm/nn/gemma4/_moe.py": "b117304a147657da903cb07b2579ce0a44cde6a82a54d4b014c52a3a9415d4a2"
+          },
+          "license": {
+            "path": "LICENSE",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+            "spdx": "Apache-2.0"
+          },
+          "notice_files": [],
+          "repository": "https://github.com/google-deepmind/gemma"
+        },
+        "precision": "FP64 weights/activations/KV/head; temperature 1; post-softcap",
+        "independent_qualification": "Not asserted for this fixture corpus",
+        "adapter_hashes": {
+          "stream.py": "cf534cba0db773cccce18ed8f6dbc403c7098423ffed2dac807835e1ed5c7179",
+          "source_pin.py": "fd5f2d3d7d7290e1fba452cd01d150c7f60e3226a3a634264d946df1e41bc04e",
+          "upstream.py": "bbe5cbb9f2a408aff079e0a88ace4a1dd46cd412e3ea2089df324077552f4565",
+          "runtime_info.py": "2c35dbe76a0ebe334ab42abf61ee13063a42e86338136623862c5d1b8f90b0f9",
+          "hf_source_pin.py": "28241cb2734fce1f815518382962338d9713cb48495aa977ef3133d54bee6894",
+          "hf_precise.py": "f176a57ed12148a033751bc7e00e9c57f06aeef2f48a07334bd94f7de757ecae",
+          "precise_rope.py": "799321810fd85f0adc32e99d9b7d4a0ac4911a933fa382ca026fb8648776fa93",
+          "qualify_ops.py": "712af73b7a11c162f2c5558e21d4fe04b30a9068dd16f225e778b14f3f2b1118",
+          "fetch_google.py": "f0aa97b53d81ee687a7938aa663eb2d6ddfa85d9d86ab3c166cacf7a674f5ef7",
+          "hf_control.py": "c2cc6cd240f0f95c136ec98938d6d2dddfaec8f6073714d48fd25a44ef0dcafd",
+          "__init__.py": "3d256b4b361a512cc0bdb536a08ab2245d03831d5f502f0a35f48a44ee1a85ee"
+        },
+        "importer_sha256": "402bac6a8d5409334b43cdfc7481e0d7b14f5889dc80d29b29522a684191fdc7",
+        "generator_sha256": "d999e35336fab4685bf2af972d4a4517c43abf37807a309f2b48e47930656833",
+        "runtime_fingerprint": "cc8011cebe333b333fb971387d25155f07133a790ab41ae8e142da4e62fc567c",
+        "runtime_versions": {
+          "python": "3.12.14",
+          "jax": "0.8.2",
+          "jaxlib": "0.8.2",
+          "flax": "0.12.2",
+          "numpy": "2.3.5",
+          "backend": "cpu"
+        }
+      },
+      "source_fixture_sha256": "ce935f3e22cf24161c63aa554e7607e10bb75db5058451eeab04462a0cc632c4",
+      "source_corpus_sha256": "8e65e2bb0a065db886d3ba8199024b9795a5012391dade16bebffe9d0c2cbd79"
+    },
+    "16k": {
+      "cases": [
+        "manzoni-promessi-sposi-16384"
+      ],
+      "reference": {
+        "kind": "trusted-google-fp64",
+        "upstream": {
+          "commit": "9e1f74131ba9d45e5fe6ae7bb3941d9f2abb39c3",
+          "execution": "OfficialBlock, denseMLP, norms, attention, RoPE and routing probabilities; bounded per-expert dispatch adapter, exact top_k; canonical26B_A4B architecture values audited from_gemma4.py and exactGGUF metadata",
+          "files": {
+            "gemma/gm/math/_positional_embeddings.py": "6f4814d3554dbb4c67bba794e9fb13a2ae39ea7c77dc4a040527d1536fcb0c92",
+            "gemma/gm/nn/gemma4/_config.py": "0e9e037107c05a52a45a282a1252f81daf0b04c9094ec154dc17ddd5a4f8de1b",
+            "gemma/gm/nn/gemma4/_gemma4.py": "67cf8c06eed95cbea613e1014f8dd23aade95edf5fb415d875118fe5c1605c4f",
+            "gemma/gm/nn/gemma4/_layers.py": "55643c31628bd66e94d72bd035910635a4c5bbf2e5a131ce8fb663ddb28b405c",
+            "gemma/gm/nn/gemma4/_modules.py": "55dee2ef3397b3e12631bd000d34d62ac1cdcf1b511c5fb945a73e8975f0bda1",
+            "gemma/gm/nn/gemma4/_moe.py": "b117304a147657da903cb07b2579ce0a44cde6a82a54d4b014c52a3a9415d4a2"
+          },
+          "license": {
+            "path": "LICENSE",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+            "spdx": "Apache-2.0"
+          },
+          "notice_files": [],
+          "repository": "https://github.com/google-deepmind/gemma"
+        },
+        "precision": "FP64 weights/activations/KV/head; temperature 1; post-softcap",
+        "independent_qualification": "Not asserted for this fixture corpus",
+        "adapter_hashes": {
+          "stream.py": "cf534cba0db773cccce18ed8f6dbc403c7098423ffed2dac807835e1ed5c7179",
+          "source_pin.py": "fd5f2d3d7d7290e1fba452cd01d150c7f60e3226a3a634264d946df1e41bc04e",
+          "upstream.py": "bbe5cbb9f2a408aff079e0a88ace4a1dd46cd412e3ea2089df324077552f4565",
+          "runtime_info.py": "2c35dbe76a0ebe334ab42abf61ee13063a42e86338136623862c5d1b8f90b0f9",
+          "hf_source_pin.py": "28241cb2734fce1f815518382962338d9713cb48495aa977ef3133d54bee6894",
+          "hf_precise.py": "f176a57ed12148a033751bc7e00e9c57f06aeef2f48a07334bd94f7de757ecae",
+          "precise_rope.py": "799321810fd85f0adc32e99d9b7d4a0ac4911a933fa382ca026fb8648776fa93",
+          "qualify_ops.py": "712af73b7a11c162f2c5558e21d4fe04b30a9068dd16f225e778b14f3f2b1118",
+          "fetch_google.py": "f0aa97b53d81ee687a7938aa663eb2d6ddfa85d9d86ab3c166cacf7a674f5ef7",
+          "hf_control.py": "c2cc6cd240f0f95c136ec98938d6d2dddfaec8f6073714d48fd25a44ef0dcafd",
+          "__init__.py": "3d256b4b361a512cc0bdb536a08ab2245d03831d5f502f0a35f48a44ee1a85ee"
+        },
+        "importer_sha256": "402bac6a8d5409334b43cdfc7481e0d7b14f5889dc80d29b29522a684191fdc7",
+        "generator_sha256": "d999e35336fab4685bf2af972d4a4517c43abf37807a309f2b48e47930656833",
+        "runtime_fingerprint": "cc8011cebe333b333fb971387d25155f07133a790ab41ae8e142da4e62fc567c",
+        "runtime_versions": {
+          "python": "3.12.14",
+          "jax": "0.8.2",
+          "jaxlib": "0.8.2",
+          "flax": "0.12.2",
+          "numpy": "2.3.5",
+          "backend": "cpu"
+        }
+      },
+      "source_fixture_sha256": "babe5a44115e7e1db01649fd5c0cd62c2d09060f7c6f97596e9cab8b4b532a2e",
+      "source_corpus_sha256": "3a1eade2550451afbf23bd1ee1eaff8bf149b2a7172d92646e1444e885841e4a"
     }
   },
   "arrays": {
@@ -86,6 +197,18 @@
       "italian-accordion": {
         "path": "google/italian-accordion.npy",
         "sha256": "27c0ecae00ca6ead5aeb1f5549a52303b695da2cc211e250035bcfff652eac3c"
+      },
+      "manzoni-promessi-sposi-8192": {
+        "path": "google/manzoni-promessi-sposi-8192.npy",
+        "sha256": "eb06c8ef75fdcc72571017a8a1eef8e358f716d850a409e537d67edde812a3f7"
+      },
+      "cpython-base-events-8192": {
+        "path": "google/cpython-base-events-8192.npy",
+        "sha256": "c341109a79a337a281b42ab44e54580eb91c28cb33f51f265e2e359ab0516df5"
+      },
+      "manzoni-promessi-sposi-16384": {
+        "path": "google/manzoni-promessi-sposi-16384.npy",
+        "sha256": "fe739ecca24ad79b191e69cf887b74846f2e8b05f594a6f70f930843fbf328ba"
       }
     }
   },
@@ -96,7 +219,10 @@
         "wiki-frank-headlam",
         "instruction-json",
         "python-close-elements",
-        "italian-accordion"
+        "italian-accordion",
+        "manzoni-promessi-sposi-8192",
+        "cpython-base-events-8192",
+        "manzoni-promessi-sposi-16384"
       ],
       "profiles": [
         {
@@ -354,6 +480,511 @@
               "llama_context: flash_attn            = disabled"
             ]
           }
+        },
+        {
+          "profile": "vulkan",
+          "configuration": {
+            "n_gpu_layers": 999,
+            "use_extra_bufts": true,
+            "n_ctx": "per-case context",
+            "n_batch": 1024,
+            "n_ubatch": 1024,
+            "n_seq_max": 1,
+            "n_threads": 8,
+            "n_threads_batch": 8,
+            "type_k": "F16",
+            "type_v": "F16",
+            "offload_kqv": true,
+            "op_offload": true,
+            "swa_full": true,
+            "kv_unified": true,
+            "no_perf": true,
+            "flash_attn_type": "OFF",
+            "other_parameters": "Unmodified defaults at the pinned upstream commit; no sampler",
+            "devices": [
+              "Vulkan0"
+            ],
+            "split_mode": "NONE",
+            "main_gpu": 0
+          },
+          "toolchain": {
+            "gcc": "x86_64-linux-gnu-gcc-15 (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+            "g++": "x86_64-linux-gnu-g++-15 (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+            "cmake": "cmake version 4.2.3",
+            "glslc": "shaderc 2026.1-1"
+          },
+          "platform": "Linux-7.0.0-43-generic-x86_64-with-glibc2.43",
+          "cpu": {
+            "vendor_id": "GenuineIntel",
+            "cpu family": "6",
+            "model": "204",
+            "model name": "Intel(R) Core(TM) Ultra X7 358H",
+            "stepping": "2",
+            "microcode": "0x115",
+            "flags": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_perfmon bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq dtes64 monitor ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rdt_a rdseed adx smap clflushopt clwb intel_pt sha_ni xsaveopt xsavec xgetbv1 xsaves split_lock_detect user_shstk avx_vnni lam wbnoinvd dtherm ida arat pln pts hwp hwp_notify hwp_act_window hwp_epp hwp_pkg_req hfi vnmi umip pku ospke waitpkg gfni vaes vpclmulqdq rdpid bus_lock_detect movdiri movdir64b fsrm md_clear serialize arch_lbr ibt flush_l1d arch_capabilities"
+          },
+          "affinity": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+          ],
+          "cmake_options": [
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DGGML_NATIVE=ON",
+            "-DGGML_CPU=ON",
+            "-DGGML_SYCL=OFF",
+            "-DGGML_CUDA=OFF",
+            "-DGGML_VULKAN=ON",
+            "-DGGML_BLAS=OFF",
+            "-DLLAMA_BUILD_APP=OFF",
+            "-DLLAMA_BUILD_COMMON=OFF",
+            "-DLLAMA_CURL=OFF",
+            "-DLLAMA_BUILD_TESTS=OFF",
+            "-DLLAMA_BUILD_EXAMPLES=OFF",
+            "-DLLAMA_BUILD_TOOLS=OFF",
+            "-DBUILD_SHARED_LIBS=OFF",
+            "-DGGML_BACKEND_DL=OFF"
+          ],
+          "wrapper_sha256": "5de74d8e67b864050fbd9fcfeae18adeb2239b287e0d687453b33a9d024ff8d6",
+          "source_archive_sha256": null,
+          "vulkan_runtime": {
+            "identity": [
+              "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Graphics (PTL) vendor_id=32902 device_id=45184 driver_version=109051912 api_version=4211023 physical_type=1"
+            ],
+            "mapped_files": [
+              {
+                "basename": "ld-linux-x86-64.so.2",
+                "sha256": "c0b20d6e1ced12abfe0b1ef2b5b68017950beaaea3df69eb6949d73e0ecf7b40"
+              },
+              {
+                "basename": "libLLVM.so.21.1",
+                "sha256": "12dca1fc2d9f5d4ff35315fc2aa3a97b615b41ec6a71d3ce545efb62c075d902"
+              },
+              {
+                "basename": "libVkLayer_MESA_device_select.so",
+                "sha256": "de1880d4c750f871d3491d2e8d77f1ca13f31eaa5ba0784bd4dfca0fa7dc9531"
+              },
+              {
+                "basename": "libX11-xcb.so.1.0.0",
+                "sha256": "6a9047ac83e4e1afb8032e62332aa449e7c6307c731f621054c9c0573a460899"
+              },
+              {
+                "basename": "libXau.so.6.0.0",
+                "sha256": "2b742de65acd00f154ed156720af66c0c0af9a58360ba041f25a41e2f775fab5"
+              },
+              {
+                "basename": "libXdmcp.so.6.0.0",
+                "sha256": "24beecbb0faf600d1a646b5edfc8c144da6f2965cb427598f4e17edc1285a733"
+              },
+              {
+                "basename": "libbsd.so.0.12.2",
+                "sha256": "c71b8a0d7e94c5e34f6c328c5dd1ba7f325d3300c97a54a7c69ef9a6c2caa8b3"
+              },
+              {
+                "basename": "libc.so.6",
+                "sha256": "9941dc28e68bc5fd788d9cd024c69e68c791d63799e7538a97b6040dd9f50fb6"
+              },
+              {
+                "basename": "libdisplay-info.so.0.3.0",
+                "sha256": "b3822cd8ca06feaf57da22fc4e5c905c2cb873f5bc2664e53a3c5f2cf060cb27"
+              },
+              {
+                "basename": "libdrm.so.2.131.0",
+                "sha256": "c8be7d3863453898666977c12b0b392014a1c728d84215d885d574882d6e7b89"
+              },
+              {
+                "basename": "libedit.so.2.0.76",
+                "sha256": "438090e1cd463d9f89c9259ce9e99f229eae56c857b5e525d581e338f61aa1ce"
+              },
+              {
+                "basename": "libexpat.so.1.11.2",
+                "sha256": "2e5f66e2784c2746775567ff9916f6e7503182a8f1f2deb8ca729dfc1463849f"
+              },
+              {
+                "basename": "libffi.so.8.2.0",
+                "sha256": "1a0dc86f787f73e025a6e521056360afcbe70f2a82cd808132fefc2b4ee95daa"
+              },
+              {
+                "basename": "libgcc_s.so.1",
+                "sha256": "9d339ecb409578d6a5d587e6c537a8f9589b8a13fefba30d167433a4b5758bee"
+              },
+              {
+                "basename": "libgomp.so.1.0.0",
+                "sha256": "645478cbe100d1465b9d45f7047bca3965358f4d399937e544f55ac7a924d5a3"
+              },
+              {
+                "basename": "libm.so.6",
+                "sha256": "37b9e6c977b2a0b02a110d93eb8f01b643c9848653f18bd51682c5279ac88f54"
+              },
+              {
+                "basename": "libmd.so.0.1.0",
+                "sha256": "f115fa619f586e47ddfbec21bfd50069fbe5d21f388f8d9a07a984cb075d7efa"
+              },
+              {
+                "basename": "liboneagentproc.so",
+                "sha256": "38b300a2854eeb4b5ab07111a2cc0cbf90b872b0f79195c614e1497289a8d620"
+              },
+              {
+                "basename": "libstdc++.so.6.0.35",
+                "sha256": "5bb0d21308f123b6ad46c6f35b42cedfcb8d6d439a53aa3dae04d880aaffdde3"
+              },
+              {
+                "basename": "libtinfo.so.6.6",
+                "sha256": "085dbbe5dc38619276bdd0af37ae588969b1308baded09a2990ce8824a602912"
+              },
+              {
+                "basename": "libvulkan.so.1.4.341",
+                "sha256": "def4af45e9e5784cf65eaaaa289530a5c73546b01015da4c0920ef0a144fe189"
+              },
+              {
+                "basename": "libvulkan_intel.so",
+                "sha256": "42cf53b56a34c4e67440bccf2cf30afea65a96c1df0a2d061eeccda6e26a79f9"
+              },
+              {
+                "basename": "libvulkan_lvp.so",
+                "sha256": "d9a8bc5d4b3ec0e065562d362541c2a4cb3f3d6208ac715f7ff1dcf01289d164"
+              },
+              {
+                "basename": "libwayland-client.so.0.24.0",
+                "sha256": "f27b9eecd96d76ae49ec9f7d4da17dcc43df3411ef3d432ce56d710c8b62930c"
+              },
+              {
+                "basename": "libxcb-dri3.so.0.1.0",
+                "sha256": "d2f0488a28a351718192c01bba15f60556f514db555dfbce9a132dedd1401e98"
+              },
+              {
+                "basename": "libxcb-present.so.0.0.0",
+                "sha256": "085bc629d45125f8c3b0f09f9c37ee65d35b1ea55e1f047cffd6aef4ce218b5a"
+              },
+              {
+                "basename": "libxcb-randr.so.0.1.0",
+                "sha256": "a9444026ba3c927a917ff5a0ce47318bed09ab8f9382fe231c72b33da4ec8bbc"
+              },
+              {
+                "basename": "libxcb-shm.so.0.0.0",
+                "sha256": "58fcb847e2009affbd7eeb1f6d39949f29ccc153f230e0b0d23de00d2b5c1353"
+              },
+              {
+                "basename": "libxcb-sync.so.1.0.0",
+                "sha256": "bf494083f05bc427135042b5cdaa5bf5fbe0886f34f611151dde0056257022c9"
+              },
+              {
+                "basename": "libxcb-xfixes.so.0.0.0",
+                "sha256": "37c933b3e89f66330a930207b3133ce5b2c7aade777c7711b70945cc7d4b2333"
+              },
+              {
+                "basename": "libxcb.so.1.1.0",
+                "sha256": "6af94be329e17e57f1cc0f5e4afb5bdfe669a5168accdc31b03274110b937b41"
+              },
+              {
+                "basename": "libxml2.so.16.1.2",
+                "sha256": "302dfa1295c6f917758243ef0f118f7144026b51a5f5cd1610fba849c968f73b"
+              },
+              {
+                "basename": "libxshmfence.so.1.0.0",
+                "sha256": "8b4406ff7f9f2b2830e6d135f9e7ffe991d32832b8fc3569fed189517b557d2b"
+              },
+              {
+                "basename": "libz.so.1.3.1",
+                "sha256": "27fa6c6cb94fb5b099ead61758a300dbc392d1dbf307fff6c16a9b8e57fdc9de"
+              },
+              {
+                "basename": "libzstd.so.1.5.7",
+                "sha256": "060eeb79531d435306665fd78329d8a9dd579f95876c5960bb67937825362a80"
+              }
+            ]
+          },
+          "environment": {
+            "OMP_DYNAMIC": "FALSE",
+            "OMP_NUM_THREADS": "8",
+            "OPENBLAS_NUM_THREADS": "8"
+          },
+          "backend": "llama.cpp Vulkan",
+          "source_commit": "f0458bd05e698306ce423b1850164042112f59c4",
+          "driver_sha256": "3142d3dfb28e97b0b55156ee706b63dac4461959ca22b4f8a469f4832cf09493",
+          "verified_repetitions": 3,
+          "repeatability": "bitwise",
+          "effective_dispatch": {
+            "cpython-base-events-8192": [
+              "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Graphics (PTL) vendor_id=32902 device_id=45184 driver_version=109051912 api_version=4211023 physical_type=1",
+              "load_tensors: offloaded 31/31 layers to GPU",
+              "XE_QUALITY_VULKAN dispatch=full-layer-offload flash_attn=OFF offload_kqv=1 op_offload=1",
+              "llama_context: n_ctx                 = 8192",
+              "llama_context: n_batch               = 1024",
+              "llama_context: n_ubatch              = 1024",
+              "llama_context: flash_attn            = disabled"
+            ],
+            "manzoni-promessi-sposi-8192": [
+              "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Graphics (PTL) vendor_id=32902 device_id=45184 driver_version=109051912 api_version=4211023 physical_type=1",
+              "load_tensors: offloaded 31/31 layers to GPU",
+              "XE_QUALITY_VULKAN dispatch=full-layer-offload flash_attn=OFF offload_kqv=1 op_offload=1",
+              "llama_context: n_ctx                 = 8192",
+              "llama_context: n_batch               = 1024",
+              "llama_context: n_ubatch              = 1024",
+              "llama_context: flash_attn            = disabled"
+            ]
+          }
+        },
+        {
+          "profile": "vulkan",
+          "configuration": {
+            "n_gpu_layers": 999,
+            "use_extra_bufts": true,
+            "n_ctx": "per-case context",
+            "n_batch": 1024,
+            "n_ubatch": 1024,
+            "n_seq_max": 1,
+            "n_threads": 8,
+            "n_threads_batch": 8,
+            "type_k": "F16",
+            "type_v": "F16",
+            "offload_kqv": true,
+            "op_offload": true,
+            "swa_full": true,
+            "kv_unified": true,
+            "no_perf": true,
+            "flash_attn_type": "OFF",
+            "other_parameters": "Unmodified defaults at the pinned upstream commit; no sampler",
+            "devices": [
+              "Vulkan0"
+            ],
+            "split_mode": "NONE",
+            "main_gpu": 0
+          },
+          "toolchain": {
+            "gcc": "x86_64-linux-gnu-gcc-15 (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+            "g++": "x86_64-linux-gnu-g++-15 (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+            "cmake": "cmake version 4.2.3",
+            "glslc": "shaderc 2026.1-1"
+          },
+          "platform": "Linux-7.0.0-43-generic-x86_64-with-glibc2.43",
+          "cpu": {
+            "vendor_id": "GenuineIntel",
+            "cpu family": "6",
+            "model": "204",
+            "model name": "Intel(R) Core(TM) Ultra X7 358H",
+            "stepping": "2",
+            "microcode": "0x115",
+            "flags": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_perfmon bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq dtes64 monitor ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rdt_a rdseed adx smap clflushopt clwb intel_pt sha_ni xsaveopt xsavec xgetbv1 xsaves split_lock_detect user_shstk avx_vnni lam wbnoinvd dtherm ida arat pln pts hwp hwp_notify hwp_act_window hwp_epp hwp_pkg_req hfi vnmi umip pku ospke waitpkg gfni vaes vpclmulqdq rdpid bus_lock_detect movdiri movdir64b fsrm md_clear serialize arch_lbr ibt flush_l1d arch_capabilities"
+          },
+          "affinity": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+          ],
+          "cmake_options": [
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DGGML_NATIVE=ON",
+            "-DGGML_CPU=ON",
+            "-DGGML_SYCL=OFF",
+            "-DGGML_CUDA=OFF",
+            "-DGGML_VULKAN=ON",
+            "-DGGML_BLAS=OFF",
+            "-DLLAMA_BUILD_APP=OFF",
+            "-DLLAMA_BUILD_COMMON=OFF",
+            "-DLLAMA_CURL=OFF",
+            "-DLLAMA_BUILD_TESTS=OFF",
+            "-DLLAMA_BUILD_EXAMPLES=OFF",
+            "-DLLAMA_BUILD_TOOLS=OFF",
+            "-DBUILD_SHARED_LIBS=OFF",
+            "-DGGML_BACKEND_DL=OFF"
+          ],
+          "wrapper_sha256": "5de74d8e67b864050fbd9fcfeae18adeb2239b287e0d687453b33a9d024ff8d6",
+          "source_archive_sha256": null,
+          "vulkan_runtime": {
+            "identity": [
+              "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Graphics (PTL) vendor_id=32902 device_id=45184 driver_version=109051912 api_version=4211023 physical_type=1"
+            ],
+            "mapped_files": [
+              {
+                "basename": "ld-linux-x86-64.so.2",
+                "sha256": "c0b20d6e1ced12abfe0b1ef2b5b68017950beaaea3df69eb6949d73e0ecf7b40"
+              },
+              {
+                "basename": "libLLVM.so.21.1",
+                "sha256": "12dca1fc2d9f5d4ff35315fc2aa3a97b615b41ec6a71d3ce545efb62c075d902"
+              },
+              {
+                "basename": "libVkLayer_MESA_device_select.so",
+                "sha256": "de1880d4c750f871d3491d2e8d77f1ca13f31eaa5ba0784bd4dfca0fa7dc9531"
+              },
+              {
+                "basename": "libX11-xcb.so.1.0.0",
+                "sha256": "6a9047ac83e4e1afb8032e62332aa449e7c6307c731f621054c9c0573a460899"
+              },
+              {
+                "basename": "libXau.so.6.0.0",
+                "sha256": "2b742de65acd00f154ed156720af66c0c0af9a58360ba041f25a41e2f775fab5"
+              },
+              {
+                "basename": "libXdmcp.so.6.0.0",
+                "sha256": "24beecbb0faf600d1a646b5edfc8c144da6f2965cb427598f4e17edc1285a733"
+              },
+              {
+                "basename": "libbsd.so.0.12.2",
+                "sha256": "c71b8a0d7e94c5e34f6c328c5dd1ba7f325d3300c97a54a7c69ef9a6c2caa8b3"
+              },
+              {
+                "basename": "libc.so.6",
+                "sha256": "9941dc28e68bc5fd788d9cd024c69e68c791d63799e7538a97b6040dd9f50fb6"
+              },
+              {
+                "basename": "libdisplay-info.so.0.3.0",
+                "sha256": "b3822cd8ca06feaf57da22fc4e5c905c2cb873f5bc2664e53a3c5f2cf060cb27"
+              },
+              {
+                "basename": "libdrm.so.2.131.0",
+                "sha256": "c8be7d3863453898666977c12b0b392014a1c728d84215d885d574882d6e7b89"
+              },
+              {
+                "basename": "libedit.so.2.0.76",
+                "sha256": "438090e1cd463d9f89c9259ce9e99f229eae56c857b5e525d581e338f61aa1ce"
+              },
+              {
+                "basename": "libexpat.so.1.11.2",
+                "sha256": "2e5f66e2784c2746775567ff9916f6e7503182a8f1f2deb8ca729dfc1463849f"
+              },
+              {
+                "basename": "libffi.so.8.2.0",
+                "sha256": "1a0dc86f787f73e025a6e521056360afcbe70f2a82cd808132fefc2b4ee95daa"
+              },
+              {
+                "basename": "libgcc_s.so.1",
+                "sha256": "9d339ecb409578d6a5d587e6c537a8f9589b8a13fefba30d167433a4b5758bee"
+              },
+              {
+                "basename": "libgomp.so.1.0.0",
+                "sha256": "645478cbe100d1465b9d45f7047bca3965358f4d399937e544f55ac7a924d5a3"
+              },
+              {
+                "basename": "libm.so.6",
+                "sha256": "37b9e6c977b2a0b02a110d93eb8f01b643c9848653f18bd51682c5279ac88f54"
+              },
+              {
+                "basename": "libmd.so.0.1.0",
+                "sha256": "f115fa619f586e47ddfbec21bfd50069fbe5d21f388f8d9a07a984cb075d7efa"
+              },
+              {
+                "basename": "liboneagentproc.so",
+                "sha256": "38b300a2854eeb4b5ab07111a2cc0cbf90b872b0f79195c614e1497289a8d620"
+              },
+              {
+                "basename": "libstdc++.so.6.0.35",
+                "sha256": "5bb0d21308f123b6ad46c6f35b42cedfcb8d6d439a53aa3dae04d880aaffdde3"
+              },
+              {
+                "basename": "libtinfo.so.6.6",
+                "sha256": "085dbbe5dc38619276bdd0af37ae588969b1308baded09a2990ce8824a602912"
+              },
+              {
+                "basename": "libvulkan.so.1.4.341",
+                "sha256": "def4af45e9e5784cf65eaaaa289530a5c73546b01015da4c0920ef0a144fe189"
+              },
+              {
+                "basename": "libvulkan_intel.so",
+                "sha256": "42cf53b56a34c4e67440bccf2cf30afea65a96c1df0a2d061eeccda6e26a79f9"
+              },
+              {
+                "basename": "libvulkan_lvp.so",
+                "sha256": "d9a8bc5d4b3ec0e065562d362541c2a4cb3f3d6208ac715f7ff1dcf01289d164"
+              },
+              {
+                "basename": "libwayland-client.so.0.24.0",
+                "sha256": "f27b9eecd96d76ae49ec9f7d4da17dcc43df3411ef3d432ce56d710c8b62930c"
+              },
+              {
+                "basename": "libxcb-dri3.so.0.1.0",
+                "sha256": "d2f0488a28a351718192c01bba15f60556f514db555dfbce9a132dedd1401e98"
+              },
+              {
+                "basename": "libxcb-present.so.0.0.0",
+                "sha256": "085bc629d45125f8c3b0f09f9c37ee65d35b1ea55e1f047cffd6aef4ce218b5a"
+              },
+              {
+                "basename": "libxcb-randr.so.0.1.0",
+                "sha256": "a9444026ba3c927a917ff5a0ce47318bed09ab8f9382fe231c72b33da4ec8bbc"
+              },
+              {
+                "basename": "libxcb-shm.so.0.0.0",
+                "sha256": "58fcb847e2009affbd7eeb1f6d39949f29ccc153f230e0b0d23de00d2b5c1353"
+              },
+              {
+                "basename": "libxcb-sync.so.1.0.0",
+                "sha256": "bf494083f05bc427135042b5cdaa5bf5fbe0886f34f611151dde0056257022c9"
+              },
+              {
+                "basename": "libxcb-xfixes.so.0.0.0",
+                "sha256": "37c933b3e89f66330a930207b3133ce5b2c7aade777c7711b70945cc7d4b2333"
+              },
+              {
+                "basename": "libxcb.so.1.1.0",
+                "sha256": "6af94be329e17e57f1cc0f5e4afb5bdfe669a5168accdc31b03274110b937b41"
+              },
+              {
+                "basename": "libxml2.so.16.1.2",
+                "sha256": "302dfa1295c6f917758243ef0f118f7144026b51a5f5cd1610fba849c968f73b"
+              },
+              {
+                "basename": "libxshmfence.so.1.0.0",
+                "sha256": "8b4406ff7f9f2b2830e6d135f9e7ffe991d32832b8fc3569fed189517b557d2b"
+              },
+              {
+                "basename": "libz.so.1.3.1",
+                "sha256": "27fa6c6cb94fb5b099ead61758a300dbc392d1dbf307fff6c16a9b8e57fdc9de"
+              },
+              {
+                "basename": "libzstd.so.1.5.7",
+                "sha256": "060eeb79531d435306665fd78329d8a9dd579f95876c5960bb67937825362a80"
+              }
+            ]
+          },
+          "environment": {
+            "OMP_DYNAMIC": "FALSE",
+            "OMP_NUM_THREADS": "8",
+            "OPENBLAS_NUM_THREADS": "8"
+          },
+          "backend": "llama.cpp Vulkan",
+          "source_commit": "f0458bd05e698306ce423b1850164042112f59c4",
+          "driver_sha256": "3142d3dfb28e97b0b55156ee706b63dac4461959ca22b4f8a469f4832cf09493",
+          "verified_repetitions": 3,
+          "repeatability": "bitwise",
+          "effective_dispatch": {
+            "manzoni-promessi-sposi-16384": [
+              "XE_QUALITY_VULKAN device=Vulkan0 description=Intel(R) Graphics (PTL) vendor_id=32902 device_id=45184 driver_version=109051912 api_version=4211023 physical_type=1",
+              "load_tensors: offloaded 31/31 layers to GPU",
+              "XE_QUALITY_VULKAN dispatch=full-layer-offload flash_attn=OFF offload_kqv=1 op_offload=1",
+              "llama_context: n_ctx                 = 16384",
+              "llama_context: n_batch               = 1024",
+              "llama_context: n_ubatch              = 1024",
+              "llama_context: flash_attn            = disabled"
+            ]
+          }
         }
       ],
       "arrays": {
@@ -376,6 +1007,18 @@
         "italian-accordion": {
           "path": "llama/panther-vulkan/italian-accordion.npy",
           "sha256": "938a0c2a09a89b198058f7f9a28a6bcc400658189efa19bbb25ded86129cc3e1"
+        },
+        "cpython-base-events-8192": {
+          "path": "llama/panther-vulkan/cpython-base-events-8192.npy",
+          "sha256": "71739277000985edf3466958e487ddc1124d54be66609839373f25592d011ade"
+        },
+        "manzoni-promessi-sposi-8192": {
+          "path": "llama/panther-vulkan/manzoni-promessi-sposi-8192.npy",
+          "sha256": "a0c987ed462eddfe3993371b080a965c09a5651363aa0cf5bfbb7231a68a7a28"
+        },
+        "manzoni-promessi-sposi-16384": {
+          "path": "llama/panther-vulkan/manzoni-promessi-sposi-16384.npy",
+          "sha256": "268e708bb612a0f5c45f8910771dc87b032337e7b75082a5af634778de901611"
         }
       }
     },
@@ -683,5 +1326,5 @@
     "direction": "Google||backend",
     "temperature": 1
   },
-  "content_sha256": "5b207a8f9c7c217599534bad946654b52a4d63694cba60faa40e902e1fe65e27"
+  "content_sha256": "eff67bdfbf732e3aba164f012ccccebdca69692a126c88b0c81b2e2483ecdc90"
 }

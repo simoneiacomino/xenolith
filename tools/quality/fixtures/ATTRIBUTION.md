@@ -21,5 +21,29 @@ Pinned source distributions:
 - [HumanEval+ release](https://github.com/evalplus/humanevalplus_release/tree/68cd26d53a0dec69f85eafe1f82a2a74155a2bd6), revision `68cd26d53a0dec69f85eafe1f82a2a74155a2bd6`, release 0.1.10.
 - [Belebele dataset card](https://huggingface.co/datasets/facebook/belebele/blob/7899cdfa4e1e0d733fd77c848e2c273cb1d32be2/README.md), revision `7899cdfa4e1e0d733fd77c848e2c273cb1d32be2`, `ita_Latn`, test. See Bandarkar et al., [The Belebele Benchmark](https://aclanthology.org/2024.acl-long.44/), ACL 2024.
 
+## Long-context inputs
+
+- `manzoni-promessi-sposi` uses Alessandro Manzoni's *I promessi sposi*,
+  1840 edition, chapters I and II. The underlying work is public domain.
+  The Wikisource contributors' transcription is available under
+  [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
+  This UTF-8 adaptation retains the text and chapter headings, removes page
+  numbers and illustrations, renders decorative initials as text, and
+  normalizes whitespace. The adapted text and its tokenized excerpts are
+  distributed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+  [Chapter I permanent revision](https://it.wikisource.org/wiki/Speciale:LinkPermanente/3699528)
+  · [Chapter I contributors](https://it.wikisource.org/w/index.php?title=I_promessi_sposi_(1840)/Capitolo_I&action=history)
+  · [Chapter II permanent revision](https://it.wikisource.org/wiki/Speciale:LinkPermanente/3699529)
+  · [Chapter II contributors](https://it.wikisource.org/w/index.php?title=I_promessi_sposi_(1840)/Capitolo_II&action=history)
+- `cpython-base-events` retains the full, unmodified Python source file. The
+  Python Software Foundation's copyright and license terms are included in the
+  [CPython license](gemma4/corpus/licenses/CPython-LICENSE.txt).
+  The numerical input encodes the first 8,191 source tokens with one added BOS.
+  [CPython contributors, `Lib/asyncio/base_events.py` at the `v3.13.0` commit](https://github.com/python/cpython/blob/60403a5409ff2c3f3b07dd2ca91a7a3e096839c7/Lib/asyncio/base_events.py)
+
+The Manzoni cases use prefixes of the same UTF-8 source. Each long case
+includes one explicit BOS. The exact input uses a prefix of the full raw
+tokenization, agreed by both tokenizers.
+
 These are numerical test inputs. The suite does not report the original
 benchmarks' instruction-following, code-generation or comprehension scores.

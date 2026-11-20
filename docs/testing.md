@@ -30,15 +30,44 @@ change can reuse a compatible reference without
 JAX, Flax or Torch. The engine itself needs none of these Python dependencies.
 
 After installing the compare profile, `make verify-quality-fixtures` checks the
-committed data without a model. `make check-quality-fixtures MODEL=...
-BACKEND_CONFIG=... QUALITY_OUTPUT=... QUALITY_BASELINE=panther-vulkan` compares
-a current-build backend with the selected Vulkan baseline. Use `raptor-vulkan`
-for the Raptor Lake profile; other GPU hosts need their own verified baseline.
-Selection is explicit: the tool does not infer or
-certify a hardware match from the hostname. Supply `PYTHON=/path/to/compare-venv/bin/python` for both
-targets. PASS is scoped to the fixed suite, not unseen-text statistical
-equivalence or free-response quality. See the fixture guide for repetitions,
-numerical resolution and explicit reproduction commands.
+complete Gemma 4 suite without a model. `make check-quality-fixtures` runs the
+cases covered by the selected hardware baseline and writes one report.
+Set `QUALITY_FIXTURES` to use a different fixture directory.
+
+| Input length | Cases | Observed positions | Panther Vulkan | Raptor Vulkan |
+| --- | ---: | ---: | --- | --- |
+| Up to 5,348 tokens | 5 | 14 | Covered | Covered |
+| 8,192 tokens | 2 | 8 | Covered | No baseline |
+| 16,384 tokens | 1 | 1 | Covered | No baseline |
+
+```sh
+python3.12 tools/quality/setup_environment.py --profile compare --output /tmp/xe-quality
+make verify-quality-fixtures PYTHON=/tmp/xe-quality/bin/python
+
+model=/absolute/path/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf
+run=/absolute/path/new-candidate
+/tmp/xe-quality/bin/xe-quality-backend --source . --model "$model" --output "$run/backend.json"
+make check-quality-fixtures PYTHON=/tmp/xe-quality/bin/python MODEL="$model" \
+  BACKEND_CONFIG="$run/backend.json" QUALITY_BASELINE=panther-vulkan \
+  QUALITY_OUTPUT="$run/comparison"
+```
+
+Use the exact GGUF whose SHA256 is pinned in the suite's corpus manifest.
+Check the host GPU with `./xenolith check-device` after building the CLI, and
+record the candidate host's device and runtime when comparing with the profiles
+in the fixture manifest. Baseline selection is explicit and does not certify
+hardware identity. The included profiles cover Panther Lake (`8086:b080`) and
+Raptor Lake (`8086:a7a0`). Other configurations need their own verified baseline
+for a hardware-matched result.
+
+Use a new output directory for each comparison. In `report.json`, each input
+length group reports its covered and missing cases. `PASS` requires three
+identical native runs and a nonpositive equal-family mean KL delta at both
+metric precisions. `FAIL` is a stable regression. `INCONCLUSIVE` covers
+insufficient repeatability or a precision check that crosses the verdict
+boundary. A group without covered cases reports `NO_BASELINE`. Each verdict
+applies to the covered cases and observed positions in its group. See the
+fixture guide for reproduction and command exit codes.
 
 For a separately qualified reference archive, use these commands with an
 explicit acceptance policy:

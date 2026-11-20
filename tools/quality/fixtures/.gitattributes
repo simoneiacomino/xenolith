@@ -3,5 +3,5 @@
 *.json text eol=lf
 *.txt text eol=lf
 # Preserve significant source bytes and verbatim upstream license notices.
-gemma4/corpus/texts/*.txt whitespace=-blank-at-eol
-licenses/*.txt whitespace=-blank-at-eol
+**/texts/*.txt whitespace=-blank-at-eol
+**/licenses/*.txt whitespace=-blank-at-eol

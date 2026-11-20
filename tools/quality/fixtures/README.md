@@ -3,7 +3,8 @@
 `gemma4/` contains exact inputs, shared Google FP64 logits and a pinned
 llama.cpp Vulkan baseline for each of Panther Lake (`panther-vulkan`) and
 Raptor Lake (`raptor-vulkan`). The format supports separate named baselines for
-additional hosts.
+additional hosts. Panther covers all eight cases. Raptor covers the five
+cases with inputs up to 5,348 tokens.
 The arrays are ordinary Git files;
 there is no separate download service. Model weights are not included.
 Source text attribution and licenses are listed in [ATTRIBUTION.md](ATTRIBUTION.md).
@@ -34,12 +35,13 @@ Comparison verifies the entire fixture before starting the candidate. It needs
 NumPy, the exact GGUF and the current-build native driver; it imports neither
 JAX nor Torch and performs no Google or llama model inference. The native
 candidate runs three times from new processes, with recorded input orders.
-Select `panther-vulkan` or `raptor-vulkan` explicitly. The report identifies the
-chosen profile; selection does not automatically certify that the candidate
-ran on matching hardware. Check its GPU/runtime provenance against that profile.
-Verification checks every baseline in a fixture, including unselected profiles. Missing or
-unknown selections fail before inference. Every output is retained in the chosen new comparison directory. Use
-`--repetitions 1` for a faster diagnostic, which remains `INCONCLUSIVE`.
+Select `panther-vulkan` or `raptor-vulkan` explicitly. The candidate runs only the
+cases declared for that baseline. The report lists its capture profiles and the
+covered and missing cases for each input length group. Check candidate GPU
+and runtime provenance against the selected profiles. Verification checks the
+complete suite, including unselected baselines. Missing or unknown selections
+fail before inference. Outputs go in a new comparison directory. Use
+`--repetitions 1` for a faster diagnostic with `INCONCLUSIVE` verdicts.
 
 ## What is accepted
 
@@ -49,13 +51,13 @@ Logits cover all 262,144 tokens, after the model softcap and before sampling,
 at temperature one. A long document needs only a few saved rows, but the model
 must still process its full prefix.
 
-The [Gemma4 dataset card](gemma4/README.md) lists the five inputs and 14 saved
-positions, with a maximum prefix of 5,348 tokens. This covers cached prefill;
-it does not qualify 8,192-token inputs, single-token decode, cache restoration
-or every intermediate position.
+The [Gemma 4 dataset card](gemma4/README.md) lists all eight cases and 23 saved
+positions, with a maximum prefix of 16,384 tokens. The scope is cached prefill
+at the listed positions.
 
 The primary quantity is `KL(Google || Xenolith) - KL(Google || selected Vulkan baseline)`;
-negative values favor Xenolith. Average the observed positions within each
+negative values favor Xenolith. Within each input length group, average the
+observed positions within each
 document group, then give groups equal weight within each family (the corpus
 `stratum`), then give families equal weight in the overall mean. Thus a longer
 document or a family containing more documents does not receive extra weight.
@@ -68,16 +70,18 @@ These are nonblocking diagnostics: a `PASS` can contain worse families or positi
 `position_regressions` make those cases explicit; positive deltas mean worse.
 Differences with an uncertain sign under the precision check are listed separately.
 
-The decision is scoped to this **finite public suite**:
+Each verdict applies to the covered cases in one input length group.
 
-- `PASS` (exit 0): the equal-family mean KL is no worse than the baseline, and all three
-  native runs have identical output bytes and recorded dispatch.
-- `FAIL` (exit 1): a stable candidate has a worse equal-family mean KL.
-- `INCONCLUSIVE` (exit 3): executions vary, fewer than three runs are available,
-  or the overall mean difference changes sign between FP64 and the
-  extended-precision metric check. Local diagnostic differences do not veto a pass.
-- `ERROR` (exit 2): integrity, input, execution or completeness checks fail.
-  No scientific acceptance is issued for incomplete output.
+- `PASS` requires three identical native runs and an equal-family mean KL no
+  worse than the baseline at both metric precisions.
+- `FAIL` indicates a stable regression in the equal-family mean KL.
+- `INCONCLUSIVE` indicates insufficient repeatability or a precision sensitivity
+  interval that crosses the verdict boundary.
+- `NO_BASELINE` marks a group with no covered cases.
+
+The CLI exits 2 on a technical error, 1 if any evaluated group fails, and 3 if
+any evaluated group is inconclusive and none fails. Exit 0 means all evaluated
+groups passed. Check the report for the exact case coverage.
 
 The reported resolution interval brackets the FP64 and `longdouble` calculations;
 it is an empirical numerical sensitivity check, **not** a statistical confidence
@@ -85,7 +89,7 @@ interval or a rigorous floating-point error bound. The report identifies the
 actual `longdouble` precision. A small, repeatedly used public corpus cannot
 establish statistical equality on unseen texts. Longer prefixes from the same
 document are not independent documents. `population_inference` therefore remains
-`NOT_ESTABLISHED`, even when this suite passes. Task quality, vision and unmeasured
+`NOT_ESTABLISHED`, even for groups that pass. Task quality, vision and unmeasured
 positions are separate questions.
 
 The manifest explicitly identifies the `mean-family-kl` gate and its aggregation.
@@ -141,9 +145,9 @@ do not silently substitute its logits for the committed baseline.
 
 ## Reproduce the arrays
 
-Run the following capture on each intended GPU host, using its own freshly
-built receipt. This executes five cases in three independent passes: 15 native
-processes per host. The repeated logits and dispatch must match exactly;
+Run the following capture on the intended GPU host using its own freshly
+built receipt. It runs the selected cases in three independent passes.
+The repeated logits and dispatch must match exactly;
 nonrepeatable outputs are retained and cannot be sealed. Stderr evidence is
 hashed in the capture receipt. These are repeatability checks, not statistical
 population samples.
@@ -157,8 +161,11 @@ OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 OMP_DYNAMIC=FALSE \
 
 ```
 
-Collect the complete capture directories, then seal a new
-fixture. Existing Google/corpus bytes and producer identity are reused unchanged;
+The command covers the full corpus by default. To reproduce the packaged
+Raptor coverage, repeat `--case ID` for each ID in
+`baselines.raptor-vulkan.cases` in the fixture manifest.
+
+Collect the complete capture directories, then seal a new fixture. Existing Google/corpus bytes and producer identity are reused unchanged;
 no Google or HF inference is needed:
 
 ```sh
@@ -170,8 +177,8 @@ no Google or HF inference is needed:
 ```
 
 To include additional hosts, repeat `--baseline NAME=CAPTURE` with each verified
-capture. All supplied captures must satisfy the same corpus and repeatability
-contract. Generate a separate baseline before claiming a comparison against
+capture. Each capture must match its selected cases in the corpus and satisfy
+the repeatability contract. Generate a separate baseline before claiming a comparison against
 llama.cpp Vulkan on hardware not represented by the included profile.
 
 Generation is explicit and resource intensive. Use a host with sufficient memory
@@ -191,7 +198,7 @@ corresponding new reference rows; changing only the candidate does not.
 To reproduce Google outputs independently, install the separate reference profile
 and fetch the pinned upstream sources described in the package guide, then run
 `python -m xe_quality.fixture_reference --corpus CORPUS_MANIFEST --model MODEL
---google-source GOOGLE_SOURCE --output NEW_DIRECTORY --max-forwards 40` in that
+--google-source GOOGLE_SOURCE --output NEW_DIRECTORY --max-forwards 48` in that
 environment. This is optional reference generation, not a step in replacing a
 Vulkan baseline on an unchanged corpus.
 
