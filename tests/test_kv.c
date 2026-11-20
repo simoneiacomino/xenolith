@@ -1,4 +1,5 @@
 #include "../xenolith.c"
+#include "support/scalar_ops.h"
 
 #include <sys/wait.h>
 

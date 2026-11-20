@@ -1,0 +1,19 @@
+{
+  "commit": "9e1f74131ba9d45e5fe6ae7bb3941d9f2abb39c3",
+  "execution": "OfficialBlock, denseMLP, norms, attention, RoPE and routing probabilities; bounded per-expert dispatch adapter, exact top_k; canonical26B_A4B architecture values audited from_gemma4.py and exactGGUF metadata",
+  "files": {
+    "gemma/gm/math/_positional_embeddings.py": "6f4814d3554dbb4c67bba794e9fb13a2ae39ea7c77dc4a040527d1536fcb0c92",
+    "gemma/gm/nn/gemma4/_config.py": "0e9e037107c05a52a45a282a1252f81daf0b04c9094ec154dc17ddd5a4f8de1b",
+    "gemma/gm/nn/gemma4/_gemma4.py": "67cf8c06eed95cbea613e1014f8dd23aade95edf5fb415d875118fe5c1605c4f",
+    "gemma/gm/nn/gemma4/_layers.py": "55643c31628bd66e94d72bd035910635a4c5bbf2e5a131ce8fb663ddb28b405c",
+    "gemma/gm/nn/gemma4/_modules.py": "55dee2ef3397b3e12631bd000d34d62ac1cdcf1b511c5fb945a73e8975f0bda1",
+    "gemma/gm/nn/gemma4/_moe.py": "b117304a147657da903cb07b2579ce0a44cde6a82a54d4b014c52a3a9415d4a2"
+  },
+  "license": {
+    "path": "LICENSE",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "spdx": "Apache-2.0"
+  },
+  "notice_files": [],
+  "repository": "https://github.com/google-deepmind/gemma"
+}

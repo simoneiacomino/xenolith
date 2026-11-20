@@ -1,0 +1,11 @@
+{
+  "config": {
+    "path": "HF-config.json",
+    "sha256": "9e398bab3c2d136b6735918e8211771c62a1fd2be17bda599b6d3832ca4f9e0f"
+  },
+  "qualification_scope": "Exact installed original HF control modules before process-local FP64 patches; not a complete copy of all installed framework binaries",
+  "transformers_modules": {
+    "configuration_gemma4.py": "978758d43e44fa2b7a786453b5520a5c639d89837d8495f22b6a7a6d281afec4",
+    "modeling_gemma4.py": "edc123ab83fbb25548ec65536eaecee998c088653adf683be3ef69d62e2bfea9"
+  }
+}
